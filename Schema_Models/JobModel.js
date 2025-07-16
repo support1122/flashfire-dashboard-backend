@@ -56,6 +56,12 @@ export const JobSchema = new mongoose.Schema({
     type : String,
     required : true ,
     default : () =>new Date().toLocaleString('en-IN', 'Asia/Kolkata')   
+  },
+  attachments : {
+    type : [String],
+    required : true,
+    default : []
+
   }
 });
 
