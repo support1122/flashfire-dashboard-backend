@@ -10,6 +10,9 @@ export default async function Login(req, res) {
 
     try {
         const userFromDb = await UserModel.findOne({ email });
+        if (!userFromDb) {
+  return res.status(404).json({ message: "User not found" });
+}
         let passwordDecrypted = decrypt(userFromDb.passwordHashed)
         if (passwordDecrypted === password) {
             const token = jwt.sign(
