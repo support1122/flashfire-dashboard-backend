@@ -22,7 +22,7 @@ export default async function Login(req, res) {
         );
             return res.status(200).json({
                 message: 'Login Sucess..!',
-                userDetails: { name: userFromDb.name, email },
+                userDetails: { name: userFromDb.name, email, planType:userFromDb.planType, userType:userFromDb.userType },
                 token
             });
 
