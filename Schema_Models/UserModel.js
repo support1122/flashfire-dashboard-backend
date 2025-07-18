@@ -23,10 +23,15 @@ export const userSchema= new mongoose.Schema({
         required : true,
         default : 'newUserPassword'
     },
-    role:{
+    planType : {
         type : String,
         required : true,
-        default : 'user'
+        default : 'Admin'
+    },
+    userType:{
+        type : String,
+        required : true,
+        default : 'User'
     },
     createdAt:{
         type : String,
