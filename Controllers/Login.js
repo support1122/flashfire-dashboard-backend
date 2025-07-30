@@ -5,7 +5,7 @@ import { decrypt } from "../Utils/CryptoHelper.js";
 dotenv.config();
 
 export default async function Login(req, res) {
-    const { email, password, existanceOfUser} = req.body;
+    const { email, password, existanceOfUser, token} = req.body;
     console.log(req.body);
 
     try {

@@ -12,7 +12,7 @@ export default async function Tokenizer(req, res,next) {
   try {
     const secret = process.env.JWT_SECRET_KEY ;
     const token = jwt.sign({email, name : existanceOfUser?.name} , secret , { expiresIn: '1d' });
-    req.token = token;
+    req.body.token = token;
     req.headers.authorization = `Bearer ${token}`
     next();
   } catch (error) {
