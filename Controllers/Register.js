@@ -5,8 +5,7 @@ import { encrypt } from '../Utils/CryptoHelper.js';
 dotenv.config();
 export default async function Register(req, res) {
     let {email, name, password} = req.body;
-    // let userType;
-    try {
+     try {
         let passwordEncrypted = encrypt(password);
         
         await UserModel.create({name ,email, passwordHashed: passwordEncrypted});
@@ -14,7 +13,7 @@ export default async function Register(req, res) {
         res.status(200).json({
             message: 'User registered',
             user: newUserDetails//{ email, name}
-        })  ;
+        });
            
     } catch (error) {
         console.log(error)

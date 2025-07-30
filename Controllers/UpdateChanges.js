@@ -10,9 +10,10 @@ export default async function UpdateChanges(req, res) {
                 $set: { currentStatus: req.body?.status },
                 $push: { timeline: req.body?.status }
             }
-            );        }
+            );        
+        }
         else if(action == 'edit'){
-            await JobModel.findOneAndUpdate({jobID},{});
+            await JobModel.findOneAndUpdate({jobID},{jobDetails});
         }
         else if(action == 'delete'){
             await JobModel.findOneAndDelete({jobID, userID : userDetails.email});

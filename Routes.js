@@ -1,11 +1,5 @@
-
-// import CheckJobExistance from "./Middlewares/CheckJobExistance.js";
-// import AddJobs from "./Controllers/AddJobs.js";
-// import AdminDashBoard from "./Controllers/AdminDashBoard.js";
 import AddJob from "./Controllers/AddJob.js";
 import CheckForDuplicateJobs from "./Middlewares/CheckForDuplicateJobs.js";
-//import UpdateActionsVerifier from "./Middlewares/UpdateActionsVerifier.js";
-// import UpdateJobDataForUser from "./Controllers/UpdateJobDataForUser.js";
 import VerifyJobIDAndChanges from "./Middlewares/VerifyJobIDAndChanges.js";
 import UpdateChanges from "./Controllers/UpdateChanges.js";
 import GetAllJobs from "./Controllers/GetAllJobs.js";
@@ -19,7 +13,7 @@ import GoogleAuth from './Controllers/GoogleOAuth.js'
 import PlanSelect from './Controllers/PlanSelect.js'
 
 export default function Routes(app){
-  //login routes and registration routes and job adding by admin routes....
+
   app.post('/register', RegisterVerify, Register);
   app.post('/googleOAuth', GoogleAuth);
   app.post('/login', LoginVerify, Tokenizer, Login);
@@ -27,12 +21,7 @@ export default function Routes(app){
   app.post('/api/jobs',LocalTokenValidator,  CheckForDuplicateJobs, AddJob );
   app.put('/api/jobs', LocalTokenValidator, VerifyJobIDAndChanges, UpdateChanges);
   app.post('/api/plans/select',PlanSelect)
-  // app.delete()
-  //  app.post('/user/dashboard/',UpdateActionsVerifier, UpdateJobDataForUser)
-   //app.post('/admin/addjobs', CheckJobExistance , AddJobs );
-  //  app.get('/admin/dashboard',   AdminDashBoard);
+
 
 }
 
-// LoginVerifier, LocalTokenValidator
-// LoginVerifier, LocalTokenValidator

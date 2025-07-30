@@ -1,4 +1,3 @@
-import {UserModel} from '../Schema_Models/UserModel.js'
 import jwt from 'jsonwebtoken'
 import dotenv from 'dotenv'
 dotenv.config();

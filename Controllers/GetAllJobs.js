@@ -4,11 +4,11 @@ export default async function GetAllJobs(req,res) {
     let {userDetails}= req.body;
     try {
         let allJobs = await JobModel.find({userID : userDetails?.email});
-        let userDetailsLatest = await UserModel.findOne({email: userDetails?.email })
+        // let userDetailsLatest = await UserModel.findOne({email: userDetails?.email })
         console.log(allJobs, userDetails);
         res.status(200).json({message : 'all Jobs List',
                               allJobs ,
-                              userDetails:userDetailsLatest                 
+                            //   userDetails:userDetailsLatest                 
                             });
     } catch (error) {
         console.log(error);

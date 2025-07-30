@@ -1,4 +1,3 @@
-import mongoose from "mongoose";
 import { UserModel } from "../Schema_Models/UserModel.js";
 
 export default async function LoginVerify(req, res, next) {
@@ -11,6 +10,7 @@ export default async function LoginVerify(req, res, next) {
         if(!existanceOfUser){
             return res.status(404).json({message : 'User Not Found. Sign Up to continue '});
         }
+        req.body.existanceOfUser = existanceOfUser;
         next();
     } catch (error) {
         console.log(error)

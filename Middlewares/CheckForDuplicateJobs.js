@@ -1,4 +1,4 @@
-import { JobModel, JobSchema } from "../Schema_Models/JobModel.js";
+import { JobModel } from "../Schema_Models/JobModel.js";
 
 export default async function CheckForDuplicateJobs(req, res, next) {
     let {jobDetails,userDetails } = req.body;
