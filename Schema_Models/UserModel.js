@@ -30,8 +30,8 @@ export const userSchema= new mongoose.Schema({
     },
     planType : {
         type : String,
-        // required : true,
-        default : null
+        required : true,
+        default : 'Free Trial'
     },
     planLimit : {
         type : Number,
