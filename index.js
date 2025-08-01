@@ -5,6 +5,11 @@ import cors from 'cors';
 
 const app = express();
 app.use(cors());
+app.use((req, res, next) => {
+  res.removeHeader('Cross-Origin-Opener-Policy');
+  res.setHeader('Cross-Origin-Opener-Policy', 'unsafe-none');
+  next();
+});
 app.use(express.json());
 
 // Add default root route

@@ -11,26 +11,36 @@ export const userSchema= new mongoose.Schema({
     name:{
         type : String,
         required : true,
-        default : 'NewUser'
+        // default : 'NewUser'
     },
     email : {
         type : String,
         required : true,
-        default : 'newuseremail'
+        // default : 'newuseremail'
     },
     passwordHashed:{
         type : String,
         required : true,
-        default : 'newUserPassword'
+        default : '--NO Password --/OAUTH'
+    },
+    resumeLink : {
+        type : String,
+        // required : true,
+        default : null
     },
     planType : {
         type : String,
         required : true,
-        default : 'Admin'
+        default : 'Free Trial'
+    },
+    planLimit : {
+        type : Number,
+        // required : true,
+        default : null
     },
     userType:{
         type : String,
-        required : true,
+        // required : true,
         default : 'User'
     },
     createdAt:{

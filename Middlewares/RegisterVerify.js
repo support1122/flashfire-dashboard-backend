@@ -1,7 +1,9 @@
 import { UserModel } from "../Schema_Models/UserModel.js";
 
 export default async function RegisterVerify(req, res, next) {
-    let { name, email, password} = req.body;
+    let { firstName, lastName, email, password} = req.body;
+    let name = firstName + lastName ;
+    req.body.name = name;
     console.log(req.body)
     let emailVerifyURL = `https://emailvalidation.abstractapi.com/v1/?api_key=${process.env.ABSTRACT_API_PRIMARY_KEY_BISWAJITSHRM66}&email=${email}`
     try {
