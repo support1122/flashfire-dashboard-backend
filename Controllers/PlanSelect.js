@@ -1,31 +1,38 @@
 import { UserModel } from "../Schema_Models/UserModel.js";
 
-export default async function(req, res){
-    let {resumeLink, token, userDetails, planType, planLimit, } = req.body;
-    try {
-let userFromDb = await UserModel.findOneAndUpdate(
-                { email: userDetails.email },
-                {
-                    $set: {
-                    planType,
-                    resumeLink,
-                    planLimit,
-                    },
-                },
-                { new: true } // optional: return the updated document
-                );   
-console.log(userFromDb) ;
-res.status(201).json({message : "Plan Selection Sucess",
-                    userDetails :{
-                        email:userFromDb.email,
-                        name : userFromDb.name,
-                        planLimit : userFromDb.planLimit,
-                        planType : userFromDb.planType,
-                        resumeLink : userFromDb.resumeLink,
-                        userType: userFromDb.userType                    
-                    },
-})
-} catch (error) {
-        console.log(error)
-    }
+export default async function(req, res) {
+  let { resumeLink, optimizedResumeLink, token, userDetails, planType, planLimit } = req.body;
+
+  try {
+    const userFromDb = await UserModel.findOneAndUpdate(
+      { email: userDetails.email },
+      {
+        $set: {
+          planType,
+          resumeLink,
+          optimizedResumeLink,  // ✅ new field
+          planLimit,
+        },
+      },
+      { new: true } // return updated document
+    );
+
+    console.log(userFromDb);
+
+    res.status(201).json({
+      message: "Plan Selection Success",
+      userDetails: {
+        email: userFromDb.email,
+        name: userFromDb.name,
+        planLimit: userFromDb.planLimit,
+        planType: userFromDb.planType,
+        resumeLink: userFromDb.resumeLink,
+        optimizedResumeLink: userFromDb.optimizedResumeLink,  // ✅ added to response
+        userType: userFromDb.userType,
+      },
+    });
+  } catch (error) {
+    console.log(error);
+    res.status(500).json({ message: "Server error" });
+  }
 }

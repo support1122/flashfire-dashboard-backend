@@ -20,7 +20,7 @@ export default function Routes(app){
   app.post('/api/alljobs', LocalTokenValidator, GetAllJobs);
   app.post('/api/jobs',LocalTokenValidator,  CheckForDuplicateJobs, AddJob );
   app.put('/api/jobs', LocalTokenValidator, VerifyJobIDAndChanges, UpdateChanges);
-  app.post('/api/plans/select',PlanSelect)
+  app.post('/api/plans/select', LocalTokenValidator,PlanSelect);
 
 
 }
