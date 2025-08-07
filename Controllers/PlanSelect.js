@@ -1,7 +1,7 @@
 import { UserModel } from "../Schema_Models/UserModel.js";
 
 export default async function(req, res) {
-  let { resumeLink, optimizedResumeLink, token, userDetails, planType, planLimit } = req.body;
+  let { resumeLink, coverLetter, token, userDetails, planType, planLimit } = req.body;
 
   try {
     const userFromDb = await UserModel.findOneAndUpdate(
@@ -10,7 +10,7 @@ export default async function(req, res) {
         $set: {
           planType,
           resumeLink,
-          optimizedResumeLink,  // ✅ new field
+          coverLetter,  // ✅ new field
           planLimit,
         },
       },
@@ -27,7 +27,7 @@ export default async function(req, res) {
         planLimit: userFromDb.planLimit,
         planType: userFromDb.planType,
         resumeLink: userFromDb.resumeLink,
-        optimizedResumeLink: userFromDb.optimizedResumeLink,  // ✅ added to response
+        coverLetter: userFromDb.coverLetter,  // ✅ added to response
         userType: userFromDb.userType,
       },
     });

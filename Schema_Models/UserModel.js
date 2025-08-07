@@ -25,7 +25,7 @@ export const userSchema = new mongoose.Schema({
     type: String,
     default: null,
   },
-  optimizedResumeLink: {
+  coverLetter: {
     type: String,
     default: null,
   },
