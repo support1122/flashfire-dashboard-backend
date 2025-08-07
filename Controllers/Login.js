@@ -13,7 +13,7 @@ export default async function Login(req, res) {
         if (passwordDecrypted === password) {
             return res.status(200).json({
                 message: 'Login Sucess..!',
-                userDetails: { name: existanceOfUser.name, email, planType:existanceOfUser.planType, userType:existanceOfUser.userType, planLimit : existanceOfUser.planLimit, resumeLink : existanceOfUser.resumeLink },
+                userDetails: { name: existanceOfUser.name, email, planType:existanceOfUser.planType, userType:existanceOfUser.userType, planLimit : existanceOfUser.planLimit, resumeLink : existanceOfUser.resumeLink, coverLetter : existanceOfUser.coverLetter },
                 token
             });
 
