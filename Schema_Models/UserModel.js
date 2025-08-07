@@ -29,7 +29,10 @@ export const userSchema = new mongoose.Schema({
     type: String,
     default: null,
   },
-
+  optimizedResume: {
+    type: String,
+    default: null,
+  },
   planType: {
     type: String,
     required: true,
