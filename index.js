@@ -4,7 +4,13 @@ import Connection from './Utils/ConnectDB.js';
 import cors from 'cors';
 
 const app = express();
-app.use(cors());
+app.use(cors({
+  origin: ['https://flashfire-dashboard-frontend.vercel.app','http://localhost:5173'],
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  credentials: true,
+}));
+app.options('*', cors());
 app.use((req, res, next) => {
   res.removeHeader('Cross-Origin-Opener-Policy');
   res.setHeader('Cross-Origin-Opener-Policy', 'unsafe-none');
