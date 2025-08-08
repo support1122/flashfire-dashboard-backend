@@ -1,56 +1,26 @@
-import mongoose from 'mongoose';
+// UserModel.js
+import mongoose from "mongoose";
+import { coverLetterSchema, optimizedResumeSchema } from "./Opt.Resumes_Cover_Schemas.js";
 
-export const userSchema = new mongoose.Schema({
-  userID: {
-    type: String,
-    required: true,
-    default: () => new Date().getTime()
-  },
-  name: {
-    type: String,
-    required: true,
-  },
-  email: {
-    type: String,
-    required: true,
-  },
-  passwordHashed: {
-    type: String,
-    required: true,
-    default: '--NO Password --/OAUTH'
-  },
+export const userSchema = new mongoose.Schema(
+  {
+    userID: { type: String, required: true, default: () => String(Date.now()) },
+    name:   { type: String, required: true },
+    email:  { type: String, required: true },
+    passwordHashed: { type: String, required: true, default: "--NO Password --/OAUTH" },
 
-  // 🔽 Updated to handle both resumes
-  resumeLink: {
-    type: String,
-    default: null,
+    // Base resume (single)
+    resumeLink: { type: String, default: null },
+
+    // Plural arrays + [] defaults
+    coverLetters:     { type: [coverLetterSchema],     default: [] },
+    optimizedResumes: { type: [optimizedResumeSchema], default: [] },
+
+    planType:  { type: String, required: true, default: "Free Trial" },
+    planLimit: { type: Number, default: null },
+    userType:  { type: String, default: "User" },
   },
-  coverLetter: {
-    type: String,
-    default: null,
-  },
-  optimizedResume: {
-    type: String,
-    default: null,
-  },
-  planType: {
-    type: String,
-    required: true,
-    default: 'Free Trial'
-  },
-  planLimit: {
-    type: Number,
-    default: null
-  },
-  userType: {
-    type: String,
-    default: 'User'
-  },
-  createdAt: {
-    type: String,
-    required: true,
-    default: () => new Date().toLocaleString()
-  }
-});
+  { timestamps: true }
+);
 
 export const UserModel = mongoose.model("users", userSchema);
