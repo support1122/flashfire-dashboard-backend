@@ -5,7 +5,7 @@ import cors from 'cors';
 
 const app = express();
 app.use(cors({
-  origin: ['https://flashfirejobs.com','https://flashfire-dashboard-frontend.vercel.app', 'http://localhost:8086'],
+  origin: ['https://flashfirejobs.com','https://flashfire-dashboard-frontend.vercel.app', 'http://localhost:8086','https://portal.flashfirejobs.com'],
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
   allowedHeaders: ['Content-Type', 'Authorization'],
   credentials: true,
@@ -34,3 +34,4 @@ const PORT = 8086;
 app.listen(PORT, () => {
     console.log('Server is live at port:', PORT);
 });
+
