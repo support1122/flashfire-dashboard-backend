@@ -5,7 +5,7 @@ import cors from 'cors';
 
 const app = express();
 app.use(cors({
-  origin: ['https://flashfire-dashboard-frontend.vercel.app', 'http://localhost:8086'],
+  origin: ['https://flashfirejobs.com','https://flashfire-dashboard-frontend.vercel.app', 'http://localhost:8086'],
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
   allowedHeaders: ['Content-Type', 'Authorization'],
   credentials: true,
