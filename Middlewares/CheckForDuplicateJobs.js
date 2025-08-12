@@ -11,7 +11,7 @@ export default async function CheckForDuplicateJobs(req, res, next) {
                                                     });
        if(existingJobDetails){
             //req.body.editjob = true;
-            return res.status(403).json({message : 'Job Already Exist  !..'});
+            return res.status(403).json({message : 'Job Already Exist  !'});
             
        }
        else {
