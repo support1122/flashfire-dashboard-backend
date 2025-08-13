@@ -4,7 +4,7 @@ import { UserModel } from "../Schema_Models/UserModel.js";
 
 export default async function VerifyJobIDAndChanges(req, res, next) {
     let {userDetails, jobID} = req.body;
-    console.log(req.body, 'verifying........')
+    // console.log(req.body, 'verifying........')
     try {
         let checkJobExistance = await JobModel.findOne({jobID})
         // let checkUserExistance = await UserModel.findOne({email : userDetails?.email})
@@ -14,7 +14,7 @@ export default async function VerifyJobIDAndChanges(req, res, next) {
         // if(!checkUserExistance){
         //     return res.status(403). json({message : 'user not found!..'})
         // }
-        console.log(checkJobExistance, 'verification')
+        // console.log(checkJobExistance, 'verification')
         next();
     } catch (error) {
         console.log(error);
