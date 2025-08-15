@@ -6,7 +6,7 @@ export default async function CheckForDuplicateJobs(req, res, next) {
     try {
        let existingJobDetails = await JobModel.findOne({userID : userDetails.email ,
                                                        jobTitle : jobDetails.jobTitle,
-                                                       joblink : jobDetails.joblink,
+                                                    //    joblink : jobDetails.joblink,
                                                         companyName :jobDetails.companyName
                                                     });
        if(existingJobDetails){
