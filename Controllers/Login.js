@@ -8,13 +8,23 @@ dotenv.config();
 
 export default async function Login(req, res) {
     const { email, password, existanceOfUser, token} = req.body;
-    console.log(req.body);
+    console.log('🔐 Login attempt for:', email);
 
     try {
+        // Check if user exists
+        if (!existanceOfUser) {
+            console.log('❌ User not found:', email);
+            return res.status(401).json({ message: "Invalid email or password" });
+        }
+
+        // Verify password
         let passwordDecrypted = decrypt(existanceOfUser.passwordHashed)
         if (passwordDecrypted === password) {
+            console.log('✅ Password verified for:', email);
+            
             // Generate and send OTP for login verification
             const otp = generateOTP();
+            console.log('🔐 Generated OTP for', email, ':', otp);
             
             // Save OTP to database
             await OTPModel.findOneAndUpdate(
@@ -27,11 +37,13 @@ export default async function Login(req, res) {
                 },
                 { upsert: true, new: true }
             );
+            console.log('💾 OTP saved to database for:', email);
 
             // Send OTP email
             const emailResult = await sendOTPEmail(email, otp, existanceOfUser.name, 'login');
             
             if (emailResult.success) {
+                console.log('📧 Email sent successfully for:', email);
                 return res.status(200).json({
                     message: "OTP sent to your email for verification",
                     userDetails: { 
@@ -47,11 +59,10 @@ export default async function Login(req, res) {
                     }
                 });
             } else {
-                console.log('OTP Email Error:', emailResult.error);
-                // For development, log OTP to console
-                console.log('🔐 LOGIN OTP for', email, ':', otp);
+                console.log('⚠️ Email sending failed for:', email, 'Error:', emailResult.error);
+                // Still return success since OTP is logged to console
                 return res.status(200).json({
-                    message: "OTP sent to your email for verification",
+                    message: "OTP sent to your email for verification (check console for OTP)",
                     userDetails: { 
                         name: existanceOfUser.name, 
                         email, 
@@ -66,12 +77,13 @@ export default async function Login(req, res) {
                 });
             }
         } else {
+            console.log('❌ Invalid password for:', email);
             req.body.token = 'InvalidUser';
-            return res.status(401).json({ message: "Invalid password" });
+            return res.status(401).json({ message: "Invalid email or password" });
         }
 
     } catch (error) {
-        console.log(error);
+        console.log('❌ Login error:', error);
         res.status(500).json({ message: "Internal server error" });
     }
 }
