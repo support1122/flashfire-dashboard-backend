@@ -11,13 +11,6 @@ export default async function Login(req, res) {
     console.log(req.body);
 
     try {
-        // Check if user's email is verified
-        if (!existanceOfUser.isEmailVerified) {
-            return res.status(401).json({ 
-                message: "Please verify your email before logging in. Check your inbox for the verification OTP." 
-            });
-        }
-
         let passwordDecrypted = decrypt(existanceOfUser.passwordHashed)
         if (passwordDecrypted === password) {
             // Generate and send OTP for login verification

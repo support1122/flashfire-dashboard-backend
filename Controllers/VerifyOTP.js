@@ -7,7 +7,7 @@ import { encrypt } from '../Utils/CryptoHelper.js';
 dotenv.config();
 
 export default async function VerifyOTP(req, res) {
-    const { email, otp, name, password } = req.body;
+    const { email, otp } = req.body;
 
     try {
         // Find the OTP record
@@ -15,7 +15,7 @@ export default async function VerifyOTP(req, res) {
             email,
             otp,
             isUsed: false,
-            expiresAt: { $gt: new Date() }
+            createdAt: { $gt: new Date(Date.now() - 10 * 60 * 1000) } // 10 minutes ago
         });
 
         if (!otpRecord) {
@@ -24,29 +24,11 @@ export default async function VerifyOTP(req, res) {
             });
         }
 
-        // Check if user already exists (in case of duplicate registration attempts)
-        let user = await UserModel.findOne({ email });
-        
-        if (user) {
-            // If user exists but email is not verified, update the verification
-            if (!user.isEmailVerified) {
-                user.isEmailVerified = true;
-                user.emailVerificationToken = null;
-                await user.save();
-            } else {
-                return res.status(400).json({
-                    message: 'Email already verified'
-                });
-            }
-        } else {
-            // Create new user
-            const passwordEncrypted = encrypt(password);
-            user = await UserModel.create({
-                name,
-                email,
-                passwordHashed: passwordEncrypted,
-                isEmailVerified: true,
-                emailVerificationToken: null
+        // Find the user
+        const user = await UserModel.findOne({ email });
+        if (!user) {
+            return res.status(400).json({
+                message: 'User not found'
             });
         }
 
@@ -57,12 +39,12 @@ export default async function VerifyOTP(req, res) {
         // Generate JWT token
         const token = jwt.sign(
             { userId: user._id, email: user.email },
-            process.env.JWT_SECRET || 'your-secret-key',
+            process.env.JWT_SECRET_KEY || 'FLASHFIRE',
             { expiresIn: '24h' }
         );
 
         res.status(200).json({
-            message: 'Email verified successfully! Welcome to FlashFire Dashboard',
+            message: 'Login successful',
             userDetails: {
                 name: user.name,
                 email: user.email,

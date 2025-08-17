@@ -1,9 +1,7 @@
 import crypto from 'crypto'
 import dotenv from 'dotenv'
 import { UserModel } from '../Schema_Models/UserModel.js';
-import { OTPModel } from '../Schema_Models/OTPModel.js';
 import { encrypt } from '../Utils/CryptoHelper.js';
-import { sendOTPEmail, generateOTP } from '../Utils/EmailService.js';
 dotenv.config();
 
 export default async function Register(req, res) {
@@ -18,30 +16,25 @@ export default async function Register(req, res) {
             });
         }
 
-        // Generate OTP
-        const otp = generateOTP();
-        const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes from now
+        // Encrypt password
+        const passwordEncrypted = encrypt(password);
 
-        // Save OTP to database
-        await OTPModel.create({
+        // Create user directly without email verification
+        const newUser = await UserModel.create({
+            name,
             email,
-            otp,
-            expiresAt
+            passwordHashed: passwordEncrypted,
+            isEmailVerified: true, // Set to true since we're not doing email verification
+            emailVerificationToken: null
         });
 
-        // Send OTP email
-        const emailResult = await sendOTPEmail(email, otp, name);
-        
-        if (!emailResult.success) {
-            return res.status(500).json({
-                message: 'Failed to send OTP email',
-                error: emailResult.message
-            });
-        }
-
-        res.status(200).json({
-            message: 'OTP sent to your email for verification',
-            email: email
+        res.status(201).json({
+            message: 'User registered successfully! You can now login.',
+            userDetails: {
+                name: newUser.name,
+                email: newUser.email,
+                isEmailVerified: newUser.isEmailVerified
+            }
         });
            
     } catch (error) {
