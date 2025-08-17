@@ -7,18 +7,26 @@ dotenv.config();
 // Configure Resend with the provided API key
 const resend = new Resend(process.env.RESEND_API_KEY || 're_E5Vx6XvV_DakAD4SLnWGSptb1oAY6VebS');
 
-export const sendOTPEmail = async (email, otp, userName) => {
+export const sendOTPEmail = async (email, otp, userName, type = 'registration') => {
   try {
+    const subject = type === 'login' 
+      ? 'Login Verification OTP - FlashFire Dashboard'
+      : 'Email Verification OTP - FlashFire Dashboard';
+    
+    const message = type === 'login'
+      ? 'To complete your login, please use the following OTP:'
+      : 'Thank you for registering with FlashFire Dashboard. To complete your registration, please use the following OTP:';
+
     const { data, error } = await resend.emails.send({
       from: process.env.RESEND_FROM_EMAIL || 'FlashFire <onboarding@resend.dev>',
       to: [email],
-      subject: 'Email Verification OTP - FlashFire Dashboard',
+      subject: subject,
       html: `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; background-color: #f8f9fa;">
           <div style="background-color: #ffffff; padding: 30px; border-radius: 10px; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);">
-            <h2 style="color: #333; text-align: center; margin-bottom: 30px;">Email Verification</h2>
+            <h2 style="color: #333; text-align: center; margin-bottom: 30px;">${type === 'login' ? 'Login Verification' : 'Email Verification'}</h2>
             <p style="color: #666; font-size: 16px; line-height: 1.6;">Hello ${userName},</p>
-            <p style="color: #666; font-size: 16px; line-height: 1.6;">Thank you for registering with FlashFire Dashboard. To complete your registration, please use the following OTP:</p>
+            <p style="color: #666; font-size: 16px; line-height: 1.6;">${message}</p>
             
             <div style="background-color: #f8f9fa; padding: 20px; border-radius: 8px; text-align: center; margin: 30px 0;">
               <h1 style="color: #007bff; font-size: 32px; letter-spacing: 8px; margin: 0; font-weight: bold;">${otp}</h1>

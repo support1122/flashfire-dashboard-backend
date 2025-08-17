@@ -2,6 +2,8 @@ import { UserModel } from "../Schema_Models/UserModel.js";
 import dotenv from 'dotenv';
 import jwt from 'jsonwebtoken'
 import { decrypt } from "../Utils/CryptoHelper.js";
+import { OTPModel } from "../Schema_Models/OTPModel.js";
+import { sendOTPEmail, generateOTP } from "../Utils/EmailService.js";
 dotenv.config();
 
 export default async function Login(req, res) {
@@ -18,22 +20,58 @@ export default async function Login(req, res) {
 
         let passwordDecrypted = decrypt(existanceOfUser.passwordHashed)
         if (passwordDecrypted === password) {
-            return res.status(200).json({
-                message: 'Login Success..!',
-                userDetails: { 
-                    name: existanceOfUser.name, 
+            // Generate and send OTP for login verification
+            const otp = generateOTP();
+            
+            // Save OTP to database
+            await OTPModel.findOneAndUpdate(
+                { email },
+                { 
                     email, 
-                    planType: existanceOfUser.planType, 
-                    userType: existanceOfUser.userType, 
-                    planLimit: existanceOfUser.planLimit, 
-                    resumeLink: existanceOfUser.resumeLink, 
-                    coverLetters: existanceOfUser.coverLetters, 
-                    optimizedResumes: existanceOfUser.optimizedResumes,
-                    isEmailVerified: existanceOfUser.isEmailVerified
+                    otp, 
+                    createdAt: new Date(),
+                    isUsed: false
                 },
-                token
-            });
+                { upsert: true, new: true }
+            );
 
+            // Send OTP email
+            const emailResult = await sendOTPEmail(email, otp, existanceOfUser.name, 'login');
+            
+            if (emailResult.success) {
+                return res.status(200).json({
+                    message: "OTP sent to your email for verification",
+                    userDetails: { 
+                        name: existanceOfUser.name, 
+                        email, 
+                        planType: existanceOfUser.planType, 
+                        userType: existanceOfUser.userType, 
+                        planLimit: existanceOfUser.planLimit, 
+                        resumeLink: existanceOfUser.resumeLink, 
+                        coverLetters: existanceOfUser.coverLetters, 
+                        optimizedResumes: existanceOfUser.optimizedResumes,
+                        isEmailVerified: existanceOfUser.isEmailVerified
+                    }
+                });
+            } else {
+                console.log('OTP Email Error:', emailResult.error);
+                // For development, log OTP to console
+                console.log('🔐 LOGIN OTP for', email, ':', otp);
+                return res.status(200).json({
+                    message: "OTP sent to your email for verification",
+                    userDetails: { 
+                        name: existanceOfUser.name, 
+                        email, 
+                        planType: existanceOfUser.planType, 
+                        userType: existanceOfUser.userType, 
+                        planLimit: existanceOfUser.planLimit, 
+                        resumeLink: existanceOfUser.resumeLink, 
+                        coverLetters: existanceOfUser.coverLetters, 
+                        optimizedResumes: existanceOfUser.optimizedResumes,
+                        isEmailVerified: existanceOfUser.isEmailVerified
+                    }
+                });
+            }
         } else {
             req.body.token = 'InvalidUser';
             return res.status(401).json({ message: "Invalid password" });
