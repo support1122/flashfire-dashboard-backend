@@ -18,7 +18,7 @@ export const sendOTPEmail = async (email, otp, userName, type = 'registration') 
       : 'Thank you for registering with FlashFire Dashboard. To complete your registration, please use the following OTP:';
 
     const { data, error } = await resend.emails.send({
-      from: process.env.RESEND_FROM_EMAIL || 'FlashFire <onboarding@resend.dev>',
+      from: 'FlashFire <onboarding@resend.dev>', // Using Resend's default domain for better delivery
       to: [email],
       subject: subject,
       html: `
@@ -40,18 +40,25 @@ export const sendOTPEmail = async (email, otp, userName, type = 'registration') 
             </div>
           </div>
         </div>
-      `
+      `,
+      text: `LOGIN VERIFICATION\n\nHello ${userName}, \n\n${message}\n\nOTP: ${otp}\n\nThis OTP will expire in 10 minutes for security reasons.\n\nBest regards,\nThe FlashFire Dashboard Team`
     });
 
     if (error) {
       console.error('Resend error:', error);
+      // For development, log OTP to console
+      console.log('🔐 OTP for', email, ':', otp);
       return { success: false, message: 'Failed to send OTP email', error: error.message };
     }
 
     console.log('Email sent successfully:', data);
+    // Also log OTP to console for development
+    console.log('🔐 OTP for', email, ':', otp);
     return { success: true, message: 'OTP sent successfully' };
   } catch (error) {
     console.error('Error sending email:', error);
+    // For development, log OTP to console
+    console.log('🔐 OTP for', email, ':', otp);
     return { success: false, message: 'Failed to send OTP email', error: error.message };
   }
 };
