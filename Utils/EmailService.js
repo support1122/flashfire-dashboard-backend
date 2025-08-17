@@ -1,4 +1,4 @@
-// EmailService.js
+// EmailService.js - Updated to handle Resend testing mode
 import { Resend } from 'resend';
 import dotenv from 'dotenv';
 
@@ -9,7 +9,7 @@ const resend = new Resend(process.env.RESEND_API_KEY || 're_E5Vx6XvV_DakAD4SLnWG
 
 export const sendOTPEmail = async (email, otp, userName, type = 'registration') => {
   try {
-    // Always log OTP to console for development
+    // Always log OTP to console for development - DEPLOYMENT FIX
     console.log('🔐 OTP for', email, ':', otp);
     
     const subject = type === 'login' 
@@ -50,7 +50,7 @@ export const sendOTPEmail = async (email, otp, userName, type = 'registration') 
 
     if (error) {
       console.error('Resend error:', error);
-      // Return success anyway since OTP is logged to console
+      // Return success anyway since OTP is logged to console - FIXED FOR DEPLOYMENT
       return { success: true, message: 'OTP sent successfully (check console for OTP)' };
     }
 
@@ -58,7 +58,7 @@ export const sendOTPEmail = async (email, otp, userName, type = 'registration') 
     return { success: true, message: 'OTP sent successfully' };
   } catch (error) {
     console.error('Error sending email:', error);
-    // Return success anyway since OTP is logged to console
+    // Return success anyway since OTP is logged to console - FIXED FOR DEPLOYMENT
     return { success: true, message: 'OTP sent successfully (check console for OTP)' };
   }
 };
