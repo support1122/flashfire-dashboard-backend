@@ -24,7 +24,7 @@ export const JobSchema = new mongoose.Schema({
   currentStatus : {
     type : String,
     required : true,
-    default : 'Added'
+    default : 'saved'
   },
   jobDescription: {
     type: String,
