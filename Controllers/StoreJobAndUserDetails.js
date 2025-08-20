@@ -10,7 +10,7 @@ export default async function StoreJobAndUserDetails(req, res) {
             return;
         }
         // make sure `userID` is defined above (e.g., from auth or req.body)
-        console.log(payload);
+        
         const payload = {
         dateAdded: req.body['Published at'] ? new Date(req.body['Published at']) : new Date(),
         userID : req.body.userID, // <- ensure this variable exists
@@ -27,7 +27,7 @@ export default async function StoreJobAndUserDetails(req, res) {
         companyName: req.body['Company Name'] || '',
         createdAt: req.body['Published at'] ? new Date(req.body['Published at']) : new Date()
         };
-
+        console.log(payload);
         // preferred (Mongoose):
         await JobModel.create(payload);
 console.log('job created.')
