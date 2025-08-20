@@ -13,7 +13,7 @@ export default async function StoreJobAndUserDetails(req, res) {
         console.log(payload);
         const payload = {
         dateAdded: req.body['Published at'] ? new Date(req.body['Published at']) : new Date(),
-        userID, // <- ensure this variable exists
+        userID : req.body.userID, // <- ensure this variable exists
         jobTitle: req.body['Title'] || 'Untitled Job',
         jobDescription: JSON.stringify({
             employmentType: req.body['Employment Type'] || '',
