@@ -24,17 +24,17 @@ app.get('/', (req, res) => {
 });
 
 
-app.post('/sheets/row-marked', (req, res) => {
-  if (req.headers['x-auth-token'] !== 'your-shared-secret') {
-    return res.status(401).json({ error: 'unauthorized' });
-  }
+// app.post('/sheets/row-marked', (req, res) => {
+//   if (req.headers['x-auth-token'] !== 'your-shared-secret') {
+//     return res.status(401).json({ error: 'unauthorized' });
+//   }
 
-  // req.body contains the row object (including headers as keys)
-  console.log('Received marked row:', req.body);
+//   // req.body contains the row object (including headers as keys)
+//   console.log('Received marked row:', req.body);
 
-  // TODO: save to DB, queue, etc.
-  res.json({ ok: true });
-});
+//   // TODO: save to DB, queue, etc.
+//   res.json({ ok: true });
+// });
 
 try {
   Routes(app);

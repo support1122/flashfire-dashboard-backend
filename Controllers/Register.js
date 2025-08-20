@@ -8,7 +8,7 @@ export default async function Register(req, res) {
      try {
         let passwordEncrypted = encrypt(password);
         
-        await UserModel.create({name: firstName+` ${lastName}` ,email, passwordHashed: passwordEncrypted});
+        await UserModel.create({name: `${firstName}` +` ${lastName}` ,email, passwordHashed: passwordEncrypted});
         let newUserDetails = await UserModel.findOne({email});
         res.status(200).json({
             message: 'User registered',
