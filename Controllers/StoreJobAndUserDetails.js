@@ -5,7 +5,7 @@ export default async function StoreJobAndUserDetails(req, res) {
     
     try {
         console.log(req.body);
-        const existance = await JobModel.findOne({jobTitle : req.body.Title, userID, companyName: req.body['Company Name'], joblink : req.body['Apply Url']});
+        const existance = await JobModel.findOne({jobTitle : req.body.Title, userID : req.body.userID , companyName: req.body['Company Name'], joblink : req.body['Apply Url']});
         if(existance){
             return;
         }
