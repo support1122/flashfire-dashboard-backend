@@ -19,9 +19,17 @@ const parseAddress = (addr) => {
   const [state = "", ...zipParts] = stateZip.split(/\s+/);
   const zip = zipParts.join(" ").trim();
 
-  if (!street && !city && !state && !zip) return undefined; // don't set empty
-  return { street, city, state, zip, country: "United States" };
+  const result = {};
+  if (street) result.street = street;
+  if (city) result.city = city;
+  if (state) result.state = state;
+  if (zip) result.zip = zip;
+  if (Object.keys(result).length === 0) return undefined;
+
+  result.country = "United States";
+  return result;
 };
+
 
 const toDate = (val) => {
   if (!val) return undefined;
@@ -58,7 +66,8 @@ export default async function Add_Update_Profile(req, res) {
       visaStatus: b.visaStatus,
       visaExpiry: toDate(b.visaExpiry),
 
-      address: parseAddress(b.address),
+      address: b.address || undefined,
+
 
       preferredRoles: splitList(b.preferredRoles),
       experienceLevel: b.experienceLevel,
