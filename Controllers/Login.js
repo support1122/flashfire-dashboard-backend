@@ -17,7 +17,7 @@ export default async function Login(req, res) {
                 message: 'Login Sucess..!',
                 userDetails: { name: existanceOfUser.name, email, planType:existanceOfUser.planType, userType:existanceOfUser.userType, planLimit : existanceOfUser.planLimit, resumeLink : existanceOfUser.resumeLink, coverLetters : existanceOfUser.coverLetters, optimizedResumes: existanceOfUser.optimizedResumes },
                 token,
-                // userProfile : profileLookUp?.email.length > 0 ? profileLookUp : null
+                userProfile : profileLookUp?.email.length > 0 ? profileLookUp : null
             });
 
         } else {
