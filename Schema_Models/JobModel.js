@@ -1,17 +1,68 @@
-import mongoose from "mongoose";
-
+import  mongoose  from "mongoose";
 export const JobSchema = new mongoose.Schema({
-  jobID: { type: String, default: () => Date.now().toString(), index: true },
-  userID: { type: String, required: true },
-  jobTitle: { type: String, required: true },
-  currentStatus: { type: String, default: "saved" },
-  jobDescription: { type: mongoose.Schema.Types.Mixed, required: true }, // store rich object
-  joblink: { type: String, required: true },
-  companyName: { type: String, required: true },
-  timeline: { type: [String], default: ["Added"] },
-  attachments: { type: [String], default: [] }
-}, { timestamps: true });
+  jobID: {
+    type: String,
+    required: true,
+    // unique: true,
+    default : ()=>Date.now().toString()
+  },
+  dateAdded:{
+    type : String,
+    required : true,
+    default: () =>String(new Date().toLocaleString())
+  },
+  userID:{
+    type: String,
+    required : true,
+    default : 'www.userID.com'
+  },
+  jobTitle : {
+    type : String,
+    required : true ,
+    default : 'www.jobTitle.com'
+  },
+  currentStatus : {
+    type : String,
+    required : true,
+    default : 'saved'
+  },
+  jobDescription: {
+    type: String,
+    required: true,
+    default : 'www.description.com'
+  },
+  joblink:{
+    type : String,
+    required : true,
+    default : 'www.google.com'
+  },
+  companyName: {
+    type: String,
+    required: true,
+    default : 'unknown'
+  },
+  timeline:{
+    type : [String],
+    required : true,
+    default : ['Added']
+  },
+  createdAt : {
+    type : String,
+    default : () =>new Date().toLocaleString('en-US', 'Asia/Kolkata'),
+    required : true,
+    immutable : true
+  },
+  updatedAt:{
+    type : String,
+    required : true ,
+    default : () =>new Date().toLocaleString('en-US', 'Asia/Kolkata')   
+  },
+  attachments : {
+    type : [String],
+    required : true,
+    default : []
 
-JobSchema.index({ userID: 1, joblink: 1 }, { unique: true });
+  }
+});
 
-export const JobModel = mongoose.model("JobDB", JobSchema);
+export const JobModel = mongoose.model('JobDB', JobSchema)

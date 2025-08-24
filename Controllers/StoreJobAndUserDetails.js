@@ -109,8 +109,7 @@ export default async function StoreJobAndUserDetails(req, res) {
       joblink,
       companyName,
       // If your schema keeps a string:
-      jobDescription: jobDescriptionObj
-,
+      jobDescription: JSON.stringify(jobDescriptionObj),
       // If you migrate schema to Mixed/Object: jobDescription: jobDescriptionObj,
       currentStatus: "saved",
       dateAdded: when.toISOString(),
