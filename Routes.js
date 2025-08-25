@@ -8,6 +8,7 @@ import GetAllJobs from "./Controllers/GetAllJobs.js";
 import StoreJobAndUserDetails from "./Controllers/StoreJobAndUserDetails.js";
 import UpdateChanges from "./Controllers/UpdateChanges.js";
 import PlanSelect from "./Controllers/PlanSelect.js";
+import { uploadProfileFile, upload } from "./Controllers/UploadProfileFile.js";
 import LocalTokenValidator from "./Middlewares/LocalTokenValidator.js";
 import RegisterVerify from "./Middlewares/RegisterVerify.js";
 import ProfileCheck from "./Middlewares/ProfileCheck.js";
@@ -26,6 +27,7 @@ app.post("/google-oauth", GoogleOAuth);
 
 // Profile routes
 app.post("/setprofile", LocalTokenValidator, ProfileCheck, Add_Update_Profile);
+app.post("/upload-profile-file", LocalTokenValidator, upload.single('file'), uploadProfileFile);
 
 // Job routes
 app.post("/addjob", LocalTokenValidator, CheckForDuplicateJobs, AddJob);
