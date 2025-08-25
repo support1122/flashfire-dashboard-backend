@@ -56,12 +56,14 @@ app.use(limiter);
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ extended: true, limit: "50mb" }));
 
-// Request logging middleware
-app.use((req, res, next) => {
-  const timestamp = new Date().toISOString();
-  console.log(`[${timestamp}] ${req.method} ${req.path} - ${req.ip}`);
-  next();
-});
+// Request logging middleware (only in development or for important routes)
+if (NODE_ENV === "development") {
+  app.use((req, res, next) => {
+    const timestamp = new Date().toISOString();
+    console.log(`[${timestamp}] ${req.method} ${req.path} - ${req.ip}`);
+    next();
+  });
+}
 
 // Routes
 app.use("/", Routes);
@@ -73,7 +75,18 @@ app.get("/health", (req, res) => {
     message: "Server is running",
     environment: NODE_ENV,
     timestamp: new Date().toISOString(),
-    uptime: process.uptime()
+    uptime: process.uptime(),
+    port: PORT
+  });
+});
+
+// Root endpoint for Render health checks
+app.get("/", (req, res) => {
+  res.json({ 
+    message: "FlashFire Dashboard API",
+    status: "running",
+    environment: NODE_ENV,
+    timestamp: new Date().toISOString()
   });
 });
 
@@ -98,9 +111,15 @@ app.use((err, req, res, next) => {
 });
 
 // Connect to database
-connectDB();
+connectDB().then(() => {
+  console.log("✅ Database connected successfully");
+}).catch((error) => {
+  console.error("❌ Database connection failed:", error);
+  process.exit(1);
+});
 
 app.listen(PORT, () => {
   console.log(`🚀 Server is running on port ${PORT} in ${NODE_ENV} mode`);
   console.log(`📊 Health check available at http://localhost:${PORT}/health`);
+  console.log(`🌐 API available at http://localhost:${PORT}`);
 });
