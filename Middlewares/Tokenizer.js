@@ -10,7 +10,7 @@ export default async function Tokenizer(req, res,next) {
     return res.status(400).json({ message: 'Email is required for token generation' });
   }
   try {
-    const secret = process.env.JWT_SECRET_KEY ;
+    const secret = process.env.JWT_SECRET || 'flashfire-secret-key-2024';
     const token = jwt.sign({email, name : existanceOfUser?.name} , secret , { expiresIn: '1d' });
     req.body.token = token;
     req.headers.authorization = `Bearer ${token}`
