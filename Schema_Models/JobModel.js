@@ -28,13 +28,13 @@ export const JobSchema = new mongoose.Schema({
   },
   jobDescription: {
     type: String,
-    required: true,
-    default : 'www.description.com'
+    required: false,
+    default : ''
   },
   joblink:{
     type : String,
-    required : true,
-    default : 'www.google.com'
+    required : false,
+    default : ''
   },
   companyName: {
     type: String,
