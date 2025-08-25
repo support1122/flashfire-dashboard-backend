@@ -21,8 +21,9 @@ const GoogleOAuth = async (req, res) => {
 let userDetails = await UserModel.findOne({ email: payload.email });
 const tokenNew = jwt.sign(
             { email: payload?.email, name: userFromDb?.name },
-            process.env.JWT_SECRET_KEY,
-            { expiresIn: '1d' });
+            process.env.JWT_SECRET || 'flashfire-secret-key-2024',
+            { expiresIn: '24h' }
+        );
 return res.status(200).json({
                 message: 'Login Sucess..!',
                 userDetails: { name: userDetails.name, email : userDetails.email, planType:userDetails.planType, userType:userDetails.userType, planLimit : userDetails.planLimit, resumeLink : userDetails.resumeLink },

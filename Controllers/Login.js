@@ -6,22 +6,40 @@ import { decrypt } from "../Utils/CryptoHelper.js";
 dotenv.config();
 
 export default async function Login(req, res) {
-    const { email, password, existanceOfUser, token} = req.body;
+    const { email, password } = req.body;
     console.log(req.body);
     
     try {
-        let profileLookUp = await ProfileModel.findOne({email});
-        let passwordDecrypted = decrypt(existanceOfUser.passwordHashed)
+        // First find the user by email
+        const existanceOfUser = await UserModel.findOne({ email });
+        
+        if (!existanceOfUser) {
+            return res.status(401).json({ message: "User not found" });
+        }
+
+        // Check password
+        let passwordDecrypted = decrypt(existanceOfUser.passwordHashed);
         if (passwordDecrypted === password) {
+            // Find user profile
+            let profileLookUp = await ProfileModel.findOne({email});
+            
             return res.status(200).json({
-                message: 'Login Sucess..!',
-                userDetails: { name: existanceOfUser.name, email, planType:existanceOfUser.planType, userType:existanceOfUser.userType, planLimit : existanceOfUser.planLimit, resumeLink : existanceOfUser.resumeLink, coverLetters : existanceOfUser.coverLetters, optimizedResumes: existanceOfUser.optimizedResumes },
-                token,
-                userProfile : profileLookUp?.email.length > 0 ? profileLookUp : null
+                message: 'Login Success..!',
+                userDetails: { 
+                    name: existanceOfUser.name, 
+                    email, 
+                    planType: existanceOfUser.planType, 
+                    userType: existanceOfUser.userType, 
+                    planLimit: existanceOfUser.planLimit, 
+                    resumeLink: existanceOfUser.resumeLink, 
+                    coverLetters: existanceOfUser.coverLetters, 
+                    optimizedResumes: existanceOfUser.optimizedResumes 
+                },
+                token: jwt.sign({ email }, process.env.JWT_SECRET || 'your-secret-key'),
+                userProfile: profileLookUp?.email?.length > 0 ? profileLookUp : null
             });
 
         } else {
-            req.body.token = 'InvalidUser';
             return res.status(401).json({ message: "Invalid password" });
         }
 

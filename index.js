@@ -1,49 +1,106 @@
-import express from 'express';
+import express from "express";
+import cors from "cors";
+import dotenv from "dotenv";
+import helmet from "helmet";
+import rateLimit from "express-rate-limit";
+import connectDB from "./Utils/ConnectDB.js";
 import Routes from "./Routes.js";
-import Connection from './Utils/ConnectDB.js';
-import cors from 'cors';
+
+dotenv.config();
 
 const app = express();
-app.use(cors({
-  origin: ['https://portal.flashfirejobs.com','https://flashfire-dashboard-frontend.vercel.app', 'http://localhost:5173', 'http://localhost:5173/login', 'https://portal.flashfirejobs.com/login'],
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
-  credentials: true,
+const PORT = process.env.PORT || 8001;
+const NODE_ENV = process.env.NODE_ENV || "development";
+
+// Security middleware
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
+      fontSrc: ["'self'", "https://fonts.gstatic.com"],
+      imgSrc: ["'self'", "data:", "https:", "blob:"],
+      scriptSrc: ["'self'"],
+      connectSrc: ["'self'", "https://api.cloudinary.com", "https://api.openai.com"],
+    },
+  },
 }));
-app.options('*', cors());
+
+// CORS configuration
+const corsOptions = {
+  origin: NODE_ENV === "production" 
+    ? process.env.ALLOWED_ORIGINS?.split(",") || []
+    : ["http://localhost:3000", "http://localhost:5173"],
+  credentials: true,
+  optionsSuccessStatus: 200,
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
+};
+
+app.use(cors(corsOptions));
+
+// Rate limiting
+const limiter = rateLimit({
+  windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS) || 15 * 60 * 1000, // 15 minutes
+  max: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS) || 100, // limit each IP to 100 requests per windowMs
+  message: {
+    error: "Too many requests from this IP, please try again later.",
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+app.use(limiter);
+
+// Body parsing middleware
+app.use(express.json({ limit: "50mb" }));
+app.use(express.urlencoded({ extended: true, limit: "50mb" }));
+
+// Request logging middleware
 app.use((req, res, next) => {
-  res.removeHeader('Cross-Origin-Opener-Policy');
-  res.setHeader('Cross-Origin-Opener-Policy', 'unsafe-none');
+  const timestamp = new Date().toISOString();
+  console.log(`[${timestamp}] ${req.method} ${req.path} - ${req.ip}`);
   next();
 });
-app.use(express.json());
 
-// Add default root route
-app.get('/', (req, res) => {
-    res.send('Dashboard API is up and running 🚀');
+// Routes
+app.use("/", Routes);
+
+// Health check endpoint
+app.get("/health", (req, res) => {
+  res.json({ 
+    status: "OK", 
+    message: "Server is running",
+    environment: NODE_ENV,
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime()
+  });
 });
 
+// 404 handler
+app.use("*", (req, res) => {
+  res.status(404).json({ error: "Route not found" });
+});
 
-// app.post('/sheets/row-marked', (req, res) => {
-//   if (req.headers['x-auth-token'] !== 'your-shared-secret') {
-//     return res.status(401).json({ error: 'unauthorized' });
-//   }
+// Global error handler
+app.use((err, req, res, next) => {
+  console.error("Global error handler:", err);
+  
+  const statusCode = err.statusCode || 500;
+  const message = NODE_ENV === "production" 
+    ? "Internal server error" 
+    : err.message || "Something went wrong";
+  
+  res.status(statusCode).json({
+    error: message,
+    ...(NODE_ENV === "development" && { stack: err.stack })
+  });
+});
 
-//   // req.body contains the row object (including headers as keys)
-//   console.log('Received marked row:', req.body);
+// Connect to database
+connectDB();
 
-//   // TODO: save to DB, queue, etc.
-//   res.json({ ok: true });
-// });
-
-try {
-  Routes(app);
-} catch (err) {
-  console.error("❌ Route Mount Error:", err);
-}
-Connection();
-
-const PORT = 8086;
 app.listen(PORT, () => {
-    console.log('Server is live at port:', PORT);
+  console.log(`🚀 Server is running on port ${PORT} in ${NODE_ENV} mode`);
+  console.log(`📊 Health check available at http://localhost:${PORT}/health`);
 });

@@ -11,9 +11,9 @@ export default async function LocalTokenValidator(req, res, next) {
     }
 
     try {
-        const decoded = jwt.verify(token, process.env.JWT_SECRET_KEY);
+        const decoded = jwt.verify(token, process.env.JWT_SECRET || 'flashfire-secret-key-2024');
         if (decoded?.email === userDetails.email) {
-            console.log('token validation suceessfull..!')
+            console.log('token validation successful..!')
             next();
         } else {
             return res.status(403).json({ message: "Token or user details missing" });
