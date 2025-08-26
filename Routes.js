@@ -3,6 +3,7 @@ import Login from "./Controllers/Login.js";
 import Register from "./Controllers/Register.js";
 import GoogleOAuth from "./Controllers/GoogleOAuth.js";
 import Add_Update_Profile from "./Controllers/Add_Update_Profile.js";
+<<<<<<< HEAD
 import AddJob from "./Controllers/AddJob.js";
 import GetAllJobs from "./Controllers/GetAllJobs.js";
 import StoreJobAndUserDetails from "./Controllers/StoreJobAndUserDetails.js";
@@ -17,6 +18,26 @@ import CheckForDuplicateJobs from "./Middlewares/CheckForDuplicateJobs.js";
 import Tokenizer from "./Middlewares/Tokenizer.js";
 import UpdateActionsVerifier from "./Middlewares/UpdateActionsVerifier.js";
 import VerifyJobIDAndChanges from "./Middlewares/VerifyJobIDAndChanges.js";
+=======
+import StoreJobAndUserDetails from './Controllers/StoreJobAndUserDetails.js'
+import { validateRequestOtpBody, validateVerifyOtpBody } from "./Middlewares/ValidateOTPBodies.js";
+import SendgridEmailExistance from "./Middlewares/SendgridEmailExistance.js";
+import { otpLoginRespondController, requestOtpController, verifyOtpCore } from "./Controllers/SendgridOtpAuth.js";
+import EnsureUserForOtp from "./Middlewares/EnsureUserForOtp.js";
+export default function Routes(app){
+  // app.post('/addjobviaapi, StoreJobAndUserDetails')
+  app.post('/register', RegisterVerify, Register);
+  app.post('/googleOAuth', GoogleAuth);
+  app.post('/login', LoginVerify, Tokenizer, Login);
+  app.post('/api/alljobs', LocalTokenValidator, GetAllJobs);
+  app.post('/api/jobs',LocalTokenValidator,  CheckForDuplicateJobs, AddJob );
+  app.put('/api/jobs', LocalTokenValidator, VerifyJobIDAndChanges, UpdateChanges);
+  app.post('/api/plans/select', LocalTokenValidator,PlanSelect);
+  app.post('/setprofile', LocalTokenValidator, ProfileCheck, Add_Update_Profile);
+  app.post('/sheets/row-marked', StoreJobAndUserDetails ) ;
+  app.post('/auth/request-otp', validateRequestOtpBody, SendgridEmailExistance, requestOtpController);
+  app.post('/auth/verify-otp', validateVerifyOtpBody, SendgridEmailExistance, verifyOtpCore, EnsureUserForOtp, Tokenizer, otpLoginRespondController);
+>>>>>>> 16c6287 (vfc)
 
 const app = express.Router();
 
