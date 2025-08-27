@@ -12,7 +12,6 @@ export default async function SendgridEmailExistance(req, res, next) {
     }
     req.body.email = email;
     req.body.existanceOfUser = existanceOfUser;
-    console.log('in SendgridEmailExistance');
     next();
   } catch (e) {
     console.error(e);

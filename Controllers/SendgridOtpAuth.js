@@ -22,7 +22,6 @@ export async function requestOtpController(req, res) {
       attemptsLeft: 5,
       expiresAt: expiryFromNow(minutes),
     });
-console.log(email,'from requestOtpController',email,otp,minutes);
     await sendOtpEmail(email, otp, minutes);
     
 
