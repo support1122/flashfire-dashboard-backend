@@ -47,7 +47,7 @@ router.post("/upload-profile-file", LocalTokenValidator, upload.single("file"), 
 // ---- Jobs ----
 router.post("/addjob", LocalTokenValidator, CheckForDuplicateJobs, AddJob);
 router.get("/getalljobs", LocalTokenValidator, GetAllJobs);
-router.post("/storejobanduserdetails", LocalTokenValidator, StoreJobAndUserDetails);
+router.post("/storejobanduserdetails", StoreJobAndUserDetails);
 router.put("/updatechanges", LocalTokenValidator, VerifyJobIDAndChanges, UpdateChanges);
 
 // ---- Plans ----
