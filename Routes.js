@@ -19,8 +19,12 @@ import GetAllJobs from "./Controllers/GetAllJobs.js";
 import CheckForDuplicateJobs from "./Middlewares/CheckForDuplicateJobs.js";
 import AddJob from "./Controllers/AddJob.js";
 import { uploadProfileFile, upload } from "./Controllers/UploadProfileFile.js";
+import RegisterVerify from './Middlewares/RegisterVerify.js';
 // export default function Routes(){
 const router = express.Router();
+
+//-----register route------------------
+router.post('/flashregister', RegisterVerify, Register );
 
 // ---- OTP ----
 router.post(
