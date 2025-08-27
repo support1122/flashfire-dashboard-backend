@@ -11,6 +11,7 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 8001;
 const NODE_ENV = process.env.NODE_ENV || "development";
+app.use(express.json({ limit: "50mb" }));
 
 // Security middleware
 app.use(helmet({
@@ -35,6 +36,7 @@ const corsOptions = {
           "https://www.portal.flashfirejobs.com",
           "https://flashfire-dashboard-frontend.vercel.app",
           "https://flashfire-dashboard.vercel.app",
+          "http://localhost:5173",
           ...(process.env.ALLOWED_ORIGINS?.split(",") || [])
         ]
       : ["http://localhost:3000", "http://localhost:5173"];
@@ -72,7 +74,7 @@ const limiter = rateLimit({
 app.use(limiter);
 
 // Body parsing middleware
-app.use(express.json({ limit: "50mb" }));
+
 app.use(express.urlencoded({ extended: true, limit: "50mb" }));
 
 // Request logging middleware (only in development or for important routes)
@@ -130,15 +132,14 @@ app.use((err, req, res, next) => {
 });
 
 // Connect to database
-connectDB().then(() => {
-  console.log("✅ Database connected successfully");
-}).catch((error) => {
-  console.error("❌ Database connection failed:", error);
-  process.exit(1);
-});
+connectDB();
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`🚀 Server is running on port ${PORT} in ${NODE_ENV} mode`);
   console.log(`📊 Health check available at http://localhost:${PORT}/health`);
   console.log(`🌐 API available at http://localhost:${PORT}`);
 });
+server.keepAliveTimeout = 86_400_000;   // how long to keep keep-alive sockets open
+server.headersTimeout   = 86_401_000;   // must be > keepAliveTimeout
+server.requestTimeout   = 86_400_000;   // time to receive the full request
+server.setTimeout(86_400_000);          // inactivity timeout on the socket (older API)

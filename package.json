@@ -26,6 +26,7 @@
     "npm": ">=8.0.0"
   },
   "dependencies": {
+    "@sendgrid/mail": "^8.1.5",
     "cloudinary": "^2.7.0",
     "cors": "^2.8.5",
     "dotenv": "^17.0.1",
