@@ -4,7 +4,7 @@ import { OtpToken } from "../Schema_Models/OtpModelSendgrid.js";
 import { ProfileModel } from "../Schema_Models/ProfileModel.js";
 import { sendOtpEmail } from "../Utils/SendGridHelper.js";
 import { generateOtp, hashOtp, expiryFromNow, randomHex } from "../Utils/Otp.js";
-
+import dotenv from 'dotenv/config'
 // POST /auth/request-otp
 export async function requestOtpController(req, res) {
   try {
@@ -16,15 +16,16 @@ export async function requestOtpController(req, res) {
     const salt = randomHex(16);
     const otpHash = hashOtp(otp, salt);
     const minutes = Number(process.env.OTP_TTL_MINUTES || 10);
-
     await OtpToken.create({
       email, otpHash, salt,
       purpose: "login",
       attemptsLeft: 5,
       expiresAt: expiryFromNow(minutes),
     });
-
+console.log(email,'from requestOtpController',email,otp,minutes);
     await sendOtpEmail(email, otp, minutes);
+    
+
     return res.json({ ok: true, message: "OTP sent if the email exists" });
   } catch (e) {
     console.error(e);

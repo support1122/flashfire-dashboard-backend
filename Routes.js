@@ -1,63 +1,56 @@
+// Routes.js
 import express from "express";
 import Login from "./Controllers/Login.js";
 import Register from "./Controllers/Register.js";
 import GoogleOAuth from "./Controllers/GoogleOAuth.js";
 import Add_Update_Profile from "./Controllers/Add_Update_Profile.js";
-<<<<<<< HEAD
-import AddJob from "./Controllers/AddJob.js";
-import GetAllJobs from "./Controllers/GetAllJobs.js";
 import StoreJobAndUserDetails from "./Controllers/StoreJobAndUserDetails.js";
-import UpdateChanges from "./Controllers/UpdateChanges.js";
-import PlanSelect from "./Controllers/PlanSelect.js";
-import { uploadProfileFile, upload } from "./Controllers/UploadProfileFile.js";
-import LocalTokenValidator from "./Middlewares/LocalTokenValidator.js";
-import RegisterVerify from "./Middlewares/RegisterVerify.js";
-import ProfileCheck from "./Middlewares/ProfileCheck.js";
-import LoginVerify from "./Middlewares/LoginVerify.js";
-import CheckForDuplicateJobs from "./Middlewares/CheckForDuplicateJobs.js";
-import Tokenizer from "./Middlewares/Tokenizer.js";
-import UpdateActionsVerifier from "./Middlewares/UpdateActionsVerifier.js";
-import VerifyJobIDAndChanges from "./Middlewares/VerifyJobIDAndChanges.js";
-=======
-import StoreJobAndUserDetails from './Controllers/StoreJobAndUserDetails.js'
 import { validateRequestOtpBody, validateVerifyOtpBody } from "./Middlewares/ValidateOTPBodies.js";
 import SendgridEmailExistance from "./Middlewares/SendgridEmailExistance.js";
+import Tokenizer from "./Middlewares/Tokenizer.js";
 import { otpLoginRespondController, requestOtpController, verifyOtpCore } from "./Controllers/SendgridOtpAuth.js";
 import EnsureUserForOtp from "./Middlewares/EnsureUserForOtp.js";
-export default function Routes(app){
-  // app.post('/addjobviaapi, StoreJobAndUserDetails')
-  app.post('/register', RegisterVerify, Register);
-  app.post('/googleOAuth', GoogleAuth);
-  app.post('/login', LoginVerify, Tokenizer, Login);
-  app.post('/api/alljobs', LocalTokenValidator, GetAllJobs);
-  app.post('/api/jobs',LocalTokenValidator,  CheckForDuplicateJobs, AddJob );
-  app.put('/api/jobs', LocalTokenValidator, VerifyJobIDAndChanges, UpdateChanges);
-  app.post('/api/plans/select', LocalTokenValidator,PlanSelect);
-  app.post('/setprofile', LocalTokenValidator, ProfileCheck, Add_Update_Profile);
-  app.post('/sheets/row-marked', StoreJobAndUserDetails ) ;
-  app.post('/auth/request-otp', validateRequestOtpBody, SendgridEmailExistance, requestOtpController);
-  app.post('/auth/verify-otp', validateVerifyOtpBody, SendgridEmailExistance, verifyOtpCore, EnsureUserForOtp, Tokenizer, otpLoginRespondController);
->>>>>>> 16c6287 (vfc)
+import LocalTokenValidator from "./Middlewares/LocalTokenValidator.js";
+import ProfileCheck from "./Middlewares/ProfileCheck.js";
+import PlanSelect from "./Controllers/PlanSelect.js";
+import VerifyJobIDAndChanges from "./Middlewares/VerifyJobIDAndChanges.js";
+import UpdateChanges from "./Controllers/UpdateChanges.js";
+import GetAllJobs from "./Controllers/GetAllJobs.js";
+import CheckForDuplicateJobs from "./Middlewares/CheckForDuplicateJobs.js";
+import AddJob from "./Controllers/AddJob.js";
+import { uploadProfileFile, upload } from "./Controllers/UploadProfileFile.js";
+// export default function Routes(){
+const router = express.Router();
 
-const app = express.Router();
+// ---- OTP ----
+router.post(
+  "/auth/request-otp",
+  validateRequestOtpBody,
+  SendgridEmailExistance,        // keep here if you must
+  requestOtpController
+);
 
-// Auth routes
-app.post("/login", Login);
-app.post("/register", RegisterVerify, Register);
-app.post("/google-oauth", GoogleOAuth);
+router.post(
+  "/auth/verify-otp",
+  validateVerifyOtpBody,
+  // ❌ Remove SendgridEmailExistance here — it can block new users
+  verifyOtpCore,                 // check code first
+  EnsureUserForOtp,              // create/fetch user
+  Tokenizer,                     // mint token
+  otpLoginRespondController      // respond
+);
 
-// Profile routes
-app.post("/setprofile", LocalTokenValidator, ProfileCheck, Add_Update_Profile);
-app.post("/upload-profile-file", LocalTokenValidator, upload.single('file'), uploadProfileFile);
+// ---- Profile ----
+router.post("/setprofile", LocalTokenValidator, ProfileCheck, Add_Update_Profile);
+router.post("/upload-profile-file", LocalTokenValidator, upload.single("file"), uploadProfileFile);
 
-// Job routes
-app.post("/addjob", LocalTokenValidator, CheckForDuplicateJobs, AddJob);
-app.get("/getalljobs", LocalTokenValidator, GetAllJobs);
-app.post("/storejobanduserdetails", LocalTokenValidator, StoreJobAndUserDetails);
-app.put("/updatechanges", LocalTokenValidator, VerifyJobIDAndChanges, UpdateChanges);
+// ---- Jobs ----
+router.post("/addjob", LocalTokenValidator, CheckForDuplicateJobs, AddJob);
+router.get("/getalljobs", LocalTokenValidator, GetAllJobs);
+router.post("/storejobanduserdetails", LocalTokenValidator, StoreJobAndUserDetails);
+router.put("/updatechanges", LocalTokenValidator, VerifyJobIDAndChanges, UpdateChanges);
 
-// Plan routes
-app.post("/api/plans/select", LocalTokenValidator, PlanSelect);
-
-export default app;
-
+// ---- Plans ----
+router.post("/api/plans/select", LocalTokenValidator, PlanSelect);
+// }
+export default router;   // <-- export the router object

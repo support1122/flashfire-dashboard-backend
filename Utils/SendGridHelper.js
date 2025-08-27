@@ -1,8 +1,13 @@
 import sgMail from "@sendgrid/mail";
+import dotenv from 'dotenv'; 
+dotenv.config();
 
-sgMail.setApiKey(process.env.SENDGRID_API_KEY);
+
+
+  sgMail.setApiKey(process.env.SENDGRID_API_KEY);
 
 export async function sendOtpEmail(to, otp, minutes = 10) {
+  console.log(process.env.SENDGRID_API_KEY, process.env.SENDGRID_FROM_EMAIL);
   const msg = {
     to,
     from: process.env.SENDGRID_FROM_EMAIL,

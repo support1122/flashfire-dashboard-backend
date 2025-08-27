@@ -11,6 +11,7 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 8001;
 const NODE_ENV = process.env.NODE_ENV || "development";
+app.use(express.json({ limit: "50mb" }));
 
 // Security middleware
 app.use(helmet({
@@ -35,6 +36,7 @@ const corsOptions = {
           "https://www.portal.flashfirejobs.com",
           "https://flashfire-dashboard-frontend.vercel.app",
           "https://flashfire-dashboard.vercel.app",
+          "http://localhost:5173",
           ...(process.env.ALLOWED_ORIGINS?.split(",") || [])
         ]
       : ["http://localhost:3000", "http://localhost:5173"];
@@ -72,7 +74,7 @@ const limiter = rateLimit({
 app.use(limiter);
 
 // Body parsing middleware
-app.use(express.json({ limit: "50mb" }));
+
 app.use(express.urlencoded({ extended: true, limit: "50mb" }));
 
 // Request logging middleware (only in development or for important routes)
