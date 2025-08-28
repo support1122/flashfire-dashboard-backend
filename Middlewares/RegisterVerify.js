@@ -14,6 +14,8 @@ export default async function RegisterVerify(req, res, next) {
         });
     }
     
+
+    
     // Temporarily disabled email validation due to API issues
     // let emailVerifyURL = `https://emailvalidation.abstractapi.com/v1/?api_key=${process.env.ABSTRACT_API_PRIMARY_KEY_BISWAJITSHRM66}&email=${email}`
     try {

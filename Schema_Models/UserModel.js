@@ -22,6 +22,12 @@ export const userSchema = new mongoose.Schema(
       default: "Free Trial",
       enum: ["Free Trial", "Ignite", "Professional", "Executive"]
     },
+    joinTime: {
+      type: String,
+      required: true,
+      default: "in 1 week",
+      enum: ["in 1 week", "in 2 week", "in 3 week", "in 4 week", "in 6-7 week"]
+    },
     planLimit: { type: Number, default: null },
     userType:  { type: String, default: "User" },
   },

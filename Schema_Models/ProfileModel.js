@@ -73,6 +73,12 @@ export const profileSchema = new mongoose.Schema({
     type: String,
     required: true,
   },
+  joinTime: {
+    type: String,
+    enum: ["in 1 week", "in 2 week", "in 3 week", "in 4 week", "in 6-7 week"],
+    required: true,
+    default: "in 1 week"
+  },
   linkedinUrl: {
     type: String,
     required: false,
