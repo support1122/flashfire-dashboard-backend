@@ -16,7 +16,12 @@ export const userSchema = new mongoose.Schema(
     coverLetters:     { type: [coverLetterSchema],     default: [] },
     optimizedResumes: { type: [optimizedResumeSchema], default: [] },
 
-    planType:  { type: String, required: true, default: "Free Trial" },
+    planType:  { 
+      type: String, 
+      required: true, 
+      default: "Free Trial",
+      enum: ["Free Trial", "Ignite", "Professional", "Executive"]
+    },
     planLimit: { type: Number, default: null },
     userType:  { type: String, default: "User" },
   },

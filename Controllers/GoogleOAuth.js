@@ -4,7 +4,7 @@ const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 import jwt from 'jsonwebtoken'
 
 const GoogleOAuth = async (req, res) => {
-  const { token } = req.body;
+  const { token, planType } = req.body;
 
  try {
   
@@ -16,7 +16,12 @@ const GoogleOAuth = async (req, res) => {
 
   let userFromDb = await UserModel.findOne({ email: payload.email });
   if (!userFromDb) {
-    await UserModel.create({ name: payload?.name, email: payload?.email });
+    // Create new user with selected plan or default to "Free Trial"
+    await UserModel.create({ 
+      name: payload?.name, 
+      email: payload?.email,
+      planType: planType || "Free Trial"
+    });
   }
 let userDetails = await UserModel.findOne({ email: payload.email });
 const tokenNew = jwt.sign(
@@ -26,11 +31,21 @@ const tokenNew = jwt.sign(
         );
 return res.status(200).json({
                 message: 'Login Sucess..!',
-                userDetails: { name: userDetails.name, email : userDetails.email, planType:userDetails.planType, userType:userDetails.userType, planLimit : userDetails.planLimit, resumeLink : userDetails.resumeLink },
+                userDetails: { 
+                  name: userDetails.name, 
+                  email: userDetails.email, 
+                  planType: userDetails.planType, 
+                  userType: userDetails.userType, 
+                  planLimit: userDetails.planLimit, 
+                  resumeLink: userDetails.resumeLink,
+                  coverLetters: userDetails.coverLetters,
+                  optimizedResumes: userDetails.optimizedResumes
+                },
                 token: tokenNew
             });
 } catch (error) {
   console.log(error)
+  return res.status(500).json({ message: 'Google OAuth failed' });
  }
 };
 export default GoogleOAuth;

@@ -5,7 +5,7 @@ import { UserModel } from '../Schema_Models/UserModel.js';
 import { encrypt } from '../Utils/CryptoHelper.js';
 dotenv.config();
 export default async function Register(req, res) {
-    let {email, firstName, lastName, password} = req.body;
+    let {email, firstName, lastName, password, planType} = req.body;
      try {
         // Check if user already exists
         const existingUser = await UserModel.findOne({email});
@@ -17,7 +17,15 @@ export default async function Register(req, res) {
 
         let passwordEncrypted = encrypt(password);
         
-        await UserModel.create({name: `${firstName} ${lastName}`, email, passwordHashed: passwordEncrypted});
+        // Create user with selected plan or default to "Free Trial"
+        const userData = {
+            name: `${firstName} ${lastName}`, 
+            email, 
+            passwordHashed: passwordEncrypted,
+            planType: planType || "Free Trial"
+        };
+        
+        await UserModel.create(userData);
         let newUserDetails = await UserModel.findOne({email});
         
         // Generate JWT token
@@ -25,7 +33,16 @@ export default async function Register(req, res) {
         
         res.status(200).json({
             message: 'User registered successfully',
-            user: newUserDetails,
+            userDetails: {
+                name: newUserDetails.name,
+                email: newUserDetails.email,
+                planType: newUserDetails.planType,
+                userType: newUserDetails.userType,
+                planLimit: newUserDetails.planLimit,
+                resumeLink: newUserDetails.resumeLink,
+                coverLetters: newUserDetails.coverLetters,
+                optimizedResumes: newUserDetails.optimizedResumes
+            },
             token: token
         });
            
