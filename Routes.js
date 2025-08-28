@@ -32,11 +32,12 @@ app.post("/upload-profile-file", LocalTokenValidator, upload.single('file'), upl
 // Job routes
 app.post("/addjob", LocalTokenValidator, CheckForDuplicateJobs, AddJob);
 app.get("/getalljobs", LocalTokenValidator, GetAllJobs);
-app.post("/storejobanduserdetails", LocalTokenValidator, StoreJobAndUserDetails);
+app.post("/storejobanduserdetails", StoreJobAndUserDetails);
 app.put("/updatechanges", LocalTokenValidator, VerifyJobIDAndChanges, UpdateChanges);
 
 // Plan routes
 app.post("/api/plans/select", LocalTokenValidator, PlanSelect);
 
 export default app;
+
 
