@@ -29,7 +29,7 @@ export default async function Register(req, res) {
         let newUserDetails = await UserModel.findOne({email});
         
         // Generate JWT token
-        const token = jwt.sign({ email }, process.env.JWT_SECRET || 'flashfire-secret-key-2024');
+        const token = jwt.sign({ email }, process.env.JWT_SECRET || 'flashfire-secret-key-2024', { expiresIn: '7d' });
         
         res.status(200).json({
             message: 'User registered successfully',

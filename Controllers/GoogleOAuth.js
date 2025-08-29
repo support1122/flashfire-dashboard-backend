@@ -27,7 +27,7 @@ let userDetails = await UserModel.findOne({ email: payload.email });
 const tokenNew = jwt.sign(
             { email: payload?.email, name: userFromDb?.name },
             process.env.JWT_SECRET || 'flashfire-secret-key-2024',
-            { expiresIn: '24h' }
+            { expiresIn: '7d' }
         );
 return res.status(200).json({
                 message: 'Login Sucess..!',

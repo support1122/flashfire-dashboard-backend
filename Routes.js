@@ -17,6 +17,7 @@ import CheckForDuplicateJobs from "./Middlewares/CheckForDuplicateJobs.js";
 import Tokenizer from "./Middlewares/Tokenizer.js";
 import UpdateActionsVerifier from "./Middlewares/UpdateActionsVerifier.js";
 import VerifyJobIDAndChanges from "./Middlewares/VerifyJobIDAndChanges.js";
+import RefreshToken from "./Controllers/RefreshToken.js";
 
 const app = express.Router();
 
@@ -24,6 +25,7 @@ const app = express.Router();
 app.post("/login", Login);
 app.post("/register", RegisterVerify, Register);
 app.post("/google-oauth", GoogleOAuth);
+app.post("/refresh-token", RefreshToken);
 
 // Profile routes
 app.post("/setprofile", LocalTokenValidator, ProfileCheck, Add_Update_Profile);

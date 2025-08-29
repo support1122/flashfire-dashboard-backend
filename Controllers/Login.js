@@ -35,7 +35,7 @@ export default async function Login(req, res) {
                     coverLetters: existanceOfUser.coverLetters, 
                     optimizedResumes: existanceOfUser.optimizedResumes 
                 },
-                token: jwt.sign({ email }, process.env.JWT_SECRET || 'your-secret-key'),
+                token: jwt.sign({ email }, process.env.JWT_SECRET || 'your-secret-key', { expiresIn: '7d' }),
                 userProfile: profileLookUp?.email?.length > 0 ? profileLookUp : null
             });
 

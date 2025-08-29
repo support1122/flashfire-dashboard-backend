@@ -11,7 +11,7 @@ export default async function Tokenizer(req, res,next) {
   }
   try {
     const secret = process.env.JWT_SECRET || 'flashfire-secret-key-2024';
-    const token = jwt.sign({email, name : existanceOfUser?.name} , secret , { expiresIn: '1d' });
+    const token = jwt.sign({email, name : existanceOfUser?.name} , secret , { expiresIn: '7d' });
     req.body.token = token;
     req.headers.authorization = `Bearer ${token}`
     next();
