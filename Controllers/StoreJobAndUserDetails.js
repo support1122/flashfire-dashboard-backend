@@ -145,9 +145,20 @@ export default async function StoreJobAndUserDetails(req, res) {
     const LINK_ALIASES = [
       "apply_url", "job_url", "joburl", "url", "job_posting_url", "link", "apply_link"
     ];
-    const PUBLISHED_ALIASES = [
-      "published_at", "listed_at", "date_posted", "posted_at", "date", "created_at"
-    ];
+    // controllers/StoreJobAndUserDetails.js
+
+// ...
+const PUBLISHED_ALIASES = [
+  "published_at",
+  "listed_at",
+  "date_posted",
+  "job_posted_date",   // 👈 add this
+  "posted_at",
+  "date",
+  "created_at",
+];
+// ...
+
     const STATUS_ALIASES = ["status", "currentstatus"];
 
     // NOTE: We also keep the original `userID` sent by Apps Script as a hard fallback
