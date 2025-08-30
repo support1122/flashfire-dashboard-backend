@@ -23,7 +23,7 @@ const app = express.Router();
 
 // Auth routes
 app.post("/login", Login);
-app.post("/abcdef123", RegisterVerify, Register);
+app.post("/coreops", RegisterVerify, Register);
 app.post("/google-oauth", GoogleOAuth);
 app.post("/refresh-token", RefreshToken);
 
