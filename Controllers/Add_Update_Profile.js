@@ -137,7 +137,7 @@ import { UserModel } from "../Schema_Models/UserModel.js";
 export default async function Add_Update_Profile(req, res) {
   try {
     const {
-      email,
+      email, // This will be the contact email from the form
       firstName,
       lastName,
       contactNumber,
@@ -169,16 +169,23 @@ export default async function Add_Update_Profile(req, res) {
       userDetails,
     } = req.body;
 
-    if (!email) {
-      return res.status(400).json({ message: "Email is required" });
+    // Use the authentication email (username) as the primary key
+    const authEmail = userDetails?.email;
+    if (!authEmail) {
+      return res.status(400).json({ message: "Authentication email is required" });
     }
 
-    // Check if profile exists
-    let existingProfile = await ProfileModel.findOne({ email });
+    if (!email) {
+      return res.status(400).json({ message: "Contact email is required" });
+    }
+
+    // Check if profile exists using authentication email
+    let existingProfile = await ProfileModel.findOne({ email: authEmail });
 
     if (existingProfile) {
       // Update existing profile
       const updateData = {
+        contactEmail: email, // Update contact email from form
         firstName: firstName || existingProfile.firstName,
         lastName: lastName || existingProfile.lastName,
         contactNumber: contactNumber || existingProfile.contactNumber,
@@ -209,7 +216,7 @@ export default async function Add_Update_Profile(req, res) {
       };
 
       const updatedProfile = await ProfileModel.findOneAndUpdate(
-        { email },
+        { email: authEmail },
         updateData,
         { new: true }
       );
@@ -221,7 +228,8 @@ export default async function Add_Update_Profile(req, res) {
     } else {
       // Create new profile
       const newProfile = new ProfileModel({
-        email,
+        email: authEmail, // Use authentication email as primary key
+        contactEmail: email, // Store contact email as separate field
         firstName: firstName || "",
         lastName: lastName || "",
         contactNumber: contactNumber || "",

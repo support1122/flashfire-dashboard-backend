@@ -13,6 +13,10 @@ export const profileSchema = new mongoose.Schema({
     required: true,
     unique: true,
   },
+  contactEmail: {
+    type: String,
+    required: false,
+  },
   firstName: {
     type: String,
     required: true,
