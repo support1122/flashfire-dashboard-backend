@@ -96,7 +96,7 @@ export const profileSchema = new mongoose.Schema({
   },
   reasonForLeaving: {
     type: String,
-    required: true,
+    required: false,
   },
   joinTime: {
     type: String,
