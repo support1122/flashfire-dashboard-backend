@@ -182,6 +182,63 @@ export default async function Add_Update_Profile(req, res) {
     // Check if profile exists using authentication email
     let existingProfile = await ProfileModel.findOne({ email: authEmail });
 
+    // If no profile found with auth email, check if there's an old profile with contact email as primary
+    if (!existingProfile) {
+      existingProfile = await ProfileModel.findOne({ email: email });
+      if (existingProfile) {
+        // Found old profile - update it to use auth email as primary and move old email to contactEmail
+        console.log('Found old profile, updating to new structure');
+        const updateData = {
+          email: authEmail, // Change primary email to auth email
+          contactEmail: email, // Move old email to contact email
+          firstName: firstName || existingProfile.firstName,
+          lastName: lastName || existingProfile.lastName,
+          contactNumber: contactNumber || existingProfile.contactNumber,
+          dob: dob || existingProfile.dob,
+          address: address || existingProfile.address,
+          visaStatus: visaStatus || existingProfile.visaStatus,
+          bachelorsUniDegree: bachelorsUniDegree || existingProfile.bachelorsUniDegree,
+          bachelorsGradMonthYear: bachelorsGradMonthYear || existingProfile.bachelorsGradMonthYear,
+          mastersUniDegree: mastersUniDegree || existingProfile.mastersUniDegree,
+          mastersGradMonthYear: mastersGradMonthYear || existingProfile.mastersGradMonthYear,
+          gpa: gpa !== undefined ? gpa : existingProfile.gpa,
+          undergraduateTranscript: undergraduateTranscript || existingProfile.undergraduateTranscript,
+          preferredRoles: preferredRoles || existingProfile.preferredRoles,
+          experienceLevel: experienceLevel || existingProfile.experienceLevel,
+          expectedSalaryRange: expectedSalaryRange || existingProfile.expectedSalaryRange,
+          preferredLocations: preferredLocations || existingProfile.preferredLocations,
+          targetCompanies: targetCompanies || existingProfile.targetCompanies,
+          reasonForLeaving: reasonForLeaving || existingProfile.reasonForLeaving,
+          joinTime: joinTime || existingProfile.joinTime,
+          linkedinUrl: linkedinUrl || existingProfile.linkedinUrl,
+          githubUrl: githubUrl || existingProfile.githubUrl,
+          portfolioUrl: portfolioUrl || existingProfile.portfolioUrl,
+          resumeUrl: resumeUrl || existingProfile.resumeUrl,
+          coverLetterUrl: coverLetterUrl || existingProfile.coverLetterUrl,
+          portfolioFileUrl: portfolioFileUrl || existingProfile.portfolioFileUrl,
+          confirmAccuracy: confirmAccuracy !== undefined ? confirmAccuracy : existingProfile.confirmAccuracy,
+          agreeTos: agreeTos !== undefined ? agreeTos : existingProfile.agreeTos,
+        };
+
+        const updatedProfile = await ProfileModel.findOneAndUpdate(
+          { email: email }, // Find by old email
+          updateData,
+          { new: true }
+        );
+
+        // Clean up any duplicate profiles
+        await ProfileModel.deleteMany({ 
+          email: email, 
+          _id: { $ne: updatedProfile._id } 
+        });
+
+        return res.json({
+          message: "Profile updated successfully (migrated from old structure)",
+          userProfile: updatedProfile,
+        });
+      }
+    }
+
     if (existingProfile) {
       // Update existing profile
       const updateData = {
