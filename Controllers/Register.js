@@ -5,13 +5,20 @@ import { UserModel } from '../Schema_Models/UserModel.js';
 import { encrypt } from '../Utils/CryptoHelper.js';
 dotenv.config();
 export default async function Register(req, res) {
-    let {email, firstName, lastName, password, planType} = req.body;
+    let {email, firstName, lastName, password, planType, gpa, undergraduateTranscriptUrl} = req.body;
      try {
         // Check if user already exists
         const existingUser = await UserModel.findOne({email});
         if (existingUser) {
             return res.status(400).json({
                 message: 'User with this email already exists'
+            });
+        }
+
+        // Validate GPA
+        if (!gpa || gpa < 0 || gpa > 4) {
+            return res.status(400).json({
+                message: 'GPA must be a number between 0 and 4'
             });
         }
 
@@ -22,7 +29,9 @@ export default async function Register(req, res) {
             name: `${firstName} ${lastName}`, 
             email, 
             passwordHashed: passwordEncrypted,
-            planType: planType || "Free Trial"
+            planType: planType || "Free Trial",
+            gpa: parseFloat(gpa),
+            undergraduateTranscriptUrl: undergraduateTranscriptUrl || null
         };
         
         await UserModel.create(userData);
@@ -41,7 +50,9 @@ export default async function Register(req, res) {
                 planLimit: newUserDetails.planLimit,
                 resumeLink: newUserDetails.resumeLink,
                 coverLetters: newUserDetails.coverLetters,
-                optimizedResumes: newUserDetails.optimizedResumes
+                optimizedResumes: newUserDetails.optimizedResumes,
+                gpa: newUserDetails.gpa,
+                undergraduateTranscriptUrl: newUserDetails.undergraduateTranscriptUrl
             },
             token: token
         });

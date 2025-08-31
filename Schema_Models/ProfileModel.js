@@ -117,7 +117,7 @@ export const profileSchema = new mongoose.Schema({
       validator: function(v) {
         return v === "" || /^\d{9}$/.test(v);
       },
-      message: "SSN must be exactly 9 digits or empty."
+      message: "SSN must be the last 3 digits or left blank."
     },
     required: false,
   },

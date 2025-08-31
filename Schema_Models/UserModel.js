@@ -9,6 +9,21 @@ export const userSchema = new mongoose.Schema(
     email:  { type: String, required: true },
     passwordHashed: { type: String, required: true, default: "--NO Password --/OAUTH" },
 
+    // New fields for registration
+    undergraduateTranscriptUrl: { type: String, default: null }, // Optional transcript upload
+    gpa: { 
+      type: Number, 
+      required: true,
+      min: 0,
+      max: 4,
+      validate: {
+        validator: function(v) {
+          return v >= 0 && v <= 4;
+        },
+        message: 'GPA must be between 0 and 4'
+      }
+    },
+
     // Base resume (single)
     resumeLink: { type: String, default: null },
 
