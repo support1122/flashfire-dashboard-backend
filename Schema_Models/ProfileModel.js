@@ -1,5 +1,12 @@
 import mongoose from "mongoose";
 
+// Schema for undergraduate transcript (similar to resume structure)
+const undergraduateTranscriptSchema = new mongoose.Schema({
+  url: { type: String, required: true }, // Cloudinary URL
+  uploadedAt: { type: Date, default: Date.now },
+  fileName: { type: String, default: "" }
+}, { _id: false });
+
 export const profileSchema = new mongoose.Schema({
   email: {
     type: String,
@@ -47,6 +54,20 @@ export const profileSchema = new mongoose.Schema({
     type: String,
     required: true,
   },
+  // New fields for GPA and transcript
+  gpa: { 
+    type: Number, 
+    required: true,
+    min: 0,
+    max: 4,
+    validate: {
+      validator: function(v) {
+        return v >= 0 && v <= 4;
+      },
+      message: 'GPA must be between 0 and 4'
+    }
+  },
+  undergraduateTranscript: { type: undergraduateTranscriptSchema, default: null }, // PDF file storage
   preferredRoles: {
     type: [String],
     required: true,
