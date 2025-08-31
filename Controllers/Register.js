@@ -5,7 +5,7 @@ import { UserModel } from '../Schema_Models/UserModel.js';
 import { encrypt } from '../Utils/CryptoHelper.js';
 dotenv.config();
 export default async function Register(req, res) {
-    let {email, firstName, lastName, password, planType, gpa, undergraduateTranscriptUrl} = req.body;
+    let {email, firstName, lastName, password, planType, gpa, undergraduateTranscript} = req.body;
      try {
         // Check if user already exists
         const existingUser = await UserModel.findOne({email});
@@ -24,6 +24,16 @@ export default async function Register(req, res) {
 
         let passwordEncrypted = encrypt(password);
         
+        // Prepare transcript data if provided
+        let transcriptData = null;
+        if (undergraduateTranscript && undergraduateTranscript.url) {
+            transcriptData = {
+                url: undergraduateTranscript.url,
+                uploadedAt: new Date(),
+                fileName: undergraduateTranscript.fileName || 'undergraduate_transcript.pdf'
+            };
+        }
+        
         // Create user with selected plan or default to "Free Trial"
         const userData = {
             name: `${firstName} ${lastName}`, 
@@ -31,7 +41,7 @@ export default async function Register(req, res) {
             passwordHashed: passwordEncrypted,
             planType: planType || "Free Trial",
             gpa: parseFloat(gpa),
-            undergraduateTranscriptUrl: undergraduateTranscriptUrl || null
+            undergraduateTranscript: transcriptData
         };
         
         await UserModel.create(userData);
@@ -52,7 +62,7 @@ export default async function Register(req, res) {
                 coverLetters: newUserDetails.coverLetters,
                 optimizedResumes: newUserDetails.optimizedResumes,
                 gpa: newUserDetails.gpa,
-                undergraduateTranscriptUrl: newUserDetails.undergraduateTranscriptUrl
+                undergraduateTranscript: newUserDetails.undergraduateTranscript
             },
             token: token
         });

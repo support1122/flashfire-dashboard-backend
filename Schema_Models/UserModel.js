@@ -2,6 +2,13 @@
 import mongoose from "mongoose";
 import { coverLetterSchema, optimizedResumeSchema } from "./Opt.Resumes_Cover_Schemas.js";
 
+// Schema for undergraduate transcript (similar to resume structure)
+const undergraduateTranscriptSchema = new mongoose.Schema({
+  url: { type: String, required: true }, // Cloudinary URL
+  uploadedAt: { type: Date, default: Date.now },
+  fileName: { type: String, default: "" }
+}, { _id: false });
+
 export const userSchema = new mongoose.Schema(
   {
     userID: { type: String, required: true, default: () => String(Date.now()) },
@@ -10,7 +17,7 @@ export const userSchema = new mongoose.Schema(
     passwordHashed: { type: String, required: true, default: "--NO Password --/OAUTH" },
 
     // New fields for registration
-    undergraduateTranscriptUrl: { type: String, default: null }, // Optional transcript upload
+    undergraduateTranscript: { type: undergraduateTranscriptSchema, default: null }, // PDF file storage
     gpa: { 
       type: Number, 
       required: true,
