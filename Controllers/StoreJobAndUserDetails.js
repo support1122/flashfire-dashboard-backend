@@ -137,29 +137,50 @@ export default async function StoreJobAndUserDetails(req, res) {
     const bodyNorm = normalizeKeys(b);     // also normalize top-level for fallbacks
 
     // ---- Alias lists for core fields (broad to handle Indeed/LinkedIn/Glassdoor) ----
-    const USER_ALIASES = ["userid", "owneremail", "mappedemail", "_editedby"];
-    const TITLE_ALIASES = ["title", "job_title", "jobtitle", "position", "name", "role"];
-    const COMPANY_ALIASES = [
-      "company_name", "company", "companyname", "employer", "organization", "hiring_company"
-    ];
-    const LINK_ALIASES = [
-      "apply_url", "job_url", "joburl", "url", "job_posting_url", "link", "apply_link"
-    ];
-    // controllers/StoreJobAndUserDetails.js
+//     const USER_ALIASES = ["userid", "owneremail", "mappedemail", "_editedby"];
+//     const TITLE_ALIASES = ["title", "job_title", "jobtitle", "position", "name", "role"];
+//     const COMPANY_ALIASES = [
+//       "company_name", "company", "companyname", "employer", "organization", "hiring_company"
+//     ];
+//     const LINK_ALIASES = [
+//       "apply_url", "job_url", "joburl", "url", "job_posting_url", "link", "apply_link"
+//     ];
+//     // controllers/StoreJobAndUserDetails.js
 
-// ...
-const PUBLISHED_ALIASES = [
-  "published_at",
-  "listed_at",
-  "date_posted",
-  "job_posted_date",   // 👈 add this
-  "posted_at",
-  "date",
-  "created_at",
+// // ...
+// const PUBLISHED_ALIASES = [
+//   "published_at",
+//   "listed_at",
+//   "date_posted",
+//   "job_posted_date",   // 👈 add this
+//   "posted_at",
+//   "date",
+//   "created_at",
+// ];
+// // ...
+
+//     const STATUS_ALIASES = ["status", "currentstatus"];
+// ---- Alias lists for core fields (broad to handle Indeed/LinkedIn/Glassdoor) ----
+const USER_ALIASES = ["userid", "owneremail", "mappedemail", "_editedby"];
+
+const TITLE_ALIASES = ["title", "job_title", "jobtitle", "position", "name", "role"];
+
+const COMPANY_ALIASES = [
+  "company_name", "company", "companyname", "employer", "organization", "hiring_company"
 ];
-// ...
 
-    const STATUS_ALIASES = ["status", "currentstatus"];
+const LINK_ALIASES = [
+  "apply_url", "job_url", "job_url_direct", // <-- ADDED for Indeed
+  "joburl", "url", "job_posting_url", "link", "apply_link"
+];
+
+// Already present in your code, just confirming Indeed coverage:
+const PUBLISHED_ALIASES = [
+  "published_at", "listed_at", "date_posted", "job_posted_date", "posted_at", "date", "created_at"
+];
+
+const STATUS_ALIASES = ["status", "currentstatus"];
+
 
     // NOTE: We also keep the original `userID` sent by Apps Script as a hard fallback
     const { value: userID, key: userKey } = pickFirst(
@@ -206,7 +227,9 @@ const PUBLISHED_ALIASES = [
     }
 
     // Parse date (best effort)
-    const when = publishedAt ? new Date(publishedAt) : new Date();
+    const when = (publishedAt && !Number.isNaN(Date.parse(publishedAt)))
+  ? new Date(publishedAt)
+  : new Date();
 
     // ---- Build extras = everything except core keys + checkbox + boilerplate ----
     const exclude = new Set(
