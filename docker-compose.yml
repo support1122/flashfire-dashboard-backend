@@ -1,0 +1,83 @@
+version: '3.8'
+
+services:
+  # Backend API
+  backend:
+    build:
+      context: ./flashfire-dashboard-backend
+      dockerfile: Dockerfile
+    container_name: flashfire-backend
+    ports:
+      - "8001:8001"
+    environment:
+      - NODE_ENV=production
+      - PORT=8001
+      - MONGODB_URI=${MONGODB_URI}
+      - JWT_SECRET=${JWT_SECRET}
+      - CRYPTO_ALGORITHM=${CRYPTO_ALGORITHM}
+      - CRYPTO_AES_SECRET_SECRET_KEY=${CRYPTO_AES_SECRET_SECRET_KEY}
+      - CRYPTO_IV_LENGTH=${CRYPTO_IV_LENGTH}
+      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS}
+      - CLOUDINARY_CLOUD_NAME=${CLOUDINARY_CLOUD_NAME}
+      - CLOUDINARY_API_KEY=${CLOUDINARY_API_KEY}
+      - CLOUDINARY_API_SECRET=${CLOUDINARY_API_SECRET}
+      - CLOUDINARY_UPLOAD_PRESET=${CLOUDINARY_UPLOAD_PRESET}
+    volumes:
+      - ./logs:/app/logs
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:8001/health', (res) => { process.exit(res.statusCode === 200 ? 0 : 1) })"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Frontend
+  frontend:
+    build:
+      context: ./flashfire-dashboard-frontend
+      dockerfile: Dockerfile
+    container_name: flashfire-frontend
+    ports:
+      - "80:80"
+    environment:
+      - VITE_API_BASE_URL=${VITE_API_BASE_URL}
+      - VITE_CLOUDINARY_CLOUD_NAME=${VITE_CLOUDINARY_CLOUD_NAME}
+      - VITE_CLOUDINARY_CLOUD_PRESET=${VITE_CLOUDINARY_CLOUD_PRESET}
+      - VITE_CLOUDINARY_CLOUD_PRESET_PDF=${VITE_CLOUDINARY_CLOUD_PRESET_PDF}
+      - VITE_OPENAI_API_KEY=${VITE_OPENAI_API_KEY}
+      - VITE_GOOGLE_CLIENT_ID=${VITE_GOOGLE_CLIENT_ID}
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:80/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Nginx reverse proxy (optional)
+  nginx:
+    image: nginx:alpine
+    container_name: flashfire-nginx
+    ports:
+      - "443:443"
+      - "80:80"
+    volumes:
+      - ./nginx-proxy.conf:/etc/nginx/nginx.conf
+      - ./ssl:/etc/nginx/ssl
+    depends_on:
+      - backend
+      - frontend
+    restart: unless-stopped
+    profiles:
+      - production
+
+volumes:
+  logs:
+
+networks:
+  default:
+    name: flashfire-network
