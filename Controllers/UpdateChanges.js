@@ -16,7 +16,7 @@ export default async function UpdateChanges(req, res) {
         {
           $set: {
             currentStatus: req.body?.status,
-            updatedAt: new Date().toLocaleString("en-IN", "Asia/Kolkata"),
+            updatedAt: new Date().toISOString(),
           },
           $push: { timeline: req.body?.status },
         },
@@ -54,7 +54,7 @@ export default async function UpdateChanges(req, res) {
 
   const update = {
     $set: {
-      updatedAt: new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" }),
+      updatedAt: new Date().toISOString(),
     },
     // add attachments (no duplicates)
     $addToSet: { attachments: { $each: attachmentUrls } },
@@ -85,7 +85,7 @@ export default async function UpdateChanges(req, res) {
     const updatedJobs = await JobModel.find({ userID: userEmail }).sort({ createdAt: -1 });
     return res.status(200).json({ message: "Jobs updated successfully", updatedJobs });
   } catch (error) {
-    console.error("UpdateChanges error:", error);
-    return res.status(500).json({ message: "Server error", error: String(error) });
+    console.error("Error updating job:", error);
+    return res.status(500).json({ message: "Internal server error" });
   }
 }
