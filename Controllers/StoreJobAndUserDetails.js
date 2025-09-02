@@ -32,7 +32,7 @@ export default async function StoreJobAndUserDetails(req, res) {
         const { value: joblink } = pickKey(b, ["applyUrl", "url"], "www.google.com");
 
         // --- FIX: Explicitly get the description from the request body ---
-        const { value: jobDescription } = pickKey(b, ["description", "descriptionHtml", "jobDescription"], "No description provided.");
+        const { value: jobDescriptionHtml } = pickKey(b, ["descriptionHtml"]);
 
         // --- STEP 2: LOG THE NORMALIZED VALUES ---
         // console.log("Normalized Values:");
@@ -45,7 +45,6 @@ export default async function StoreJobAndUserDetails(req, res) {
         const existing = await JobModel.findOne({
             $or: [
                 { userID, joblink },
-                { userID, jobTitle, companyName }
             ]
         });
         if (existing) {
@@ -54,14 +53,14 @@ export default async function StoreJobAndUserDetails(req, res) {
         }
 
         const payload = {
-            dateAdded: new Date().toISOString(),
-            createdAt: new Date().toISOString(),
+            dateAdded: new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }),
+            createdAt: new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }),
             userID,
             jobTitle,
             joblink,
             companyName,
             currentStatus: "saved",
-            jobDescription: jobDescription, // <-- Use the correctly picked description value
+            jobDescription: jobDescriptionHtml, // <-- Use the correctly picked description value
             timeline: ["Added"],
             attachments: []
         };
