@@ -9,8 +9,7 @@
     "build": "echo 'No build step required for Node.js'",
     "test": "echo \"Error: no test specified\" && exit 1",
     "lint": "echo 'Add linting script here'",
-    "health": "curl http://localhost:8001/health",
-    "migrate-dates": "node migrateDates.js"
+    "health": "curl http://localhost:8001/health"
   },
   "keywords": [
     "flashfire",
