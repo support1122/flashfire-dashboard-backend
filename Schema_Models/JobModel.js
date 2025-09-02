@@ -33,7 +33,7 @@ export const JobSchema = new mongoose.Schema({
   },
   joblink:{
     type : String,
-    required : false,
+    required: false,
     default : ''
   },
   companyName: {
