@@ -216,7 +216,7 @@ app.use(helmet({
       connectSrc: ["'self'", "https://api.cloudinary.com", "https://api.openai.com"],
     },
   },
-});
+}));
 
 // Rate limiting
 const limiter = rateLimit({
@@ -312,4 +312,3 @@ app.listen(PORT, () => {
   console.log(`📊 Health check available at http://localhost:${PORT}/health`);
   console.log(`🌐 API available at http://localhost:${PORT}`);
 });
-
