@@ -16,7 +16,7 @@ export default async function UpdateChanges(req, res) {
         {
           $set: {
             currentStatus: req.body?.status,
-            updatedAt: new Date().toLocaleString("en-IN", "Asia/Kolkata"),
+            updatedAt: new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }),
           },
           $push: { timeline: req.body?.status },
         },
