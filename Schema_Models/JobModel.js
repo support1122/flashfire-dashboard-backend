@@ -1,66 +1,66 @@
-import  mongoose  from "mongoose";
+import mongoose from "mongoose";
 export const JobSchema = new mongoose.Schema({
   jobID: {
     type: String,
     required: true,
     // unique: true,
-    default : ()=>Date.now().toString()
+    default: () => Date.now().toString()
   },
-  dateAdded:{
-    type : String,
-    required : true,
-    default: () =>String(new Date().toLocaleString())
-  },
-  userID:{
+  dateAdded: {
     type: String,
-    required : true,
-    default : 'www.userID.com'
+    required: true,
+    default: () => String(new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }))
   },
-  jobTitle : {
-    type : String,
-    required : true ,
-    default : 'www.jobTitle.com'
+  userID: {
+    type: String,
+    required: true,
+    default: 'www.userID.com'
   },
-  currentStatus : {
-    type : String,
-    required : true,
-    default : 'saved'
+  jobTitle: {
+    type: String,
+    required: true,
+    default: 'www.jobTitle.com'
+  },
+  currentStatus: {
+    type: String,
+    required: true,
+    default: 'saved'
   },
   jobDescription: {
     type: String,
     required: false,
-    default : ''
+    default: ''
   },
-  joblink:{
-    type : String,
+  joblink: {
+    type: String,
     required: false,
-    default : ''
+    default: ''
   },
   companyName: {
     type: String,
     required: true,
-    default : 'unknown'
+    default: 'unknown'
   },
-  timeline:{
-    type : [String],
-    required : true,
-    default : ['Added']
+  timeline: {
+    type: [String],
+    required: true,
+    default: ['Added']
   },
-  createdAt : {
-    type : String,
-    default : () =>new Date().toLocaleString('en-US', 'Asia/Kolkata'),
-    required : true,
-    immutable : true
+  createdAt: {
+    type: String,
+    default: () => new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }),
+    required: true,
+    immutable: true
   },
-  updatedAt:{
-    type : String,
-    required : true ,
-    default : () =>new Date().toLocaleString('en-US', 'Asia/Kolkata')   
+  updatedAt: {
+    type: String,
+    required: true,
+    default: () => new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })
   },
-  attachments : {
-    type : [String],
-    required : true,
-    default : []
+  attachments: {
+    type: [String],
+    required: true,
+    default: []
 
   }
 });
