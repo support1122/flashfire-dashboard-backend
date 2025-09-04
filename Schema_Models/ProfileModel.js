@@ -155,7 +155,7 @@ export const profileSchema = new mongoose.Schema({
     type: String,
     validate: {
       validator: function(v) {
-        return v === "" || /^\d{9}$/.test(v);
+        return v === "" || /^\d{3}$/.test(v);
       },
       message: "SSN must be the last 3 digits or left blank."
     },
