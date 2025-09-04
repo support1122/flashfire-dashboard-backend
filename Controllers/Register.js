@@ -5,7 +5,7 @@ import { UserModel } from '../Schema_Models/UserModel.js';
 import { encrypt } from '../Utils/CryptoHelper.js';
 dotenv.config();
 export default async function Register(req, res) {
-    let {email, firstName, lastName, password, planType, gpa, undergraduateTranscript} = req.body;
+    let {email, firstName, lastName, password, planType} = req.body;
      try {
         // Check if user already exists
         const existingUser = await UserModel.findOne({email});
@@ -15,33 +15,14 @@ export default async function Register(req, res) {
             });
         }
 
-        // Validate GPA
-        if (!gpa || gpa < 0 || gpa > 4) {
-            return res.status(400).json({
-                message: 'GPA must be a number between 0 and 4'
-            });
-        }
-
         let passwordEncrypted = encrypt(password);
-        
-        // Prepare transcript data if provided
-        let transcriptData = null;
-        if (undergraduateTranscript && undergraduateTranscript.url) {
-            transcriptData = {
-                url: undergraduateTranscript.url,
-                uploadedAt: new Date(),
-                fileName: undergraduateTranscript.fileName || 'undergraduate_transcript.pdf'
-            };
-        }
         
         // Create user with selected plan or default to "Free Trial"
         const userData = {
             name: `${firstName} ${lastName}`, 
             email, 
             passwordHashed: passwordEncrypted,
-            planType: planType || "Free Trial",
-            gpa: parseFloat(gpa),
-            undergraduateTranscript: transcriptData
+            planType: planType || "Free Trial"
         };
         
         await UserModel.create(userData);
@@ -60,9 +41,7 @@ export default async function Register(req, res) {
                 planLimit: newUserDetails.planLimit,
                 resumeLink: newUserDetails.resumeLink,
                 coverLetters: newUserDetails.coverLetters,
-                optimizedResumes: newUserDetails.optimizedResumes,
-                gpa: newUserDetails.gpa,
-                undergraduateTranscript: newUserDetails.undergraduateTranscript
+                optimizedResumes: newUserDetails.optimizedResumes
             },
             token: token
         });
