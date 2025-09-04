@@ -159,6 +159,9 @@ const app = express();
 const PORT = process.env.PORT || 8001;
 const NODE_ENV = process.env.NODE_ENV || "development";
 
+// Trust proxy configuration for cloud deployments (Render, Vercel, etc.)
+app.set('trust proxy', 1);
+
 console.log(`🚀 Starting server with NODE_ENV: ${NODE_ENV}`);
 console.log(`🌐 Server will run on port: ${PORT}`);
 
