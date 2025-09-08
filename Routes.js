@@ -38,7 +38,7 @@ app.post("/storejobanduserdetails", StoreJobAndUserDetails);
 app.put("/updatechanges", LocalTokenValidator, VerifyJobIDAndChanges, UpdateChanges);
 
 // Plan routes
-app.post("/api/plans/select", LocalTokenValidator, PlanSelect);
+app.post('/api/plans/select',PlanSelect); 
 
 export default app;
 
