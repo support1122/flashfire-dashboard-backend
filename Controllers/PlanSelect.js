@@ -1,3 +1,4 @@
+// controllers/selectPlanAndUploads.js
 import { UserModel } from "../Schema_Models/UserModel.js";
 
 export default async function PlanSelect(req, res) {
@@ -15,9 +16,7 @@ export default async function PlanSelect(req, res) {
 
       // entries with metadata (either or both optional)
       optimizedResumeEntry, // { jobRole, companyName, url, jobId?, jobLink? }
-      optimizedResumeEntries, // array of above for multiple
       coverLetterEntry,     // { jobRole, companyName, url, jobId?, jobLink? }
-      coverLetterEntries,   // array of above for multiple
     } = req.body;
 
     if (!userDetails?.email) {
@@ -27,50 +26,35 @@ export default async function PlanSelect(req, res) {
     // Build $set with only defined values
     const setFields = {};
     if (typeof resumeLink !== "undefined" && resumeLink) setFields.resumeLink = resumeLink;
-    if (typeof planType !== "undefined") setFields.planType = planType;
+    if (typeof planType  !== "undefined") setFields.planType  = planType;
     if (typeof planLimit !== "undefined") setFields.planLimit = planLimit;
 
     // Normalize entries
     const normalize = (e, type) =>
       e
         ? {
-          url: e.url || e.optimizedResumeLink || e.coverLetterLink || "", // accept legacy keys
-          companyName: e.companyName ?? "",
-          jobRole: e.jobRole ?? "",
-          jobId: e.jobId ?? "",
-          jobLink: e.jobLink ?? "",
-          createdAt: new Date(),
-        }
+            url: e.url || e.optimizedResumeLink || e.coverLetterLink || "", // accept legacy keys
+            companyName: e.companyName ?? "",
+            jobRole: e.jobRole ?? "",
+            jobId: e.jobId ?? "",
+            jobLink: e.jobLink ?? "",
+            createdAt: new Date(),
+          }
         : null;
 
-    // Handle single or array for optimized
-    let normOptimizedList = [];
-    if (Array.isArray(optimizedResumeEntries)) {
-      normOptimizedList = optimizedResumeEntries.map(e => normalize(e, "optimized")).filter(Boolean);
-    } else if (optimizedResumeEntry) {
-      const norm = normalize(optimizedResumeEntry, "optimized");
-      if (norm) normOptimizedList = [norm];
-    }
-
-    // Handle single or array for cover
-    let normCoverList = [];
-    if (Array.isArray(coverLetterEntries)) {
-      normCoverList = coverLetterEntries.map(e => normalize(e, "cover")).filter(Boolean);
-    } else if (coverLetterEntry) {
-      const norm = normalize(coverLetterEntry, "cover");
-      if (norm) normCoverList = [norm];
-    }
+    const normOptimized = normalize(optimizedResumeEntry, "optimized");
+    const normCover = normalize(coverLetterEntry, "cover");
 
     // Build update ops
     const updateOps = {};
     if (Object.keys(setFields).length) updateOps.$set = setFields;
 
     const pushOps = {};
-    if (normOptimizedList.length) {
-      pushOps.optimizedResumes = { $each: normOptimizedList };
+    if (normOptimized && normOptimized.url) {
+      pushOps.optimizedResumes = { $each: [normOptimized] };
     }
-    if (normCoverList.length) {
-      pushOps.coverLetters = { $each: normCoverList };
+    if (normCover && normCover.url) {
+      pushOps.coverLetters = { $each: [normCover] };
     }
     if (Object.keys(pushOps).length) updateOps.$push = pushOps;
 
