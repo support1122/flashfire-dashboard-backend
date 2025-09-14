@@ -23,7 +23,7 @@ import ClientLogin from "./Controllers/Extensions/clientLogin.js";
 const app = express.Router();
 
 // Auth routes
-app.post("/login", Login);
+app.post("/login",LoginVerify, Tokenizer, Login);
 app.post("/coreops", RegisterVerify, Register);
 app.post("/google-oauth", GoogleOAuth);
 app.post("/refresh-token", RefreshToken);

@@ -171,6 +171,7 @@ const corsOptions = {
     const allowedOrigins = NODE_ENV === "production" 
       ? [
           "https://portal.flashfirejobs.com",
+          "http://localhost:3000",
           "https://www.portal.flashfirejobs.com",
           "https://flashfire-dashboard-frontend.vercel.app",
           "https://flashfire-dashboard.vercel.app",
