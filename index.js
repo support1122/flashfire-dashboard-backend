@@ -205,8 +205,8 @@ const corsOptions = {
 };
 
 // Apply CORS FIRST, before any other middleware
-app.use(cors(corsOptions));
-
+// app.use(cors(corsOptions));
+app.use(cors());
 // Security middleware
 app.use(helmet({
   contentSecurityPolicy: {
@@ -315,3 +315,4 @@ app.listen(PORT, () => {
   console.log(`📊 Health check available at http://localhost:${PORT}/health`);
   console.log(`🌐 API available at http://localhost:${PORT}`);
 });
+
