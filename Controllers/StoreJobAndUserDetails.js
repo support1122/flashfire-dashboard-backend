@@ -78,3 +78,89 @@ export default async function StoreJobAndUserDetails(req, res) {
         return res.status(500).json({ success: false, message: error.message, error_details: error.stack });
     }
 }
+
+
+export async function saveToDashboard(req, res) {
+    try {
+        const {
+            company,
+            description,
+            position,
+            selectedEmails,
+            url
+        } = req.body;
+
+        if (!selectedEmails || !Array.isArray(selectedEmails) || selectedEmails.length === 0) {
+            return res.status(400).json({
+                success: false,
+                message: "The 'selectedEmails' field is required and must be a non-empty array."
+            });
+        }
+        if (!position || !company || !url) {
+            return res.status(400).json({
+                success: false,
+                message: "Missing required job details: 'position', 'company', and 'url' are required."
+            });
+        }
+        const jobCreationPromises = selectedEmails.map(email => {
+            const payload = {
+                // Manually adding all required fields to the payload
+                dateAdded: new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }),
+                createdAt: new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }),
+                userID: email.trim(),
+                jobTitle: position,
+                joblink: url,
+                companyName: company,
+                currentStatus: "saved",
+                jobDescription: description || "",
+                timeline: ["Added"],
+                attachments: []
+            };
+            // console.log("payload : ",payload)
+            return JobModel.create(payload);
+        });
+        const results = await Promise.allSettled(jobCreationPromises);
+
+
+        const summary = {
+            saved: 0,
+            skippedAsDuplicate: 0,
+            failedWithError: 0,
+            details: []
+        };
+
+        results.forEach((result, index) => {
+            const userEmail = selectedEmails[index];
+            if (result.status === 'fulfilled') {
+                summary.saved++;
+                summary.details.push({ user: userEmail, status: 'saved', jobId: result.value.jobID });
+            } else {
+
+                if (result.reason?.code === 11000) {
+                    summary.skippedAsDuplicate++;
+                    summary.details.push({ user: userEmail, status: 'skipped_duplicate', reason: 'This job link already exists for this user.' });
+                } else {
+                    summary.failedWithError++;
+                    summary.details.push({ user: userEmail, status: 'failed', reason: result.reason?.message || 'An unknown error occurred.' });
+                    console.error(`❌ Failed to save job for ${userEmail}:`, result.reason);
+                }
+            }
+        });
+
+        console.log(`✅ Job saving process complete. Saved: ${summary.saved}, Skipped: ${summary.skippedAsDuplicate}, Failed: ${summary.failedWithError}`);
+
+        return res.status(200).json({
+            success: true,
+            message: "Job saving process completed.",
+            summary
+        });
+
+    } catch (error) {
+        console.error("❌ Unhandled error in saveToDashboard controller:", error);
+        return res.status(500).json({
+            success: false,
+            message: "An internal server error occurred.",
+            errorDetails: error.message
+        });
+    }
+}

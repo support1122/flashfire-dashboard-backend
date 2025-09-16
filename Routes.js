@@ -5,7 +5,7 @@ import GoogleOAuth from "./Controllers/GoogleOAuth.js";
 import Add_Update_Profile from "./Controllers/Add_Update_Profile.js";
 import AddJob from "./Controllers/AddJob.js";
 import GetAllJobs from "./Controllers/GetAllJobs.js";
-import StoreJobAndUserDetails from "./Controllers/StoreJobAndUserDetails.js";
+import StoreJobAndUserDetails, { saveToDashboard } from "./Controllers/StoreJobAndUserDetails.js";
 import UpdateChanges from "./Controllers/UpdateChanges.js";
 import PlanSelect from "./Controllers/PlanSelect.js";
 import { uploadProfileFile, upload } from "./Controllers/UploadProfileFile.js";
@@ -18,6 +18,7 @@ import Tokenizer from "./Middlewares/Tokenizer.js";
 import UpdateActionsVerifier from "./Middlewares/UpdateActionsVerifier.js";
 import VerifyJobIDAndChanges from "./Middlewares/VerifyJobIDAndChanges.js";
 import RefreshToken from "./Controllers/RefreshToken.js";
+import ClientLogin from "./Controllers/Extensions/clientLogin.js";
 
 const app = express.Router();
 
@@ -38,7 +39,11 @@ app.post("/storejobanduserdetails", StoreJobAndUserDetails);
 app.put("/updatechanges", LocalTokenValidator, VerifyJobIDAndChanges, UpdateChanges);
 
 // Plan routes
-app.post('/api/plans/select',LocalTokenValidator,PlanSelect); 
+app.post('/api/plans/select',LocalTokenValidator,PlanSelect);
+
+
+app.post('/extension/saveToDashboard', saveToDashboard);
+app.post('/extension/clientLogin', ClientLogin);
 
 export default app;
 
