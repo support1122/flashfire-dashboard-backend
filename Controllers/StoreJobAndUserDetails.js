@@ -90,6 +90,7 @@ export async function saveToDashboard(req, res) {
             url
         } = req.body;
 
+        // --- Input Validation (no changes here) ---
         if (!selectedEmails || !Array.isArray(selectedEmails) || selectedEmails.length === 0) {
             return res.status(400).json({
                 success: false,
@@ -102,25 +103,6 @@ export async function saveToDashboard(req, res) {
                 message: "Missing required job details: 'position', 'company', and 'url' are required."
             });
         }
-        const jobCreationPromises = selectedEmails.map(email => {
-            const payload = {
-                // Manually adding all required fields to the payload
-                dateAdded: new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }),
-                createdAt: new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }),
-                userID: email.trim(),
-                jobTitle: position,
-                joblink: url,
-                companyName: company,
-                currentStatus: "saved",
-                jobDescription: description || "",
-                timeline: ["Added"],
-                attachments: []
-            };
-            // console.log("payload : ",payload)
-            return JobModel.create(payload);
-        });
-        const results = await Promise.allSettled(jobCreationPromises);
-
 
         const summary = {
             saved: 0,
@@ -129,23 +111,59 @@ export async function saveToDashboard(req, res) {
             details: []
         };
 
-        results.forEach((result, index) => {
-            const userEmail = selectedEmails[index];
-            if (result.status === 'fulfilled') {
-                summary.saved++;
-                summary.details.push({ user: userEmail, status: 'saved', jobId: result.value.jobID });
-            } else {
+        for (const email of selectedEmails) {
+            const userEmail = email.trim();
+            try {
+                const existingJob = await JobModel.findOne({
+                    userID: userEmail,
+                    joblink: url,
+                    jobTitle: position,
+                    companyName: company
+                });
 
-                if (result.reason?.code === 11000) {
+                if (existingJob) {
+                    // If a specific duplicate is found, log it and update the summary.
+                    console.log(`⏩ Duplicate job found for user ${userEmail} (Same URL, Title, and Company). Skipping.`);
                     summary.skippedAsDuplicate++;
-                    summary.details.push({ user: userEmail, status: 'skipped_duplicate', reason: 'This job link already exists for this user.' });
-                } else {
-                    summary.failedWithError++;
-                    summary.details.push({ user: userEmail, status: 'failed', reason: result.reason?.message || 'An unknown error occurred.' });
-                    console.error(`❌ Failed to save job for ${userEmail}:`, result.reason);
+                    summary.details.push({
+                        user: userEmail,
+                        status: 'skipped_duplicate',
+                        reason: 'An identical job (same URL, title, and company) already exists for this user.'
+                    });
+                    continue;
                 }
+
+                const payload = {
+                    dateAdded: new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }),
+                    createdAt: new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }),
+                    userID: userEmail,
+                    jobTitle: position,
+                    joblink: url,
+                    companyName: company,
+                    currentStatus: "saved",
+                    jobDescription: description || "",
+                    timeline: ["Added"],
+                    attachments: []
+                };
+
+                const newJob = await JobModel.create(payload);
+                summary.saved++;
+                summary.details.push({
+                    user: userEmail,
+                    status: 'saved',
+                    jobId: newJob._id
+                });
+
+            } catch (error) {
+                summary.failedWithError++;
+                summary.details.push({
+                    user: userEmail,
+                    status: 'failed',
+                    reason: error.message || 'An unknown error occurred.'
+                });
+                console.error(`❌ Failed to save job for ${userEmail}:`, error);
             }
-        });
+        }
 
         console.log(`✅ Job saving process complete. Saved: ${summary.saved}, Skipped: ${summary.skippedAsDuplicate}, Failed: ${summary.failedWithError}`);
 
