@@ -26,6 +26,7 @@
     "npm": ">=8.0.0"
   },
   "dependencies": {
+    "bcrypt": "^6.0.0",
     "cloudinary": "^2.7.0",
     "cors": "^2.8.5",
     "dotenv": "^17.0.1",

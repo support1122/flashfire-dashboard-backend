@@ -4,7 +4,7 @@ import { UserModel } from "../Schema_Models/UserModel.js";
 export default async function GetAllJobs(req, res) {
     try {
         // Get user email from JWT token (set by LocalTokenValidator middleware)
-        const userEmail = req.user?.email || req.body?.userDetails?.email;
+        const userEmail = req.body?.email || req.body?.userDetails?.email || req.email;
         
         console.log('GetAllJobs - User email:', userEmail);
         

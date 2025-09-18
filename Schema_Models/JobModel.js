@@ -61,8 +61,11 @@ export const JobSchema = new mongoose.Schema({
     type: [String],
     required: true,
     default: []
-
-  }
+  },
+  changesMade: {
+    type: mongoose.Schema.Types.Mixed,
+    default: {},
+  },
 });
 
 export const JobModel = mongoose.model('JobDB', JobSchema)

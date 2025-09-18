@@ -11,6 +11,7 @@ export const userSchema = new mongoose.Schema(
 
     // Base resume (single)
     resumeLink: { type: String, default: null },
+    baseResume: { type: String, default: null },
 
     // Plural arrays + [] defaults
     coverLetters:     { type: [coverLetterSchema],     default: [] },
