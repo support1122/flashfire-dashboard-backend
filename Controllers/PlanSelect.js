@@ -116,6 +116,7 @@
 import { UserModel } from "../Schema_Models/UserModel.js";
 
 export default async function PlanSelect(req, res) {
+  console.log(req.body)
   try {
     const {
       // base resume (with metadata)
@@ -151,6 +152,7 @@ export default async function PlanSelect(req, res) {
     const normalize = (e) =>
       e
         ? {
+            name: e.name || '',
             url: e.url || e.optimizedResumeLink || e.coverLetterLink || "",
             companyName: e.companyName ?? "",
             jobRole: e.jobRole ?? "",
@@ -186,7 +188,7 @@ export default async function PlanSelect(req, res) {
         resumeUrl.trim() !== ""
       ) {
         const resumeEntry = {
-          name: resumeUrl.split("/").pop() || "resume.pdf",
+          name: resumeLink.name, //resumeUrl.split("/").pop() || "resume.pdf",
           createdAt: new Date(),
           link: resumeUrl,
         };

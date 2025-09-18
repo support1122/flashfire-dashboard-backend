@@ -3,6 +3,7 @@ import mongoose from "mongoose";
 
 const baseEntry = {
   url:        { type: String, required: true },
+  name: {type: String , required : true, default : ''},
   companyName:{ type: String, default: "" },
   jobRole:    { type: String, default: "" },
   jobId:      { type: String, default: "" },
