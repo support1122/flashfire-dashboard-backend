@@ -171,12 +171,14 @@ const corsOptions = {
     const allowedOrigins = NODE_ENV === "production" 
       ? [
           "https://portal.flashfirejobs.com",
+          "http://localhost:3000",
           "https://www.portal.flashfirejobs.com",
           "https://flashfire-dashboard-frontend.vercel.app",
+          "chrome://extensions/?id=feekbkgobkhnfchgngipimimiiglgpnj",
           "https://flashfire-dashboard.vercel.app",
           ...(process.env.ALLOWED_ORIGINS?.split(",") || [])
         ]
-      : ["http://localhost:3000", "http://localhost:5173"];
+      : ["http://localhost:3000"];
     
     console.log(`CORS check - Origin: ${origin}, NODE_ENV: ${NODE_ENV}`);
     console.log(`Allowed origins: ${allowedOrigins.join(', ')}`);

@@ -1,5 +1,6 @@
 // controllers/UpdateChanges.js
 import { JobModel } from "../Schema_Models/JobModel.js";
+import { DiscordConnect } from "../Utils/DiscordConnect.js";
 
 export default async function UpdateChanges(req, res) {
   const { jobID, userDetails, action } = req.body;
@@ -11,6 +12,8 @@ export default async function UpdateChanges(req, res) {
 
   try {
     if (action === "UpdateStatus") {
+      let currentStatus = await JobModel.findOne({ jobID, userID: userEmail });
+
       await JobModel.findOneAndUpdate(
         { jobID, userID: userEmail },
         {
@@ -22,7 +25,17 @@ export default async function UpdateChanges(req, res) {
         },
         { new: true, upsert: false }
       );
-    }
+      const discordMessage =
+  `📌 Job Update:
+  Client: ${userDetails.name}
+   Company: ${currentStatus.companyName}
+   Job Title: ${currentStatus.jobTitle}
+   Status: ${req.body?.status}
+   Previous: ${currentStatus.currentStatus}`; 
+      if(req.body.status !== 'deleted')await DiscordConnect(process.env.DISCORD_APPLICATION_TRACKING_CHANNEL,discordMessage);
+      
+  }
+    
 
   else if (action === "edit") {
   const userEmail = userDetails?.email;

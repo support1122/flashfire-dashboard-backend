@@ -18,12 +18,13 @@ import Tokenizer from "./Middlewares/Tokenizer.js";
 import UpdateActionsVerifier from "./Middlewares/UpdateActionsVerifier.js";
 import VerifyJobIDAndChanges from "./Middlewares/VerifyJobIDAndChanges.js";
 import RefreshToken from "./Controllers/RefreshToken.js";
+import { ProfileModel } from "./Schema_Models/ProfileModel.js";
 import ClientLogin from "./Controllers/Extensions/clientLogin.js";
 
 const app = express.Router();
 
 // Auth routes
-app.post("/login", Login);
+app.post("/login",LoginVerify, Tokenizer, Login);
 app.post("/coreops", RegisterVerify, Register);
 app.post("/google-oauth", GoogleOAuth);
 app.post("/refresh-token", RefreshToken);
@@ -34,7 +35,7 @@ app.post("/upload-profile-file", LocalTokenValidator, upload.single('file'), upl
 
 // Job routes
 app.post("/addjob", LocalTokenValidator, CheckForDuplicateJobs, AddJob);
-app.get("/getalljobs", LocalTokenValidator, GetAllJobs);
+app.post("/getalljobs", LocalTokenValidator, GetAllJobs);
 app.post("/storejobanduserdetails", StoreJobAndUserDetails);
 app.put("/updatechanges", LocalTokenValidator, VerifyJobIDAndChanges, UpdateChanges);
 
@@ -44,7 +45,16 @@ app.post('/api/plans/select',LocalTokenValidator,PlanSelect);
 
 app.post('/extension/saveToDashboard', saveToDashboard);
 app.post('/extension/clientLogin', ClientLogin);
-
+  app.get('/flash-fill', async (req, res) => {
+    try {
+      let profiles =await  ProfileModel.find().lean();
+      res.status(200).json(profiles);
+    } catch (error) {
+      console.log(error);
+    }
+    
+  })
+ 
 export default app;
 
 

@@ -1,6 +1,6 @@
 // UserModel.js
 import mongoose from "mongoose";
-import { coverLetterSchema, optimizedResumeSchema } from "./Opt.Resumes_Cover_Schemas.js";
+import { baseResumeSchema, coverLetterSchema, optimizedResumeSchema } from "./Opt.Resumes_Cover_Schemas.js";
 
 export const userSchema = new mongoose.Schema(
   {
@@ -10,7 +10,7 @@ export const userSchema = new mongoose.Schema(
     passwordHashed: { type: String, required: true, default: "--NO Password --/OAUTH" },
 
     // Base resume (single)
-    resumeLink: { type: String, default: null },
+    resumeLink: { type: [baseResumeSchema], default: [] },
 
     // Plural arrays + [] defaults
     coverLetters:     { type: [coverLetterSchema],     default: [] },
