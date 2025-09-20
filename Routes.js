@@ -18,6 +18,7 @@ import Tokenizer from "./Middlewares/Tokenizer.js";
 import UpdateActionsVerifier from "./Middlewares/UpdateActionsVerifier.js";
 import VerifyJobIDAndChanges from "./Middlewares/VerifyJobIDAndChanges.js";
 import RefreshToken from "./Controllers/RefreshToken.js";
+import { ProfileModel } from "./Schema_Models/ProfileModel.js";
 import ClientLogin from "./Controllers/Extensions/clientLogin.js";
 
 const app = express.Router();
@@ -44,7 +45,16 @@ app.post('/api/plans/select',LocalTokenValidator,PlanSelect);
 
 app.post('/extension/saveToDashboard', saveToDashboard);
 app.post('/extension/clientLogin', ClientLogin);
-
+  app.get('/flash-fill', async (req, res) => {
+    try {
+      let profiles =await  ProfileModel.find().lean();
+      res.status(200).json(profiles);
+    } catch (error) {
+      console.log(error);
+    }
+    
+  })
+ 
 export default app;
 
 

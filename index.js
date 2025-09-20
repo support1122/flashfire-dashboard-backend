@@ -174,6 +174,7 @@ const corsOptions = {
           "http://localhost:3000",
           "https://www.portal.flashfirejobs.com",
           "https://flashfire-dashboard-frontend.vercel.app",
+          "chrome://extensions/?id=feekbkgobkhnfchgngipimimiiglgpnj",
           "https://flashfire-dashboard.vercel.app",
           ...(process.env.ALLOWED_ORIGINS?.split(",") || [])
         ]
