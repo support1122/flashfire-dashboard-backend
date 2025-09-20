@@ -1,6 +1,20 @@
 import { JobModel } from "../../Schema_Models/JobModel.js";
 
-// get the job description for a particular job id
+// Test endpoint to verify the controller is working
+export const testJobController = async (req, res) => {
+     try {
+          res.json({
+               message: "Job controller is working!",
+               timestamp: new Date().toISOString(),
+               jobId: req.params.id || "no-id-provided"
+          });
+     } catch (error) {
+          console.error("Error in test endpoint:", error);
+          res.status(500).json({ error: "Server error" });
+     }
+};
+
+// get the job description for a particular job id (from body)
 export const getJobDescription = async (req, res) => {
      try {
           const { id } = req.body; // expecting { "id": "..." }
@@ -19,6 +33,33 @@ export const getJobDescription = async (req, res) => {
           return res.json({ jobDescription: job.jobDescription });
      } catch (error) {
           console.error("Error fetching job description:", error);
+          return res.status(500).json({ error: "Server error" });
+     }
+};
+
+// get the job description for a particular job id (from URL params)
+export const getJobDescriptionByUrl = async (req, res) => {
+     try {
+          const { id } = req.params; // expecting id from URL like /getJobDescription/:id
+
+          if (!id) {
+               return res.status(400).json({ error: "Job ID is required in URL" });
+          }
+
+          const job = await JobModel.findById(id, "jobDescription jobTitle companyName");
+          // Return jobDescription, jobTitle, and companyName for context
+
+          if (!job) {
+               return res.status(404).json({ error: "Job not found" });
+          }
+
+          return res.json({
+               jobDescription: job.jobDescription,
+               jobTitle: job.jobTitle,
+               companyName: job.companyName
+          });
+     } catch (error) {
+          console.error("Error fetching job description by URL:", error);
           return res.status(500).json({ error: "Server error" });
      }
 };
@@ -45,8 +86,8 @@ export const saveChangedSession = async (req, res) => {
                     updatedAt: new Date().toLocaleString("en-US", "Asia/Kolkata")
                }
           );
-          console.log(changesMade,"changes made");
-          return res.json({ message: "Changes saved successfully"  , changesMade });
+          console.log(changesMade, "changes made");
+          return res.json({ message: "Changes saved successfully", changesMade });
      } catch (error) {
           console.error("Error saving changed session:", error);
           return res.status(500).json({ error: "Server error" });
