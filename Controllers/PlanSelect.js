@@ -30,7 +30,7 @@ export default async function PlanSelect(req, res) {
     const normalize = (e) =>
       e
         ? {
-            name: e.name || '',
+            name: e.name || 'unnamed',
             url: e.url || e.link || e.optimizedResumeLink || e.coverLetterLink || "",
             companyName: e.companyName ?? "",
             jobRole: e.jobRole ?? "",
