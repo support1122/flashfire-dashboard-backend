@@ -32,7 +32,7 @@ export default async function UpdateChanges(req, res) {
    Job Title: ${currentStatus.jobTitle}
    Status: ${req.body?.status}
    Previous: ${currentStatus.currentStatus}`; 
-      // if(req.body.status !== 'deleted')await DiscordConnect(process.env.DISCORD_APPLICATION_TRACKING_CHANNEL,discordMessage);
+      if(req.body.status !== 'deleted')await DiscordConnect(process.env.DISCORD_APPLICATION_TRACKING_CHANNEL,discordMessage);
       
   }
     
@@ -102,3 +102,4 @@ export default async function UpdateChanges(req, res) {
     return res.status(500).json({ message: "Server error", error: String(error) });
   }
 }
+
