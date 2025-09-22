@@ -1,9 +1,9 @@
-// Opt.Resumes_Cover_Schemas.js
+// Opt.Resumes_Cover_Schemas.js 
 import mongoose from "mongoose";
 
 const baseEntry = {
-  // Canonical fields
   url:        { type: String, required: true },
+  name: {type: String , required : true, default : ''},
   companyName:{ type: String, default: "" },
   jobRole:    { type: String, default: "" },
   jobId:      { type: String, default: "" },
@@ -15,14 +15,25 @@ const baseEntry = {
   coverLetterLink:     { type: String },
 };
 
+const baseResume = {
+  name:      { type: String, required: true, default: "Untitled Resume" },
+  link:      { type: String, required: true },
+  createdAt: { type: Date,   default: Date.now },
+};
+const transcript = {
+  name:      { type: String, required: true, default: "Untitled Transcript" },
+  url:      { type: String, required: true },
+  createdAt: { type: Date,   default: Date.now },
+}
+
 export const optimizedResumeSchema = new mongoose.Schema(baseEntry, { _id: false });
 export const coverLetterSchema     = new mongoose.Schema(baseEntry, { _id: false });
+export const baseResumeSchema      = new mongoose.Schema(baseResume, { _id: false });
+export const transcriptSchema = new mongoose.Schema(transcript, {_id: false});
 
 // Normalize legacy -> url
 function ensureUrl(next) {
-  // @ts-ignore
   if (!this.url) {
-    // @ts-ignore
     this.url = this.optimizedResumeLink || this.coverLetterLink || this.url;
   }
   next();
