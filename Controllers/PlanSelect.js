@@ -21,6 +21,38 @@ export default async function PlanSelect(req, res) {
       return res.status(400).json({ message: "Missing user email" });
     }
 
+    // --- Defensive: normalize legacy resumeLink type (string -> array of objects) ---
+    try {
+      const existing = await UserModel.findOne({ email: userDetails.email }).lean();
+      if (existing && typeof existing.resumeLink === "string" && existing.resumeLink.trim() !== "") {
+        const legacyUrl = existing.resumeLink;
+        const legacyName = legacyUrl.split("/").pop() || "resume.pdf";
+        await UserModel.updateOne(
+          { email: userDetails.email },
+          {
+            $set: {
+              resumeLink: [
+                {
+                  name: legacyName,
+                  link: legacyUrl,
+                  createdAt: new Date(),
+                },
+              ],
+            },
+          }
+        );
+      } else if (existing && !Array.isArray(existing.resumeLink)) {
+        // If it's any other non-array type (null/object), coerce to [] to avoid $push errors
+        await UserModel.updateOne(
+          { email: userDetails.email },
+          { $set: { resumeLink: [] } }
+        );
+      }
+    } catch (e) {
+      // Do not fail the request for normalization issues; proceed with best-effort
+      console.warn("resumeLink normalization warning:", e?.message || e);
+    }
+
     // --- Build $set with only defined values ---
     const setFields = {};
     if (typeof planType !== "undefined") setFields.planType = planType;
