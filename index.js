@@ -156,7 +156,7 @@ import Routes from "./Routes.js";
 dotenv.config();
 
 const app = express();
-const PORT = process.env.PORT || 8001;
+const PORT = process.env.PORT || 8086;
 const NODE_ENV = process.env.NODE_ENV || "development";
 
 // Trust proxy configuration for cloud deployments (Render, Vercel, etc.)
@@ -207,8 +207,8 @@ const corsOptions = {
 };
 
 // Apply CORS FIRST, before any other middleware
-// app.use(cors(corsOptions));
 app.use(cors());
+
 // Security middleware
 app.use(helmet({
   contentSecurityPolicy: {
@@ -317,4 +317,3 @@ app.listen(PORT, () => {
   console.log(`📊 Health check available at http://localhost:${PORT}/health`);
   console.log(`🌐 API available at http://localhost:${PORT}`);
 });
-
