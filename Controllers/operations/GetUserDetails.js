@@ -52,7 +52,8 @@ export default async function GetUserDetails(req, res) {
                     planLimit: existanceOfUser.planLimit, 
                     resumeLink: existanceOfUser.resumeLink, 
                     coverLetters: existanceOfUser.coverLetters, 
-                    optimizedResumes: existanceOfUser.optimizedResumes 
+                    optimizedResumes: existanceOfUser.optimizedResumes,
+                    transcript: existanceOfUser.transcript 
                },
                userProfile: profileLookUp?.email.length > 0 ? profileLookUp : null
           });
