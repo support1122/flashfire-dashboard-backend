@@ -3,7 +3,7 @@ import { JobModel } from "../../Schema_Models/JobModel.js";
 // Test endpoint to verify the controller is working
 export const testJobController = async (req, res) => {
      try {
-          res.json({
+          res.json({ 
                message: "Job controller is working!",
                timestamp: new Date().toISOString(),
                jobId: req.params.id || "no-id-provided"
@@ -53,7 +53,7 @@ export const getJobDescriptionByUrl = async (req, res) => {
                return res.status(404).json({ error: "Job not found" });
           }
 
-          return res.json({
+          return res.json({ 
                jobDescription: job.jobDescription,
                jobTitle: job.jobTitle,
                companyName: job.companyName
@@ -86,8 +86,8 @@ export const saveChangedSession = async (req, res) => {
                     updatedAt: new Date().toLocaleString("en-US", "Asia/Kolkata")
                }
           );
-          console.log(changesMade, "changes made");
-          return res.json({ message: "Changes saved successfully", changesMade });
+          console.log(changesMade,"changes made");
+          return res.json({ message: "Changes saved successfully"  , changesMade });
      } catch (error) {
           console.error("Error saving changed session:", error);
           return res.status(500).json({ error: "Server error" });

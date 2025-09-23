@@ -4,7 +4,7 @@ export default async function GetAllJobsOPS(req,res) {
     let {email}= req.body;
     try {
         console.log(email)
-        let allJobs = await JobModel.find({userID : email});
+        let allJobs = await JobModel.find({userID : email}).select('-jobDescription');
         console.log("all jobs ", allJobs)
         // let userDetailsLatest = await UserModel.findOne({email: userDetails?.email })
         // console.log(allJobs, userDetails);
