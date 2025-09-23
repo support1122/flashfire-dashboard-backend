@@ -106,8 +106,8 @@ export default async function PlanSelect(req, res) {
     if (normOptimized && normOptimized.url) {
       pushOps.optimizedResumes = { $each: [normOptimized] };
     }
-    if (normCoverList.length) {
-      pushOps.coverLetters = { $each: normCoverList };
+    if (normCover && normCover.url) {
+      pushOps.coverLetters = { $each: [normCover] };
     }
 
     // ✅ Transcripts

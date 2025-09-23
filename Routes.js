@@ -30,6 +30,9 @@ import ForgotPassword from "./Controllers/ForgotPassword.js";
 import ExtensionLogin from "./Controllers/Extensions/login.js";
 import { ReciveData } from "./Controllers/Extensions/reciveData.js";
 import ClientLogin from "./Controllers/Extensions/clientLogin.js";
+import { ProfileModel } from "./Schema_Models/ProfileModel.js";
+
+
 
 const app = express.Router();
 
@@ -86,6 +89,15 @@ app.post('/extension/login', ExtensionLogin);
 app.post('/extension/sendData', ReciveData);
 app.post('/extension/saveToDashboard', saveToDashboard);
 app.post('/extension/clientLogin', ClientLogin);
+app.get('/flash-fill', async (req, res) => {
+    try {
+      let profiles =await  ProfileModel.find().lean();
+      res.status(200).json(profiles);
+    } catch (error) {
+      console.log(error);
+    }
+    
+  })
 
 //AI optimizer routes
 // app.post("/saveChangedSession", saveChangedSession);
