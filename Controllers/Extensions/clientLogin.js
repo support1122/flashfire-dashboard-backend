@@ -27,7 +27,8 @@ export default async function ClientLogin(req, res) {
                     name: existanceOfUser.name, 
                     email, 
                     planType: existanceOfUser.planType, 
-                    preferredRoles: Array.isArray(profileLookUp?.preferredRoles) ? profileLookUp.preferredRoles : []
+                    preferredRoles: Array.isArray(profileLookUp?.preferredRoles) ? profileLookUp.preferredRoles : [],
+                    preferredLocations: Array.isArray(profileLookUp?.preferredLocations) ? profileLookUp.preferredLocations : []
                     // userType: existanceOfUser.userType, 
                     // planLimit: existanceOfUser.planLimit, 
                     // resumeLink: existanceOfUser.resumeLink, 
