@@ -1,5 +1,6 @@
 import Operations from '../../Schema_Models/Operations.js';
 import { UserModel } from '../../Schema_Models/UserModel.js';
+import { ProfileModel } from '../../Schema_Models/ProfileModel.js';
 import bcrypt from 'bcrypt';
 
 const ExtensionLogin = async (req, res) => {
@@ -24,11 +25,28 @@ const ExtensionLogin = async (req, res) => {
           // Fetch all users from the UserModel schema
           const users = await UserModel.find({}, 'userID name email'); // Select only userID, name, and email
 
+          // Fetch preferredRoles for these users from ProfileModel
+          const emails = users.map(u => u.email);
+          const profiles = await ProfileModel.find(
+               { email: { $in: emails } },
+               'email preferredRoles'
+          );
+          const emailToPreferredRoles = new Map(
+               profiles.map(p => [p.email, Array.isArray(p.preferredRoles) ? p.preferredRoles : []])
+          );
+
+          const usersWithPreferredRoles = users.map(u => ({
+               userID: u.userID,
+               name: u.name,
+               email: u.email,
+               preferredRoles: emailToPreferredRoles.get(u.email) || []
+          }));
+
           // Successful login
           return res.status(200).json({
                success: true,
                message: 'Login successful',
-               users: users, // Return the list of users
+               users: usersWithPreferredRoles,
           });
      } catch (error) {
           console.error('Error during login:', error);
