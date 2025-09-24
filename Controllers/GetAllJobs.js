@@ -5,8 +5,9 @@ export default async function GetAllJobs(req, res) {
     try {
         // Get user email from JWT token (set by LocalTokenValidator middleware)
         const userEmail = req.body?.email || req.body?.userDetails?.email || req.email;
+        
         console.log('GetAllJobs - User email:', userEmail);
-
+        
         if (!userEmail) {
             console.log('GetAllJobs - No user email found');
             return res.status(400).json({ message: "User email not found" });
@@ -18,8 +19,8 @@ export default async function GetAllJobs(req, res) {
 
         // Get all jobs for this user (excluding jobDescription for performance)
         let allJobs = await JobModel.find({ userID: userEmail }).select('-jobDescription');
-        console.log(GetAllJobs - Found ${allJobs.length} jobs for user: ${userEmail});
-
+        console.log(`GetAllJobs - Found ${allJobs.length} jobs for user: ${userEmail}`);
+        
         // If no jobs found, let's check what userIDs exist in the jobs collection
         if (allJobs.length === 0) {
             const distinctUserIDs = await JobModel.distinct('userID');
@@ -37,4 +38,3 @@ export default async function GetAllJobs(req, res) {
         res.status(500).json({ message: "Failed to fetch jobs" });
     }
 }
-
