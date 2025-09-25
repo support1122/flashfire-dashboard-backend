@@ -66,7 +66,9 @@ export default async function UpdateChanges(req, res) {
   }
   const baseNextStatus = existing.currentStatus === "saved" ? "applied" : existing.currentStatus;
   const opsName = req.body?.role === "operations" ? (req.body?.userDetails?.name || null) : null;
-  const nextStatus = opsName ? `${baseNextStatus} by ${opsName}` : baseNextStatus;
+  const nextStatus = opsName
+    ? `${baseNextStatus} by ${opsName}`
+    : (existing.currentStatus === "saved" ? "applied by user" : baseNextStatus);
 
   const update = {
     $set: {
