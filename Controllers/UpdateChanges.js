@@ -64,32 +64,17 @@ export default async function UpdateChanges(req, res) {
   if (!existing) {
     return res.status(404).json({ message: "Job not found for this user" });
   }
+  const baseNextStatus = existing.currentStatus === "saved" ? "applied" : existing.currentStatus;
+  const opsName = req.body?.role === "operations" ? (req.body?.userDetails?.name || null) : null;
+  const nextStatus = opsName ? `${baseNextStatus} by ${opsName}` : baseNextStatus;
 
   const update = {
     $set: {
       updatedAt: new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" }),
+      currentStatus: nextStatus,
     },
-    // add attachments (no duplicates)
-    $addToSet: { attachments: { $each: attachmentUrls } },
+    $addToSet: { attachments: { $each: attachmentUrls }, timeline: nextStatus },
   };
-
-  // If it was "saved", flip to "applied" and record it on the timeline
-  if (existing.currentStatus === "saved") {
-    update.$set.currentStatus = "applied";
-    // use $addToSet to avoid duplicate "applied" in timeline
-    update.$addToSet.timeline = "applied";
-  }
-  
-  // For operations role, add user attribution to status changes
-  if (req.body?.role === "operations" && req.body?.userDetails?.name) {
-    const userName = req.body.userDetails.name;
-    const currentStatusWithUser = `${existing.currentStatus} by ${userName}`;
-    
-    // Update status to include user attribution
-    update.$set.currentStatus = currentStatusWithUser;
-    // Add to timeline with user attribution
-    update.$addToSet.timeline = currentStatusWithUser;
-  }
 
   const updated = await JobModel.findOneAndUpdate(
     { jobID, userID: userEmail },
@@ -106,8 +91,20 @@ export default async function UpdateChanges(req, res) {
       await JobModel.findOneAndDelete({ jobID, userID: userEmail });
     }
 
-    const updatedJobs = await JobModel.find({ userID: userEmail }).sort({ createdAt: -1 });
-    return res.status(200).json({ message: "Jobs updated successfully", updatedJobs });
+    // Filter out any timeline entries like "saved by ..." from the response only
+    const updatedJobs = await JobModel.find({ userID: userEmail })
+      .sort({ createdAt: -1 })
+      .lean();
+    const sanitizedJobs = updatedJobs.map((job) => {
+      const copy = { ...job };
+      if (Array.isArray(copy.timeline)) {
+        copy.timeline = copy.timeline.filter(
+          (t) => !(typeof t === "string" && t.toLowerCase().startsWith("saved by"))
+        );
+      }
+      return copy;
+    });
+    return res.status(200).json({ message: "Jobs updated successfully", updatedJobs: sanitizedJobs });
   } catch (error) {
     console.error("UpdateChanges error:", error);
     return res.status(500).json({ message: "Server error", error: String(error) });
