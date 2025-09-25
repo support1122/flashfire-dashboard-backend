@@ -79,6 +79,17 @@ export default async function UpdateChanges(req, res) {
     // use $addToSet to avoid duplicate "applied" in timeline
     update.$addToSet.timeline = "applied";
   }
+  
+  // For operations role, add user attribution to status changes
+  if (req.body?.role === "operations" && req.body?.userDetails?.name) {
+    const userName = req.body.userDetails.name;
+    const currentStatusWithUser = `${existing.currentStatus} by ${userName}`;
+    
+    // Update status to include user attribution
+    update.$set.currentStatus = currentStatusWithUser;
+    // Add to timeline with user attribution
+    update.$addToSet.timeline = currentStatusWithUser;
+  }
 
   const updated = await JobModel.findOneAndUpdate(
     { jobID, userID: userEmail },
@@ -102,4 +113,3 @@ export default async function UpdateChanges(req, res) {
     return res.status(500).json({ message: "Server error", error: String(error) });
   }
 }
-
