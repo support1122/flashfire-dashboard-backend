@@ -169,6 +169,8 @@ export default async function Add_Update_Profile(req, res) {
       confirmAccuracy,
       agreeTos,
       references,
+      dashboardManager,
+      dashboardManagerContact,
       token,
       userDetails,
     } = req.body;
@@ -179,7 +181,10 @@ export default async function Add_Update_Profile(req, res) {
       return res.status(400).json({ message: "Authentication email is required" });
     }
 
-    if (!email) {
+    // Check if this is a dashboard manager only update
+    const isDashboardManagerOnlyUpdate = dashboardManager !== undefined || dashboardManagerContact !== undefined;
+    
+    if (!email && !isDashboardManagerOnlyUpdate) {
       return res.status(400).json({ message: "Contact email is required" });
     }
 
@@ -226,6 +231,8 @@ export default async function Add_Update_Profile(req, res) {
           confirmAccuracy: confirmAccuracy !== undefined ? confirmAccuracy : existingProfile.confirmAccuracy,
           agreeTos: agreeTos !== undefined ? agreeTos : existingProfile.agreeTos,
           references: references !== undefined ? references : existingProfile.references,
+          dashboardManager: dashboardManager !== undefined ? dashboardManager : existingProfile.dashboardManager,
+          dashboardManagerContact: dashboardManagerContact !== undefined ? dashboardManagerContact : existingProfile.dashboardManagerContact,
         };
 
         const updatedProfile = await ProfileModel.findOneAndUpdate(
@@ -282,6 +289,8 @@ export default async function Add_Update_Profile(req, res) {
         confirmAccuracy: confirmAccuracy !== undefined ? confirmAccuracy : existingProfile.confirmAccuracy,
         agreeTos: agreeTos !== undefined ? agreeTos : existingProfile.agreeTos,
         references: references !== undefined ? references : existingProfile.references,
+        dashboardManager: dashboardManager !== undefined ? dashboardManager : existingProfile.dashboardManager,
+        dashboardManagerContact: dashboardManagerContact !== undefined ? dashboardManagerContact : existingProfile.dashboardManagerContact,
       };
 
       const updatedProfile = await ProfileModel.findOneAndUpdate(
@@ -330,6 +339,8 @@ export default async function Add_Update_Profile(req, res) {
         confirmAccuracy: confirmAccuracy || false,
         agreeTos: agreeTos || false,
         references: references || "",
+        dashboardManager: dashboardManager || "",
+        dashboardManagerContact: dashboardManagerContact || "",
       });
 
       const savedProfile = await newProfile.save();
