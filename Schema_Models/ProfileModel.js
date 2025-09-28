@@ -166,6 +166,16 @@ export const profileSchema = new mongoose.Schema({
     required: false,
     default: "",
   },
+  dashboardManager: {
+    type: String,
+    required: false,
+    default: "",
+  },
+  dashboardManagerContact: {
+    type: String,
+    required: false,
+    default: "",
+  },
 }, {
   timestamps: true
 });
