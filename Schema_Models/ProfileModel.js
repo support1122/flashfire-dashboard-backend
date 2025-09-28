@@ -161,6 +161,11 @@ export const profileSchema = new mongoose.Schema({
     },
     required: false,
   },
+  references: {
+    type: String,
+    required: false,
+    default: "",
+  },
 }, {
   timestamps: true
 });
