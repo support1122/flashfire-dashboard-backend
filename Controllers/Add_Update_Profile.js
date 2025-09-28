@@ -168,6 +168,7 @@ export default async function Add_Update_Profile(req, res) {
       portfolioFileUrl, // New portfolio file field
       confirmAccuracy,
       agreeTos,
+      references,
       token,
       userDetails,
     } = req.body;
@@ -224,6 +225,7 @@ export default async function Add_Update_Profile(req, res) {
           portfolioFileUrl: portfolioFileUrl || existingProfile.portfolioFileUrl,
           confirmAccuracy: confirmAccuracy !== undefined ? confirmAccuracy : existingProfile.confirmAccuracy,
           agreeTos: agreeTos !== undefined ? agreeTos : existingProfile.agreeTos,
+          references: references !== undefined ? references : existingProfile.references,
         };
 
         const updatedProfile = await ProfileModel.findOneAndUpdate(
@@ -279,6 +281,7 @@ export default async function Add_Update_Profile(req, res) {
         portfolioFileUrl: portfolioFileUrl || existingProfile.portfolioFileUrl, // New portfolio file
         confirmAccuracy: confirmAccuracy !== undefined ? confirmAccuracy : existingProfile.confirmAccuracy,
         agreeTos: agreeTos !== undefined ? agreeTos : existingProfile.agreeTos,
+        references: references !== undefined ? references : existingProfile.references,
       };
 
       const updatedProfile = await ProfileModel.findOneAndUpdate(
@@ -326,6 +329,7 @@ export default async function Add_Update_Profile(req, res) {
         portfolioFileUrl: portfolioFileUrl || "", // New portfolio file
         confirmAccuracy: confirmAccuracy || false,
         agreeTos: agreeTos || false,
+        references: references || "",
       });
 
       const savedProfile = await newProfile.save();
