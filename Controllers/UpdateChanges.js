@@ -21,33 +21,40 @@ export default async function UpdateChanges(req, res) {
         ? baseStatus
         : `${baseStatus} by ${actorName}`;
 
+      // Check if operations user is moving job from saved to applied
+      let updateFields = {
+        currentStatus: statusToSet,
+        updatedAt: new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }),
+      };
+
+      // Track operations when moving from saved to applied
+      if (req.body?.role === "operations" && current?.currentStatus === "saved" && statusToSet.includes("applied")) {
+        console.log("🔄 Operations tracking triggered - UpdateStatus action");
+        console.log("📊 Operations user:", req.body?.operationsName || userDetails?.name || 'operations');
+        
+        // Set operatorName to operations user name
+        updateFields.operatorName = req.body?.operationsName || userDetails?.name || 'operations';
+      } else if (req.body?.role !== "operations") {
+        // If not operations user, set to 'user'
+        updateFields.operatorName = 'user';
+      }
+
       await JobModel.findOneAndUpdate(
         { jobID, userID: userEmail },
         {
-          $set: {
-            currentStatus: statusToSet,
-            updatedAt: new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }),
-          },
+          $set: updateFields,
           $push: { timeline: statusToSet },
         },
         { new: true, upsert: false }
       );
-      // Only send Discord notification when moving TO an important status
-      const importantStatuses = ['saved', 'applied', 'interviewing', 'offer', 'rejected', 'deleted'];
-      const isImportantChange = importantStatuses.some(status => 
-        statusToSet.toLowerCase().includes(status)
-      );
-      
-      if (isImportantChange) {
-        const discordMessage =
-    `📌 Job Update:
-    Client: ${userDetails.name}
-     Company: ${current?.companyName}
-     Job Title: ${current?.jobTitle}
-     Status: ${statusToSet}
-     Previous: ${current?.currentStatus}`; 
-        await DiscordConnect(process.env.DISCORD_APPLICATION_TRACKING_CHANNEL,discordMessage);
-      }
+      const discordMessage =
+  `📌 Job Update:
+  Client: ${userDetails.name}
+   Company: ${current?.companyName}
+   Job Title: ${current?.jobTitle}
+   Status: ${statusToSet}
+   Previous: ${current?.currentStatus}`; 
+      if(baseStatus !== 'deleted') await DiscordConnect(process.env.DISCORD_APPLICATION_TRACKING_CHANNEL,discordMessage);
       
   }
     
@@ -85,11 +92,26 @@ export default async function UpdateChanges(req, res) {
     ? `${baseNextStatus} by ${opsName}`
     : (existing.currentStatus === "saved" ? "applied by user" : baseNextStatus);
 
+  // Check if operations user is moving job from saved to applied
+  let updateFields = {
+    updatedAt: new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" }),
+    currentStatus: nextStatus,
+  };
+
+  // Track operations when moving from saved to applied
+  if (req.body?.role === "operations" && existing.currentStatus === "saved" && nextStatus.includes("applied")) {
+    console.log("🔄 Operations tracking triggered - edit action");
+    console.log("📊 Operations user:", req.body?.operationsName || userDetails?.name || 'operations');
+    
+    // Set operatorName to operations user name
+    updateFields.operatorName = req.body?.operationsName || userDetails?.name || 'operations';
+  } else if (req.body?.role !== "operations") {
+    // If not operations user, set to 'user'
+    updateFields.operatorName = 'user';
+  }
+
   const update = {
-    $set: {
-      updatedAt: new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" }),
-      currentStatus: nextStatus,
-    },
+    $set: updateFields,
     $addToSet: { attachments: { $each: attachmentUrls }, timeline: nextStatus },
   };
 
@@ -101,33 +123,6 @@ export default async function UpdateChanges(req, res) {
 
   if (!updated) {
     return res.status(404).json({ message: "Job not found for this user" });
-  }
-
-  // Send Discord notification if status changed to an important status
-  const importantStatuses = ['saved', 'applied', 'interviewing', 'offer', 'rejected', 'deleted'];
-  const isImportantChange = importantStatuses.some(status => 
-    nextStatus.toLowerCase().includes(status)
-  );
-  
-  if (isImportantChange && existing.currentStatus !== nextStatus) {
-    // Get the actual client's name from the job record, not the operations user
-    let clientName = userDetails.name;
-    
-    if (req.body?.role === "operations") {
-      // For operations users, get the client's name from the job's userID (client email)
-      const { UserModel } = await import("../Schema_Models/UserModel.js");
-      const clientUser = await UserModel.findOne({ email: userEmail }).select('name');
-      clientName = clientUser?.name || userEmail;
-    }
-    
-    const discordMessage =
-      `📌 Job Update:
-      Client: ${clientName}
-       Company: ${updated.companyName}
-       Job Title: ${updated.jobTitle}
-       Status: ${nextStatus}
-       Previous: ${existing.currentStatus}`;
-    await DiscordConnect(process.env.DISCORD_APPLICATION_TRACKING_CHANNEL, discordMessage);
   }
 }
 
