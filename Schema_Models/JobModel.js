@@ -76,6 +76,12 @@ export const JobSchema = new mongoose.Schema({
     required: false,
     default: 'user@flashfirehq'
   },
+  appliedDate: {
+    type: String,
+    required: false,
+    default: null
+  },
 });
 
 export const JobModel = mongoose.model('JobDB', JobSchema)
+
