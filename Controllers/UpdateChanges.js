@@ -31,15 +31,21 @@ export default async function UpdateChanges(req, res) {
       if (req.body?.role === "operations" && current?.currentStatus === "saved" && statusToSet.includes("applied")) {
         console.log("🔄 Operations tracking triggered - UpdateStatus action");
         console.log("📊 Operations user:", req.body?.operationsName || userDetails?.name || 'operations');
-        console.log("Operations email:", req.body?.operationsEmail || 'operations@flashfirehq');
+        console.log("📧 Operations email:", req.body?.operationsEmail || 'operations@flashfirehq');
         
         // Set operatorName and operatorEmail to operations user details
         updateFields.operatorName = req.body?.operationsName || userDetails?.name || 'operations';
         updateFields.operatorEmail = req.body?.operationsEmail || 'operations@flashfirehq';
+        // Set appliedDate when job moves to applied status
+        updateFields.appliedDate = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
       } else if (req.body?.role !== "operations") {
         // If not operations user, set to 'user'
         updateFields.operatorName = 'user';
         updateFields.operatorEmail = 'user@flashfirehq';
+        // Set appliedDate when job moves to applied status (for regular users too)
+        if (current?.currentStatus === "saved" && statusToSet.includes("applied")) {
+          updateFields.appliedDate = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
+        }
       }
 
       await JobModel.findOneAndUpdate(
@@ -110,10 +116,15 @@ export default async function UpdateChanges(req, res) {
     // Set operatorName and operatorEmail to operations user details
     updateFields.operatorName = req.body?.operationsName || userDetails?.name || 'operations';
     updateFields.operatorEmail = req.body?.operationsEmail || 'operations@flashfirehq';
+    updateFields.appliedDate = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
   } else if (req.body?.role !== "operations") {
     // If not operations user, set to 'user'
     updateFields.operatorName = 'user';
     updateFields.operatorEmail = 'user@flashfirehq';
+    // Set appliedDate when job moves to applied status (for regular users too)
+    if (existing.currentStatus === "saved" && nextStatus.includes("applied")) {
+      updateFields.appliedDate = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
+    }
   }
 
   const update = {
