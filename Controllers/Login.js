@@ -34,9 +34,10 @@ export default async function Login(req, res) {
                     resumeLink: existanceOfUser.resumeLink, 
                     coverLetters: existanceOfUser.coverLetters, 
                     optimizedResumes: existanceOfUser.optimizedResumes ,
-                    transcript : existanceOfUser.transcript
+                    transcript : existanceOfUser.transcript,
+                    dashboardManager: existanceOfUser.dashboardManager
                 },
-                token: jwt.sign({ email }, process.env.JWT_SECRET || 'your-secret-key', { expiresIn: '7d' }),
+                token: jwt.sign({ email }, process.env.JWT_SECRET_KEY || process.env.JWT_SECRET || 'FLASHFIRE', { expiresIn: '7d' }),
                 userProfile: profileLookUp?.email?.length > 0 ? profileLookUp : null
             });
 
