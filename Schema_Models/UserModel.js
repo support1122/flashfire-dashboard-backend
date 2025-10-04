@@ -30,6 +30,7 @@ export const userSchema = new mongoose.Schema(
     },
     planLimit: { type: Number, default: null },
     userType:  { type: String, default: "User" },
+    dashboardManager: { type: String, required: false, default: "" },
   },
   { timestamps: true }
 );
