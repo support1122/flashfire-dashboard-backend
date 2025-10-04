@@ -32,6 +32,7 @@ import ExtensionLogin from "./Controllers/Extensions/login.js";
 import { ReciveData } from "./Controllers/Extensions/reciveData.js";
 import ClientLogin from "./Controllers/Extensions/clientLogin.js";
 import { ProfileModel } from "./Schema_Models/ProfileModel.js";
+import { getDashboardManagers, getDashboardManagerByName } from "./Controllers/DashboardManagerController.js";
 
 
 
@@ -45,7 +46,7 @@ app.post("/refresh-token", RefreshToken);
 
 // Profile routes
 app.post("/setprofile", LocalTokenValidator, ProfileCheck, Add_Update_Profile);
-app.post("/upload-profile-file", LocalTokenValidator, upload.single('file'), uploadProfileFile);
+app.post("/upload-profile-file", upload.single('file'), LocalTokenValidator, uploadProfileFile);
 
 // Job routes
 app.post("/addjob", LocalTokenValidator, CheckForDuplicateJobs, AddJob);
@@ -90,6 +91,10 @@ app.post('/extension/login', ExtensionLogin);
 app.post('/extension/sendData', ReciveData);
 app.post('/extension/saveToDashboard', saveToDashboard);
 app.post('/extension/clientLogin', ClientLogin);
+
+// Dashboard Manager routes
+app.get('/dashboard-managers', getDashboardManagers);
+app.get('/dashboard-managers/:name', getDashboardManagerByName);
 app.get('/flash-fill', async (req, res) => {
     try {
       let profiles =await  ProfileModel.find().lean();
