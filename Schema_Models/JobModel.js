@@ -71,7 +71,11 @@ export const JobSchema = new mongoose.Schema({
     required: false,
     default: 'user'
   },
+  operatorEmail: {
+    type: String,
+    required: false,
+    default: 'user@flashfirehq'
+  },
 });
 
 export const JobModel = mongoose.model('JobDB', JobSchema)
-
