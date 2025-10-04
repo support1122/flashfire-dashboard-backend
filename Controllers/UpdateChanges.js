@@ -31,12 +31,15 @@ export default async function UpdateChanges(req, res) {
       if (req.body?.role === "operations" && current?.currentStatus === "saved" && statusToSet.includes("applied")) {
         console.log("🔄 Operations tracking triggered - UpdateStatus action");
         console.log("📊 Operations user:", req.body?.operationsName || userDetails?.name || 'operations');
+        console.log("Operations email:", req.body?.operationsEmail || 'operations@flashfirehq');
         
-        // Set operatorName to operations user name
+        // Set operatorName and operatorEmail to operations user details
         updateFields.operatorName = req.body?.operationsName || userDetails?.name || 'operations';
+        updateFields.operatorEmail = req.body?.operationsEmail || 'operations@flashfirehq';
       } else if (req.body?.role !== "operations") {
         // If not operations user, set to 'user'
         updateFields.operatorName = 'user';
+        updateFields.operatorEmail = 'user@flashfirehq';
       }
 
       await JobModel.findOneAndUpdate(
@@ -102,12 +105,15 @@ export default async function UpdateChanges(req, res) {
   if (req.body?.role === "operations" && existing.currentStatus === "saved" && nextStatus.includes("applied")) {
     console.log("🔄 Operations tracking triggered - edit action");
     console.log("📊 Operations user:", req.body?.operationsName || userDetails?.name || 'operations');
+    console.log("📧 Operations email:", req.body?.operationsEmail || 'operations@flashfirehq');
     
-    // Set operatorName to operations user name
+    // Set operatorName and operatorEmail to operations user details
     updateFields.operatorName = req.body?.operationsName || userDetails?.name || 'operations';
+    updateFields.operatorEmail = req.body?.operationsEmail || 'operations@flashfirehq';
   } else if (req.body?.role !== "operations") {
     // If not operations user, set to 'user'
     updateFields.operatorName = 'user';
+    updateFields.operatorEmail = 'user@flashfirehq';
   }
 
   const update = {
