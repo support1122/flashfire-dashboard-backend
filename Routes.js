@@ -2,6 +2,8 @@ import express from "express";
 import Login from "./Controllers/Login.js";
 import Register from "./Controllers/Register.js";
 import GoogleOAuth from "./Controllers/GoogleOAuth.js";
+import { getAllClients } from './Controllers/ClientController.js';
+import { getDashboardManagers, getDashboardManagerByName } from './Controllers/DashboardManagerController.js';
 import Add_Update_Profile from "./Controllers/Add_Update_Profile.js";
 import AddJob from "./Controllers/AddJob.js";
 import GetAllJobs from "./Controllers/GetAllJobs.js";
@@ -32,7 +34,6 @@ import ExtensionLogin from "./Controllers/Extensions/login.js";
 import { ReciveData } from "./Controllers/Extensions/reciveData.js";
 import ClientLogin from "./Controllers/Extensions/clientLogin.js";
 import { ProfileModel } from "./Schema_Models/ProfileModel.js";
-import { getDashboardManagers, getDashboardManagerByName } from "./Controllers/DashboardManagerController.js";
 
 
 
@@ -40,8 +41,12 @@ const app = express.Router();
 
 // Auth routes
 app.post("/login", Login);
-app.post("/coreops", RegisterVerify, Register);
 app.post("/google-oauth", GoogleOAuth);
+
+// Client management routes
+app.post("/api/clients/register", RegisterVerify, Register);
+app.get("/api/clients/all", getAllClients);
+app.get("/api/dashboard-managers", getDashboardManagers);
 app.post("/refresh-token", RefreshToken);
 
 // Profile routes
