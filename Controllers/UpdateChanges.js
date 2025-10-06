@@ -1,5 +1,6 @@
 // controllers/UpdateChanges.js
 import { JobModel } from "../Schema_Models/JobModel.js";
+import { DiscordConnect } from "../Utils/DiscordConnect.js";
 
 export default async function UpdateChanges(req, res) {
   const { jobID, userDetails, action } = req.body;
@@ -10,19 +11,62 @@ export default async function UpdateChanges(req, res) {
   }
 
   try {
-    if (action === "UpdateStatus") {
+  if (action === "UpdateStatus") {
+      const current = await JobModel.findOne({ jobID, userID: userEmail });
+
+      const baseStatus = String(req.body?.status || "").trim();
+      const alreadyAttributed = /\sby\s/i.test(baseStatus);
+      const actorName = req.body?.role === 'operations' ? (userDetails?.name || 'operations') : 'user';
+      const statusToSet = alreadyAttributed || baseStatus === ''
+        ? baseStatus
+        : `${baseStatus} by ${actorName}`;
+
+      // Check if operations user is moving job from saved to applied
+      let updateFields = {
+        currentStatus: statusToSet,
+        updatedAt: new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }),
+      };
+
+      // Track operations when moving from saved to applied
+      if (req.body?.role === "operations" && current?.currentStatus === "saved" && statusToSet.includes("applied")) {
+        console.log("🔄 Operations tracking triggered - UpdateStatus action");
+        console.log("📊 Operations user:", req.body?.operationsName || userDetails?.name || 'operations');
+        console.log("📧 Operations email:", req.body?.operationsEmail || 'operations@flashfirehq');
+        
+        // Set operatorName and operatorEmail to operations user details
+        updateFields.operatorName = req.body?.operationsName || userDetails?.name || 'operations';
+        updateFields.operatorEmail = req.body?.operationsEmail || 'operations@flashfirehq';
+        // Set appliedDate when job moves to applied status
+        updateFields.appliedDate = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
+      } else if (req.body?.role !== "operations") {
+        // If not operations user, set to 'user'
+        updateFields.operatorName = 'user';
+        updateFields.operatorEmail = 'user@flashfirehq';
+        // Set appliedDate when job moves to applied status (for regular users too)
+        if (current?.currentStatus === "saved" && statusToSet.includes("applied")) {
+          updateFields.appliedDate = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
+        }
+      }
+
       await JobModel.findOneAndUpdate(
         { jobID, userID: userEmail },
         {
-          $set: {
-            currentStatus: req.body?.status,
-            updatedAt: new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }),
-          },
-          $push: { timeline: req.body?.status },
+          $set: updateFields,
+          $push: { timeline: statusToSet },
         },
         { new: true, upsert: false }
       );
-    }
+      const discordMessage =
+  `📌 Job Update:
+  Client: ${userDetails.name}
+   Company: ${current?.companyName}
+   Job Title: ${current?.jobTitle}
+   Status: ${statusToSet}
+   Previous: ${current?.currentStatus}`; 
+      if(baseStatus !== 'deleted') await DiscordConnect(process.env.DISCORD_APPLICATION_TRACKING_CHANNEL,discordMessage);
+      
+  }
+    
 
   else if (action === "edit") {
   const userEmail = userDetails?.email;
@@ -51,21 +95,42 @@ export default async function UpdateChanges(req, res) {
   if (!existing) {
     return res.status(404).json({ message: "Job not found for this user" });
   }
+  const baseNextStatus = existing.currentStatus === "saved" ? "applied" : existing.currentStatus;
+  const opsName = req.body?.role === "operations" ? (req.body?.userDetails?.name || null) : null;
+  const nextStatus = opsName
+    ? `${baseNextStatus} by ${opsName}`
+    : (existing.currentStatus === "saved" ? "applied by user" : baseNextStatus);
 
-  const update = {
-    $set: {
-      updatedAt: new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" }),
-    },
-    // add attachments (no duplicates)
-    $addToSet: { attachments: { $each: attachmentUrls } },
+  // Check if operations user is moving job from saved to applied
+  let updateFields = {
+    updatedAt: new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" }),
+    currentStatus: nextStatus,
   };
 
-  // If it was "saved", flip to "applied" and record it on the timeline
-  if (existing.currentStatus === "saved") {
-    update.$set.currentStatus = "applied";
-    // use $addToSet to avoid duplicate "applied" in timeline
-    update.$addToSet.timeline = "applied";
+  // Track operations when moving from saved to applied
+  if (req.body?.role === "operations" && existing.currentStatus === "saved" && nextStatus.includes("applied")) {
+    console.log("🔄 Operations tracking triggered - edit action");
+    console.log("📊 Operations user:", req.body?.operationsName || userDetails?.name || 'operations');
+    console.log("📧 Operations email:", req.body?.operationsEmail || 'operations@flashfirehq');
+    
+    // Set operatorName and operatorEmail to operations user details
+    updateFields.operatorName = req.body?.operationsName || userDetails?.name || 'operations';
+    updateFields.operatorEmail = req.body?.operationsEmail || 'operations@flashfirehq';
+    updateFields.appliedDate = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
+  } else if (req.body?.role !== "operations") {
+    // If not operations user, set to 'user'
+    updateFields.operatorName = 'user';
+    updateFields.operatorEmail = 'user@flashfirehq';
+    // Set appliedDate when job moves to applied status (for regular users too)
+    if (existing.currentStatus === "saved" && nextStatus.includes("applied")) {
+      updateFields.appliedDate = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
+    }
   }
+
+  const update = {
+    $set: updateFields,
+    $addToSet: { attachments: { $each: attachmentUrls }, timeline: nextStatus },
+  };
 
   const updated = await JobModel.findOneAndUpdate(
     { jobID, userID: userEmail },
@@ -75,6 +140,35 @@ export default async function UpdateChanges(req, res) {
 
   if (!updated) {
     return res.status(404).json({ message: "Job not found for this user" });
+  }
+
+  // Send Discord notification if status changed to an important status
+  try {
+    const importantStatuses = ['saved', 'applied', 'interviewing', 'offer', 'rejected', 'deleted'];
+    const isImportantChange = importantStatuses.some((s) =>
+      String(nextStatus).toLowerCase().includes(s)
+    );
+
+    if (isImportantChange && existing.currentStatus !== nextStatus) {
+      // Determine client name: if operations user, look up user's name by email
+      let clientName = userDetails.name;
+      if (req.body?.role === 'operations') {
+        const { UserModel } = await import("../Schema_Models/UserModel.js");
+        const clientUser = await UserModel.findOne({ email: userEmail }).select('name');
+        clientName = clientUser?.name || userEmail;
+      }
+
+      const discordMessage =
+        `📌 Job Update:\n` +
+        `  Client: ${clientName}\n` +
+        `  Company: ${updated.companyName}\n` +
+        `  Job Title: ${updated.jobTitle}\n` +
+        `  Status: ${nextStatus}\n` +
+        `  Previous: ${existing.currentStatus}`;
+      await DiscordConnect(process.env.DISCORD_APPLICATION_TRACKING_CHANNEL, discordMessage);
+    }
+  } catch (e) {
+    console.log('Discord notify (edit) failed:', e);
   }
 }
 
@@ -89,3 +183,4 @@ export default async function UpdateChanges(req, res) {
     return res.status(500).json({ message: "Server error", error: String(error) });
   }
 }
+
