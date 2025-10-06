@@ -141,6 +141,35 @@ export default async function UpdateChanges(req, res) {
   if (!updated) {
     return res.status(404).json({ message: "Job not found for this user" });
   }
+
+  // Send Discord notification if status changed to an important status
+  try {
+    const importantStatuses = ['saved', 'applied', 'interviewing', 'offer', 'rejected', 'deleted'];
+    const isImportantChange = importantStatuses.some((s) =>
+      String(nextStatus).toLowerCase().includes(s)
+    );
+
+    if (isImportantChange && existing.currentStatus !== nextStatus) {
+      // Determine client name: if operations user, look up user's name by email
+      let clientName = userDetails.name;
+      if (req.body?.role === 'operations') {
+        const { UserModel } = await import("../Schema_Models/UserModel.js");
+        const clientUser = await UserModel.findOne({ email: userEmail }).select('name');
+        clientName = clientUser?.name || userEmail;
+      }
+
+      const discordMessage =
+        `📌 Job Update:\n` +
+        `  Client: ${clientName}\n` +
+        `  Company: ${updated.companyName}\n` +
+        `  Job Title: ${updated.jobTitle}\n` +
+        `  Status: ${nextStatus}\n` +
+        `  Previous: ${existing.currentStatus}`;
+      await DiscordConnect(process.env.DISCORD_APPLICATION_TRACKING_CHANNEL, discordMessage);
+    }
+  } catch (e) {
+    console.log('Discord notify (edit) failed:', e);
+  }
 }
 
     else if (action === "delete") {
