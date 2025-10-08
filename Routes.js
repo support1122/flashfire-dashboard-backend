@@ -34,6 +34,7 @@ import ExtensionLogin from "./Controllers/Extensions/login.js";
 import { ReciveData } from "./Controllers/Extensions/reciveData.js";
 import ClientLogin from "./Controllers/Extensions/clientLogin.js";
 import { ProfileModel } from "./Schema_Models/ProfileModel.js";
+import { UserModel } from "./Schema_Models/UserModel.js";
 
 
 
@@ -48,6 +49,25 @@ app.post("/api/clients/register", RegisterVerify, Register);
 app.get("/api/clients/all", getAllClients);
 app.get("/api/dashboard-managers", getDashboardManagers);
 app.post("/refresh-token", RefreshToken);
+app.post('/get-updated-user', async(req, res)=>{
+  try {
+      const existanceOfUser = await UserModel.findOne({email : req.body.email});
+      res.status(200).json( { 
+                    name: existanceOfUser.name, 
+                    email: existanceOfUser.email, 
+                    planType: existanceOfUser.planType, 
+                    userType: existanceOfUser.userType, 
+                    planLimit: existanceOfUser.planLimit, 
+                    resumeLink: existanceOfUser.resumeLink, 
+                    coverLetters: existanceOfUser.coverLetters, 
+                    optimizedResumes: existanceOfUser.optimizedResumes ,
+                    transcript : existanceOfUser.transcript,
+                    dashboardManager: existanceOfUser.dashboardManager
+                })
+  } catch (error) {
+    console.log(error)
+  }
+})
 
 // Profile routes
 app.post("/setprofile", LocalTokenValidator, ProfileCheck, Add_Update_Profile);
