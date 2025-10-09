@@ -1,4 +1,4 @@
-import { saveFileLocally, getFileUrl } from "../Utils/localFileStorage.js";
+import { uploadToCloudinary } from "../Utils/cloudinary.js";
 import { ProfileModel } from "../Schema_Models/ProfileModel.js";
 
 export default async function FileUpload(req, res) {
@@ -22,20 +22,20 @@ export default async function FileUpload(req, res) {
     // Convert base64 to buffer
     const fileBuffer = Buffer.from(fileData.split(',')[1], 'base64');
     
-    // Save file locally
-    const originalName = `${fileType}.pdf`;
-    const uploadResult = await saveFileLocally(fileBuffer, originalName, fileType);
+    // Upload to Cloudinary
+    const folder = fileType === 'resume' ? 'flashfire-resumes' : 'flashfire-cover-letters';
+    const uploadResult = await uploadToCloudinary(fileBuffer, folder);
     
     if (!uploadResult.success) {
       return res.status(500).json({ 
-        message: "Failed to save file locally",
+        message: "Failed to upload file to Cloudinary",
         error: uploadResult.error 
       });
     }
 
-    // Update profile with the new file path
+    // Update profile with the new file URL
     const updateField = fileType === 'resume' ? 'resumeUrl' : 'coverLetterUrl';
-    const fileUrl = getFileUrl(uploadResult.filePath);
+    const fileUrl = uploadResult.url;
     const updated = await ProfileModel.findOneAndUpdate(
       { email },
       { $set: { [updateField]: fileUrl } },
