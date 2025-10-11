@@ -43,7 +43,7 @@ const corsOptions = {
           "chrome-extension://hfacjbfgibpndmgickneebipgemofpha",
           ...(process.env.ALLOWED_ORIGINS?.split(",") || [])
         ]
-        : [  "chrome-extension://hfacjbfgibpndmgickneebipgemofpha"
+        : [  "chrome-extension://hfacjbfgibpndmgickneebipgemofpha",
             "http://localhost:3000", 
             "http://localhost:5173", 
             "http://localhost:5175", 
@@ -153,4 +153,5 @@ app.listen(PORT, () => {
   console.log(`📊 Health check available at http://localhost:${PORT}/health`);
   console.log(`🌐 API available at http://localhost:${PORT}`);
 });
+
 
