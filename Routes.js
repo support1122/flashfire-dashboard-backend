@@ -20,7 +20,7 @@ import Tokenizer from "./Middlewares/Tokenizer.js";
 import UpdateActionsVerifier from "./Middlewares/UpdateActionsVerifier.js";
 import VerifyJobIDAndChanges from "./Middlewares/VerifyJobIDAndChanges.js";
 import RefreshToken from "./Controllers/RefreshToken.js";
-import { getJobDescription, getJobDescriptionByUrl, saveChangedSession, testJobController } from "./Controllers/Optimizer/jobController.js";
+import { getJobById, getJobDescription, getJobDescriptionByUrl, saveChangedSession, testJobController } from "./Controllers/Optimizer/jobController.js";
 import GetJobDescription, { GetJobDescriptionByUrl } from "./Controllers/GetJobDescription.js";
 import { updateBaseResume } from "./Controllers/Admin/SetBaseResume.js";
 import { assignUserToOperations } from "./Controllers/Admin/AssignUserToOperatios.js";
@@ -89,7 +89,7 @@ app.post("/getJobDescription", GetJobDescription);
 app.get("/getJobDescription/:id", GetJobDescriptionByUrl);
 app.get("/testJobController/:id", testJobController);
 app.post("/saveChangedSession", saveChangedSession);
-
+app.post("/getJobById", getJobById);
 // admin new dashboard routes
 app.post("/admin/setBaseResume", updateBaseResume);
 app.post("/admin/assignUserToOperations", assignUserToOperations);

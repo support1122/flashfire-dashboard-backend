@@ -72,6 +72,8 @@ export const saveChangedSession = async (req, res) => {
                return res.status(400).json({ error: "Job ID and starting content are required" });
           }
 
+          console.log('saveChangedSession - Received ID:', id);
+
           // Find the job and update it with the new changes
           const changesMade = {
                startingContent,
@@ -79,17 +81,109 @@ export const saveChangedSession = async (req, res) => {
                timestamp: new Date().toLocaleString("en-US", "Asia/Kolkata"),
                changedSections: Object.keys(startingContent)
           };
-          await JobModel.findOneAndUpdate(
-               { _id: id },
-               {
-                    changesMade,
-                    updatedAt: new Date().toLocaleString("en-US", "Asia/Kolkata")
-               }
-          );
-          console.log(changesMade, "changes made");
-          return res.json({ message: "Changes saved successfully", changesMade });
+
+          // Try both _id and jobID fields
+          let updatedJob;
+          try {
+               // First try with MongoDB _id
+               updatedJob = await JobModel.findOneAndUpdate(
+                    { _id: id },
+                    {
+                         changesMade,
+                         updatedAt: new Date().toLocaleString("en-US", "Asia/Kolkata")
+                    },
+                    { new: true }
+               );
+          } catch (error) {
+               console.log('saveChangedSession - Trying with jobID field for ID:', id);
+          }
+
+          // If not found by _id, try with jobID
+          if (!updatedJob) {
+               updatedJob = await JobModel.findOneAndUpdate(
+                    { jobID: id },
+                    {
+                         changesMade,
+                         updatedAt: new Date().toLocaleString("en-US", "Asia/Kolkata")
+                    },
+                    { new: true }
+               );
+          }
+
+          if (!updatedJob) {
+               console.log('saveChangedSession - Job not found for ID:', id);
+               return res.status(404).json({ error: "Job not found" });
+          }
+
+          console.log('saveChangedSession - Changes saved successfully for job:', updatedJob.jobTitle);
+          return res.json({ 
+               message: "Changes saved successfully", 
+               changesMade,
+               jobId: id 
+          });
      } catch (error) {
           console.error("Error saving changed session:", error);
+          return res.status(500).json({ error: "Server error" });
+     }
+};
+
+// Get a single job by _id or jobID to refresh session storage
+export const getJobById = async (req, res) => {
+     try {
+          const { id } = req.body; // expecting { "id": "..." }
+
+          if (!id) {
+               return res.status(400).json({ error: "Job ID is required" });
+          }
+
+          console.log('getJobById - Fetching job with ID:', id);
+
+          // Try to find job by both _id and jobID
+          let job;
+          try {
+               // First try with MongoDB _id
+               job = await JobModel.findById(id);
+          } catch (error) {
+               console.log('getJobById - Trying with jobID field for ID:', id);
+          }
+
+          // If not found by _id, try with jobID
+          if (!job) {
+               job = await JobModel.findOne({ jobID: id });
+          }
+
+          if (!job) {
+               console.log('getJobById - Job not found for ID:', id);
+               return res.status(404).json({ error: "Job not found" });
+          }
+
+          console.log('getJobById - Job found:', job.jobTitle);
+
+          // Return the job with all fields
+          return res.json({ 
+               success: true, 
+               job: {
+                    _id: job._id.toString(),
+                    jobID: job.jobID,
+                    dateAdded: job.dateAdded,
+                    userID: job.userID,
+                    jobTitle: job.jobTitle,
+                    currentStatus: job.currentStatus,
+                    jobDescription: job.jobDescription,
+                    joblink: job.joblink,
+                    companyName: job.companyName,
+                    timeline: job.timeline,
+                    createdAt: job.createdAt,
+                    updatedAt: job.updatedAt,
+                    attachments: job.attachments,
+                    changesMade: job.changesMade,
+                    operatorName: job.operatorName,
+                    operatorEmail: job.operatorEmail,
+                    appliedDate: job.appliedDate
+               }
+          });
+     } catch (error) {
+          console.error("Error fetching job by ID:", error);
           return res.status(500).json({ error: "Server error" });
      }
 };

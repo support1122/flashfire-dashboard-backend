@@ -17,9 +17,20 @@ export default async function GetAllJobs(req, res) {
         const totalJobs = await JobModel.countDocuments({});
         console.log('GetAllJobs - Total jobs in collection:', totalJobs);
 
-        // Get all jobs for this user (excluding jobDescription for performance)
-        let allJobs = await JobModel.find({ userID: userEmail }).select('-jobDescription');
+        // Get all jobs WITHOUT excluding jobDescription for now (we need _id)
+        // We'll use lean() to get plain JavaScript objects with _id
+        let allJobs = await JobModel.find({ userID: userEmail })
+            .select('-jobDescription')
+            .lean();
+        
+        // Ensure _id is converted to string for frontend compatibility
+        allJobs = allJobs.map(job => ({
+            ...job,
+            _id: job._id.toString()
+        }));
+        
         console.log(`GetAllJobs - Found ${allJobs.length} jobs for user: ${userEmail}`);
+        console.log('GetAllJobs - Sample job with _id:', allJobs[0]?._id);
         
         // If no jobs found, let's check what userIDs exist in the jobs collection
         if (allJobs.length === 0) {
