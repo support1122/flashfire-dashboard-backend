@@ -154,7 +154,7 @@ export async function saveToDashboard(req, res) {
             selectedEmails,
             url
         } = req.body;
-
+    console.log(req.body.logo);
         // --- Input Validation (no changes here) ---
         if (!selectedEmails || !Array.isArray(selectedEmails) || selectedEmails.length === 0) {
             return res.status(400).json({
@@ -251,3 +251,4 @@ export async function saveToDashboard(req, res) {
         });
     }
 }
+
