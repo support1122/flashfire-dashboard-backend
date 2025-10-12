@@ -223,6 +223,49 @@ app.use(helmet({
   },
 }));
 
+// CORS configuration
+const corsOptions = {
+  origin: function (origin, callback) {
+    const allowedOrigins = NODE_ENV === "production" 
+      ? [
+          "https://portal.flashfirejobs.com",
+          "http://localhost:3000",
+          "https://www.portal.flashfirejobs.com",
+          "https://flashfire-dashboard-frontend.vercel.app",
+          "chrome://extensions/?id=feekbkgobkhnfchgngipimimiiglgpnj",
+          "https://flashfire-dashboard.vercel.app",
+          "https://clients-tracking.vercel.app",
+          "https://dashboardtracking.vercel.app",
+          "https://utm-track-frontend.vercel.app",
+          ...(process.env.ALLOWED_ORIGINS?.split(",") || [])
+        ]
+        : [ "chrome-extension://hfacjbfgibpndmgickneebipgemofpha",
+            "http://localhost:3000", 
+            "http://localhost:5173", 
+            "http://localhost:5175", 
+            "http://localhost:5176"
+          ];
+    
+    // Allow requests with no origin (like mobile apps or curl requests)
+    if (!origin) return callback(null, true);
+    
+    if (allowedOrigins.indexOf(origin) !== -1) {
+      callback(null, true);
+    } else {
+      console.log(`CORS blocked origin: ${origin}`);
+      console.log(`Allowed origins: ${allowedOrigins.join(', ')}`);
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
+  credentials: true,
+  optionsSuccessStatus: 200,
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
+};
+
+app.use(cors(corsOptions));
+
+
 // Rate limiting
 const limiter = rateLimit({
   windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS) || 15 * 60 * 1000, // 15 minutes

@@ -2,6 +2,7 @@
 import { JobModel } from "../Schema_Models/JobModel.js";
 
 export default async function StoreJobAndUserDetails(req, res) {
+    console.log(req.body);
     try {
         const b = req.body || {};
         const pickKey = (obj, keys, fallback = "") => {
@@ -147,11 +148,13 @@ export default async function StoreJobAndUserDetails(req, res) {
 
 export async function saveToDashboard(req, res) {
     try {
+      //  console.log(req.body);
         const {
             company,
             description,
             position,
             selectedEmails,
+            logo,
             url
         } = req.body;
 
@@ -209,6 +212,7 @@ export async function saveToDashboard(req, res) {
                     jobTitle: position,
                     joblink: url,
                     companyName: company,
+                    companyLogo : logo,
                     currentStatus: "saved",
                     jobDescription: description || "",
                     timeline: ["Added"],
