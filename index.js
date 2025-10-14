@@ -234,17 +234,12 @@ const corsOptions = {
           "https://flashfire-dashboard-frontend.vercel.app",
           "chrome://extensions/?id=feekbkgobkhnfchgngipimimiiglgpnj",
           "https://flashfire-dashboard.vercel.app",
-          "https://clients-tracking.vercel.app",
-          "https://dashboardtracking.vercel.app",
-          "https://utm-track-frontend.vercel.app",
+          // "https://clients-tracking.vercel.app",
+          // "https://dashboardtracking.vercel.app",
+          // "https://utm-track-frontend.vercel.app",
           ...(process.env.ALLOWED_ORIGINS?.split(",") || [])
         ]
-        : [ "chrome-extension://hfacjbfgibpndmgickneebipgemofpha",
-            "http://localhost:3000", 
-            "http://localhost:5173", 
-            "http://localhost:5175", 
-            "http://localhost:5176"
-          ];
+        : ["http://localhost:3000"];
     
     // Allow requests with no origin (like mobile apps or curl requests)
     if (!origin) return callback(null, true);
@@ -360,3 +355,4 @@ app.listen(PORT, () => {
   console.log(`📊 Health check available at http://localhost:${PORT}/health`);
   console.log(`🌐 API available at http://localhost:${PORT}`);
 });
+
