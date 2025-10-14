@@ -166,48 +166,48 @@ console.log(`🚀 Starting server with NODE_ENV: ${NODE_ENV}`);
 console.log(`🌐 Server will run on port: ${PORT}`);
 
 // CORS configuration - MUST come before other middleware
-const corsOptions = {
-  origin: function (origin, callback) {
-    const allowedOrigins = NODE_ENV === "production" 
-      ? [
-          "https://portal.flashfirejobs.com",
-          "http://localhost:3000",
-          "https://www.portal.flashfirejobs.com",
-          "https://flashfire-dashboard-frontend.vercel.app",
-          "chrome://extensions/?id=feekbkgobkhnfchgngipimimiiglgpnj",
-          "https://flashfire-dashboard.vercel.app",
-          ...(process.env.ALLOWED_ORIGINS?.split(",") || [])
-        ]
-      : ["http://localhost:3000"];
+//const corsOptions = {
+  //origin: function (origin, callback) {
+    //const allowedOrigins = NODE_ENV === "production" 
+     // ? [
+       //   "https://portal.flashfirejobs.com",
+         // "http://localhost:3000",
+         // "https://www.portal.flashfirejobs.com",
+       //   "https://flashfire-dashboard-frontend.vercel.app",
+         // "chrome://extensions/?id=feekbkgobkhnfchgngipimimiiglgpnj",
+         // "https://flashfire-dashboard.vercel.app",
+         // ...(process.env.ALLOWED_ORIGINS?.split(",") || [])
+       // ]
+    //  : ["http://localhost:3000"];
     
-    console.log(`CORS check - Origin: ${origin}, NODE_ENV: ${NODE_ENV}`);
-    console.log(`Allowed origins: ${allowedOrigins.join(', ')}`);
+   // console.log(`CORS check - Origin: ${origin}, NODE_ENV: ${NODE_ENV}`);
+   // console.log(`Allowed origins: ${allowedOrigins.join(', ')}`);
     
     // Allow requests with no origin (like mobile apps or curl requests)
-    if (!origin) {
-      console.log('CORS: Allowing request with no origin');
-      return callback(null, true);
-    }
+   // if (!origin) {
+     // console.log('CORS: Allowing request with no origin');
+     // return callback(null, true);
+   // }
     
-    if (allowedOrigins.indexOf(origin) !== -1) {
-      console.log(`CORS: Allowing origin ${origin}`);
-      callback(null, true);
-    } else {
-      console.log(`CORS blocked origin: ${origin}`);
-      callback(new Error('Not allowed by CORS'));
-    }
-  },
-  credentials: true,
-  optionsSuccessStatus: 200,
-  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
-  allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With", "Origin", "Accept"],
-  exposedHeaders: ["Content-Length", "X-Requested-With"],
-  preflightContinue: false,
-  maxAge: 86400 // 24 hours
-};
+  //  if (allowedOrigins.indexOf(origin) !== -1) {
+    //  console.log(`CORS: Allowing origin ${origin}`);
+     // callback(null, true);
+   // } else {
+     // console.log(`CORS blocked origin: ${origin}`);
+   //   callback(new Error('Not allowed by CORS'));
+    //}
+ // },
+//  credentials: true,
+//  optionsSuccessStatus: 200,
+//  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
+//  allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With", "Origin", "Accept"],
+//  exposedHeaders: ["Content-Length", "X-Requested-With"],
+  //preflightContinue: false,
+ // maxAge: 86400 // 24 hours
+//};
 
 // Apply CORS FIRST, before any other middleware
-app.use(cors());
+//app.use(cors());
 
 // Security middleware
 app.use(helmet({
@@ -222,6 +222,49 @@ app.use(helmet({
     },
   },
 }));
+
+// CORS configuration
+const corsOptions = {
+  origin: function (origin, callback) {
+    const allowedOrigins = NODE_ENV === "production" 
+      ? [
+          "https://portal.flashfirejobs.com",
+          "http://localhost:3000",
+          "https://www.portal.flashfirejobs.com",
+          "https://flashfire-dashboard-frontend.vercel.app",
+          "chrome://extensions/?id=feekbkgobkhnfchgngipimimiiglgpnj",
+          "https://flashfire-dashboard.vercel.app",
+          "https://clients-tracking.vercel.app",
+          "https://dashboardtracking.vercel.app",
+          "https://utm-track-frontend.vercel.app",
+          ...(process.env.ALLOWED_ORIGINS?.split(",") || [])
+        ]
+        : [ "chrome-extension://hfacjbfgibpndmgickneebipgemofpha",
+            "http://localhost:3000", 
+            "http://localhost:5173", 
+            "http://localhost:5175", 
+            "http://localhost:5176"
+          ];
+    
+    // Allow requests with no origin (like mobile apps or curl requests)
+    if (!origin) return callback(null, true);
+    
+    if (allowedOrigins.indexOf(origin) !== -1) {
+      callback(null, true);
+    } else {
+      console.log(`CORS blocked origin: ${origin}`);
+      console.log(`Allowed origins: ${allowedOrigins.join(', ')}`);
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
+  credentials: true,
+  optionsSuccessStatus: 200,
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
+};
+
+app.use(cors(corsOptions));
+
 
 // Rate limiting
 const limiter = rateLimit({
