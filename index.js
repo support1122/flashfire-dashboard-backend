@@ -210,18 +210,18 @@ console.log(`🌐 Server will run on port: ${PORT}`);
 //app.use(cors());
 
 // Security middleware
-app.use(helmet({
-  contentSecurityPolicy: {
-    directives: {
-      defaultSrc: ["'self'"],
-      styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
-      fontSrc: ["'self'", "https://fonts.gstatic.com"],
-      imgSrc: ["'self'", "data:", "https:", "blob:"],
-      scriptSrc: ["'self'"],
-      connectSrc: ["'self'", "https://api.cloudinary.com", "https://api.openai.com"],
-    },
-  },
-}));
+// app.use(helmet({
+//   contentSecurityPolicy: {
+//     directives: {
+//       defaultSrc: ["'self'"],
+//       styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
+//       fontSrc: ["'self'", "https://fonts.gstatic.com"],
+//       imgSrc: ["'self'", "data:", "https:", "blob:"],
+//       scriptSrc: ["'self'"],
+//       connectSrc: ["'self'", "https://api.cloudinary.com", "https://api.openai.com"],
+//     },
+//   },
+// }));
 
 // CORS configuration
 const corsOptions = {
@@ -255,12 +255,26 @@ const corsOptions = {
   credentials: true,
   optionsSuccessStatus: 200,
   methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
+  allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With", "Origin", "Accept"],
+     exposedHeaders: ["Content-Length", "X-Requested-With"],
+  preflightContinue: false,
+  maxAge: 86400 // 24 hours
 };
 
-app.use(cors(corsOptions));
+app.use(cors());
 
-
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
+      fontSrc: ["'self'", "https://fonts.gstatic.com"],
+      imgSrc: ["'self'", "data:", "https:", "blob:"],
+      scriptSrc: ["'self'"],
+      connectSrc: ["'self'", "https://api.cloudinary.com", "https://api.openai.com"],
+    },
+  },
+}));
 // Rate limiting
 const limiter = rateLimit({
   windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS) || 15 * 60 * 1000, // 15 minutes
@@ -355,4 +369,5 @@ app.listen(PORT, () => {
   console.log(`📊 Health check available at http://localhost:${PORT}/health`);
   console.log(`🌐 API available at http://localhost:${PORT}`);
 });
+
 
