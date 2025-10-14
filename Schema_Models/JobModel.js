@@ -41,11 +41,6 @@ export const JobSchema = new mongoose.Schema({
     required: true,
     default: 'unknown'
   },
-  companyLogo : {
-    type : String,
-    required : true,
-    default : ' '
-  },
   timeline: {
     type: [String],
     required: true,
@@ -89,4 +84,5 @@ export const JobSchema = new mongoose.Schema({
 });
 
 export const JobModel = mongoose.model('JobDB', JobSchema)
+
 
