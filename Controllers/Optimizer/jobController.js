@@ -66,7 +66,7 @@ export const getJobDescriptionByUrl = async (req, res) => {
 // showing the changes made in the user dashboard route
 export const saveChangedSession = async (req, res) => {
      try {
-          const { id, startingContent, finalChanges } = req.body;
+          const { id, startingContent, finalChanges, resumeData, checkboxStates } = req.body;
 
           if (!id || !startingContent) {
                return res.status(400).json({ error: "Job ID and starting content are required" });
@@ -82,6 +82,19 @@ export const saveChangedSession = async (req, res) => {
                changedSections: Object.keys(startingContent)
           };
 
+          // Prepare resume data to save
+          const resumeUpdate = {};
+          if (resumeData) {
+               resumeUpdate.resume = {
+                    data: resumeData,
+                    checkboxStates: checkboxStates || {
+                         showSummary: true,
+                         showProjects: false,
+                         showLeadership: false
+                    }
+               };
+          }
+
           // Try both _id and jobID fields
           let updatedJob;
           try {
@@ -90,6 +103,7 @@ export const saveChangedSession = async (req, res) => {
                     { _id: id },
                     {
                          changesMade,
+                         ...resumeUpdate,
                          updatedAt: new Date().toLocaleString("en-US", "Asia/Kolkata")
                     },
                     { new: true }
@@ -104,6 +118,7 @@ export const saveChangedSession = async (req, res) => {
                     { jobID: id },
                     {
                          changesMade,
+                         ...resumeUpdate,
                          updatedAt: new Date().toLocaleString("en-US", "Asia/Kolkata")
                     },
                     { new: true }

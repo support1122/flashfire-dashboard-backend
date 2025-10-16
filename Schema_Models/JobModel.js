@@ -66,6 +66,20 @@ export const JobSchema = new mongoose.Schema({
     type: mongoose.Schema.Types.Mixed,
     default: {},
   },
+  resume: {
+    data: {
+      type: mongoose.Schema.Types.Mixed,
+      default: null,
+    },
+    checkboxStates: {
+      type: mongoose.Schema.Types.Mixed,
+      default: {
+        showSummary: true,
+        showProjects: false,
+        showLeadership: false
+      }
+    }
+  },
   operatorName: {
     type: String,
     required: false,

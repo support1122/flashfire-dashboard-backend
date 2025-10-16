@@ -22,6 +22,7 @@ import VerifyJobIDAndChanges from "./Middlewares/VerifyJobIDAndChanges.js";
 import RefreshToken from "./Controllers/RefreshToken.js";
 import { getJobById, getJobDescription, getJobDescriptionByUrl, saveChangedSession, testJobController } from "./Controllers/Optimizer/jobController.js";
 import GetJobDescription, { GetJobDescriptionByUrl } from "./Controllers/GetJobDescription.js";
+import GetJobResume, { GetJobResumeByUrl } from "./Controllers/GetJobResume.js";
 import { updateBaseResume } from "./Controllers/Admin/SetBaseResume.js";
 import { assignUserToOperations } from "./Controllers/Admin/AssignUserToOperatios.js";
 import { listOperations, removeManagedUser, removeOperationUser, listAllUsers, listAllOperations } from "./Controllers/Admin/ListOperations.js";
@@ -87,6 +88,8 @@ app.post('/forgotpasswod', ForgotPassword)
 
 app.post("/getJobDescription", GetJobDescription);
 app.get("/getJobDescription/:id", GetJobDescriptionByUrl);
+app.post("/getJobResume", GetJobResume);
+app.get("/getJobResume/:id", GetJobResumeByUrl);
 app.get("/testJobController/:id", testJobController);
 app.post("/saveChangedSession", saveChangedSession);
 app.post("/getJobById", getJobById);

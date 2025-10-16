@@ -7,7 +7,7 @@ export default async function GetAllJobsOPS(req,res) {
         
         // Get all jobs and use lean() to get plain JavaScript objects with _id
         let allJobs = await JobModel.find({userID : email})
-            .select('-jobDescription')
+        .select('-jobDescription -resume.data -resume.checkboxStates')
             .lean();
         
         // Ensure _id is converted to string for frontend compatibility

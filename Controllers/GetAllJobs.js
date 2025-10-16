@@ -17,10 +17,10 @@ export default async function GetAllJobs(req, res) {
         const totalJobs = await JobModel.countDocuments({});
         console.log('GetAllJobs - Total jobs in collection:', totalJobs);
 
-        // Get all jobs WITHOUT excluding jobDescription for now (we need _id)
+        // Get all jobs WITHOUT excluding jobDescription and resume data for now (we need _id)
         // We'll use lean() to get plain JavaScript objects with _id
         let allJobs = await JobModel.find({ userID: userEmail })
-            .select('-jobDescription')
+            .select('-jobDescription -resume.data -resume.checkboxStates')
             .lean();
         
         // Ensure _id is converted to string for frontend compatibility
