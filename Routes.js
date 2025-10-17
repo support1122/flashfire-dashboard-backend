@@ -5,6 +5,7 @@ import GoogleOAuth from "./Controllers/GoogleOAuth.js";
 import { getAllClients } from './Controllers/ClientController.js';
 import { getDashboardManagers, getDashboardManagerByName } from './Controllers/DashboardManagerController.js';
 import Add_Update_Profile from "./Controllers/Add_Update_Profile.js";
+import CheckProfile from "./Controllers/CheckProfile.js";
 import AddJob from "./Controllers/AddJob.js";
 import GetAllJobs from "./Controllers/GetAllJobs.js";
 import StoreJobAndUserDetails, { saveToDashboard } from "./Controllers/StoreJobAndUserDetails.js";
@@ -22,6 +23,7 @@ import VerifyJobIDAndChanges from "./Middlewares/VerifyJobIDAndChanges.js";
 import RefreshToken from "./Controllers/RefreshToken.js";
 import { getJobById, getJobDescription, getJobDescriptionByUrl, saveChangedSession, testJobController } from "./Controllers/Optimizer/jobController.js";
 import GetJobDescription, { GetJobDescriptionByUrl } from "./Controllers/GetJobDescription.js";
+import GetJobResume, { GetJobResumeByUrl } from "./Controllers/GetJobResume.js";
 import { updateBaseResume } from "./Controllers/Admin/SetBaseResume.js";
 import { assignUserToOperations } from "./Controllers/Admin/AssignUserToOperatios.js";
 import { listOperations, removeManagedUser, removeOperationUser, listAllUsers, listAllOperations } from "./Controllers/Admin/ListOperations.js";
@@ -70,13 +72,14 @@ app.post('/get-updated-user', async(req, res)=>{
 })
 
 // Profile routes
-app.post("/setprofile", LocalTokenValidator, ProfileCheck, Add_Update_Profile);
-app.post("/upload-profile-file", upload.single('file'), LocalTokenValidator, uploadProfileFile);
+app.post("/check-profile", CheckProfile);
+app.post("/setprofile",LocalTokenValidator, ProfileCheck, Add_Update_Profile);
+app.post("/upload-profile-file", LocalTokenValidator,upload.single('file'), uploadProfileFile);
 
 // Job routes
 app.post("/addjob", LocalTokenValidator, CheckForDuplicateJobs, AddJob);
 app.get("/getalljobs", LocalTokenValidator, GetAllJobs);
-app.post("/getalljobs", LocalTokenValidator, GetAllJobs);
+app.post("/getalljobs", LocalTokenValidator ,GetAllJobs);
 app.post("/storejobanduserdetails", StoreJobAndUserDetails);
 app.put("/updatechanges", LocalTokenValidator, VerifyJobIDAndChanges, UpdateChanges);
 
@@ -87,6 +90,8 @@ app.post('/forgotpasswod', ForgotPassword)
 
 app.post("/getJobDescription", GetJobDescription);
 app.get("/getJobDescription/:id", GetJobDescriptionByUrl);
+app.post("/getJobResume", GetJobResume);
+app.get("/getJobResume/:id", GetJobResumeByUrl);
 app.get("/testJobController/:id", testJobController);
 app.post("/saveChangedSession", saveChangedSession);
 app.post("/getJobById", getJobById);
