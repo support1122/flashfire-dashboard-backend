@@ -22,7 +22,6 @@ export default async function Login(req, res) {
         if (passwordDecrypted === password) {
             // Find user profile
             let profileLookUp = await ProfileModel.findOne({email});
-            const hasProfile = profileLookUp && profileLookUp.email && profileLookUp.email.length > 0;
             
             return res.status(200).json({
                 message: 'Login Success..!',
@@ -39,8 +38,7 @@ export default async function Login(req, res) {
                     dashboardManager: existanceOfUser.dashboardManager
                 },
                 token: jwt.sign({ email }, process.env.JWT_SECRET_KEY || process.env.JWT_SECRET || 'FLASHFIRE', { expiresIn: '7d' }),
-                userProfile: hasProfile ? profileLookUp : null,
-                hasProfile: hasProfile
+                userProfile: profileLookUp?.email?.length > 0 ? profileLookUp : null
             });
 
         } else {
