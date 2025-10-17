@@ -28,7 +28,6 @@ export default async function GetUserDetails(req, res) {
           }
 
           let profileLookUp = await ProfileModel.findOne({ email });
-          const hasProfile = profileLookUp && profileLookUp.email && profileLookUp.email.length > 0;
 
           // Generate JWT token for the client user
           const token = jwt.sign(
@@ -56,8 +55,7 @@ export default async function GetUserDetails(req, res) {
                     optimizedResumes: existanceOfUser.optimizedResumes,
                     transcript: existanceOfUser.transcript 
                },
-               userProfile: hasProfile ? profileLookUp : null,
-               hasProfile: hasProfile
+               userProfile: profileLookUp?.email.length > 0 ? profileLookUp : null
           });
 
      } catch (error) {
