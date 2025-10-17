@@ -35,6 +35,7 @@ import { ReciveData } from "./Controllers/Extensions/reciveData.js";
 import ClientLogin from "./Controllers/Extensions/clientLogin.js";
 import { ProfileModel } from "./Schema_Models/ProfileModel.js";
 import { UserModel } from "./Schema_Models/UserModel.js";
+import CheckProfile from "./Controllers/CheckProfile.js";
 
 
 
@@ -70,8 +71,10 @@ app.post('/get-updated-user', async(req, res)=>{
 })
 
 // Profile routes
+app.post("/check-profile", CheckProfile);
 app.post("/setprofile", LocalTokenValidator, ProfileCheck, Add_Update_Profile);
 app.post("/upload-profile-file", upload.single('file'), LocalTokenValidator, uploadProfileFile);
+
 
 // Job routes
 app.post("/addjob", LocalTokenValidator, CheckForDuplicateJobs, AddJob);
