@@ -16,23 +16,24 @@ export default async function GetUserDetails(req, res) {
                if (!operationsUser) {
                     return res.status(403).json({ message: "Operations user not found" });
                }
-               
+
                // Check if the requested client is in the operations user's managed users
-               const hasPermission = operationsUser.managedUsers.some(managedUser => 
+               const hasPermission = operationsUser.managedUsers.some(managedUser =>
                     managedUser.email === email || managedUser._id.toString() === existanceOfUser._id.toString()
                );
-               
+
                if (!hasPermission) {
                     return res.status(403).json({ message: "You don't have permission to access this client's data" });
                }
           }
 
           let profileLookUp = await ProfileModel.findOne({ email });
+          const hasProfile = profileLookUp && profileLookUp.email && profileLookUp.email.length > 0;
 
           // Generate JWT token for the client user
           const token = jwt.sign(
-               { 
-                    email: email, 
+               {
+                    email: email,
                     id: existanceOfUser._id,
                     role: 'User' // Client users have 'User' role
                },
@@ -44,18 +45,19 @@ export default async function GetUserDetails(req, res) {
           return res.status(200).json({
                message: 'User data loaded  Sucess..!',
                token: token, // Add the JWT token
-               userDetails: { 
-                    name: existanceOfUser.name, 
-                    email, 
-                    planType: existanceOfUser.planType, 
-                    userType: existanceOfUser.userType, 
-                    planLimit: existanceOfUser.planLimit, 
-                    resumeLink: existanceOfUser.resumeLink, 
-                    coverLetters: existanceOfUser.coverLetters, 
+               userDetails: {
+                    name: existanceOfUser.name,
+                    email,
+                    planType: existanceOfUser.planType,
+                    userType: existanceOfUser.userType,
+                    planLimit: existanceOfUser.planLimit,
+                    resumeLink: existanceOfUser.resumeLink,
+                    coverLetters: existanceOfUser.coverLetters,
                     optimizedResumes: existanceOfUser.optimizedResumes,
-                    transcript: existanceOfUser.transcript 
+                    transcript: existanceOfUser.transcript
                },
-               userProfile: profileLookUp?.email.length > 0 ? profileLookUp : null
+               userProfile: hasProfile ? profileLookUp : null,
+               hasProfile: hasProfile
           });
 
      } catch (error) {
