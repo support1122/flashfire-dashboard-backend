@@ -99,3 +99,4 @@ export const JobSchema = new mongoose.Schema({
 
 export const JobModel = mongoose.model('JobDB', JobSchema)
 
+

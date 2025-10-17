@@ -55,16 +55,16 @@ app.post('/get-updated-user', async(req, res)=>{
   try {
       const existanceOfUser = await UserModel.findOne({email : req.body.email});
       res.status(200).json( { 
-                    name: existanceOfUser.name, 
-                    email: existanceOfUser.email, 
-                    planType: existanceOfUser.planType, 
-                    userType: existanceOfUser.userType, 
-                    planLimit: existanceOfUser.planLimit, 
-                    resumeLink: existanceOfUser.resumeLink, 
-                    coverLetters: existanceOfUser.coverLetters, 
-                    optimizedResumes: existanceOfUser.optimizedResumes ,
-                    transcript : existanceOfUser.transcript,
-                    dashboardManager: existanceOfUser.dashboardManager
+                    name: existanceOfUser?.name, 
+                    email: existanceOfUser?.email, 
+                    planType: existanceOfUser?.planType, 
+                    userType: existanceOfUser?.userType, 
+                    planLimit: existanceOfUser?.planLimit, 
+                    resumeLink: existanceOfUser?.resumeLink, 
+                    coverLetters: existanceOfUser?.coverLetters, 
+                    optimizedResumes: existanceOfUser?.optimizedResumes ,
+                    transcript : existanceOfUser?.transcript,
+                    dashboardManager: existanceOfUser?.dashboardManager
                 })
   } catch (error) {
     console.log(error)
