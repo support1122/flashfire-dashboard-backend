@@ -5,6 +5,7 @@ import GoogleOAuth from "./Controllers/GoogleOAuth.js";
 import { getAllClients } from './Controllers/ClientController.js';
 import { getDashboardManagers, getDashboardManagerByName } from './Controllers/DashboardManagerController.js';
 import Add_Update_Profile from "./Controllers/Add_Update_Profile.js";
+import CheckProfile from "./Controllers/CheckProfile.js";
 import AddJob from "./Controllers/AddJob.js";
 import GetAllJobs from "./Controllers/GetAllJobs.js";
 import StoreJobAndUserDetails, { saveToDashboard } from "./Controllers/StoreJobAndUserDetails.js";
@@ -71,13 +72,14 @@ app.post('/get-updated-user', async(req, res)=>{
 })
 
 // Profile routes
-app.post("/setprofile", LocalTokenValidator, ProfileCheck, Add_Update_Profile);
-app.post("/upload-profile-file", upload.single('file'), LocalTokenValidator, uploadProfileFile);
+app.post("/check-profile", CheckProfile);
+app.post("/setprofile",LocalTokenValidator, ProfileCheck, Add_Update_Profile);
+app.post("/upload-profile-file", LocalTokenValidator,upload.single('file'), uploadProfileFile);
 
 // Job routes
 app.post("/addjob", LocalTokenValidator, CheckForDuplicateJobs, AddJob);
 app.get("/getalljobs", LocalTokenValidator, GetAllJobs);
-app.post("/getalljobs", LocalTokenValidator, GetAllJobs);
+app.post("/getalljobs", LocalTokenValidator ,GetAllJobs);
 app.post("/storejobanduserdetails", StoreJobAndUserDetails);
 app.put("/updatechanges", LocalTokenValidator, VerifyJobIDAndChanges, UpdateChanges);
 

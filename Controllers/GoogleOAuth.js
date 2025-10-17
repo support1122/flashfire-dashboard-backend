@@ -1,4 +1,5 @@
 import { UserModel } from "../Schema_Models/UserModel.js";
+import { ProfileModel } from "../Schema_Models/ProfileModel.js";
 import { OAuth2Client } from "google-auth-library";
 const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 import jwt from 'jsonwebtoken'
@@ -24,6 +25,10 @@ const GoogleOAuth = async (req, res) => {
     });
   }
 let userDetails = await UserModel.findOne({ email: payload.email });
+
+let profileLookUp = await ProfileModel.findOne({ email: payload.email });
+const hasProfile = profileLookUp && profileLookUp.email && profileLookUp.email.length > 0;
+
 const tokenNew = jwt.sign(
             { email: payload?.email, name: userFromDb?.name },
             process.env.JWT_SECRET || 'flashfire-secret-key-2024',
@@ -41,7 +46,9 @@ return res.status(200).json({
                   coverLetters: userDetails.coverLetters,
                   optimizedResumes: userDetails.optimizedResumes
                 },
-                token: tokenNew
+                token: tokenNew,
+                userProfile: hasProfile ? profileLookUp : null,
+                hasProfile: hasProfile
             });
 } catch (error) {
   console.log(error)

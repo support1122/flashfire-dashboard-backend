@@ -20,6 +20,7 @@ export default async function ClientLogin(req, res) {
         if (passwordDecrypted === password) {
             // Find user profile
             let profileLookUp = await ProfileModel.findOne({email});
+            const hasProfile = profileLookUp && profileLookUp.email && profileLookUp.email.length > 0;
             
             return res.status(200).json({
                 message: 'Login Success..!',
@@ -36,7 +37,8 @@ export default async function ClientLogin(req, res) {
                     // optimizedResumes: existanceOfUser.optimizedResumes 
                 },
                 token: jwt.sign({ email }, process.env.JWT_SECRET || 'your-secret-key', { expiresIn: '7d' }),
-                userProfile: profileLookUp?.email?.length > 0 ? profileLookUp : null
+                userProfile: hasProfile ? profileLookUp : null,
+                hasProfile: hasProfile
             });
 
         } else {
