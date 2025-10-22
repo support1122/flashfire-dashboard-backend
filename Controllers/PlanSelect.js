@@ -73,7 +73,7 @@ export default async function PlanSelect(req, res) {
         : null;
 
     const normOptimized = normalize(optimizedResumeEntry);
-    const normCover     = normalize(coverLetterEntry);
+    const normCoverList     = normalize(coverLetterEntry);
     const normTranscript= normalize(transcriptEntry);
 
     // --- Build update ops ---
@@ -106,8 +106,8 @@ export default async function PlanSelect(req, res) {
     if (normOptimized && normOptimized.url) {
       pushOps.optimizedResumes = { $each: [normOptimized] };
     }
-    if (normCover && normCover.url) {
-      pushOps.coverLetters = { $each: [normCover] };
+    if (normCoverList?.length) {
+      pushOps.coverLetters = { $each: normCoverList };
     }
 
     // ✅ Transcripts

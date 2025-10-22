@@ -11,43 +11,7 @@ export default async function UpdateChanges(req, res) {
   }
 
   try {
-  if (action === "UpdateStatus") {
-      const current = await JobModel.findOne({ jobID, userID: userEmail });
-
-      const baseStatus = String(req.body?.status || "").trim();
-      const alreadyAttributed = /\sby\s/i.test(baseStatus);
-      const actorName = req.body?.role === 'operations' ? (userDetails?.name || 'operations') : 'user';
-      const statusToSet = alreadyAttributed || baseStatus === ''
-        ? baseStatus
-        : `${baseStatus} by ${actorName}`;
-
-      // Check if operations user is moving job from saved to applied
-      let updateFields = {
-        currentStatus: statusToSet,
-        updatedAt: new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }),
-      };
-
-      // Track operations when moving from saved to applied
-      if (req.body?.role === "operations" && current?.currentStatus === "saved" && statusToSet.includes("applied")) {
-        console.log("🔄 Operations tracking triggered - UpdateStatus action");
-        console.log("📊 Operations user:", req.body?.operationsName || userDetails?.name || 'operations');
-        console.log("📧 Operations email:", req.body?.operationsEmail || 'operations@flashfirehq');
-        
-        // Set operatorName and operatorEmail to operations user details
-        updateFields.operatorName = req.body?.operationsName || userDetails?.name || 'operations';
-        updateFields.operatorEmail = req.body?.operationsEmail || 'operations@flashfirehq';
-        // Set appliedDate when job moves to applied status
-        updateFields.appliedDate = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
-      } else if (req.body?.role !== "operations") {
-        // If not operations user, set to 'user'
-        updateFields.operatorName = 'user';
-        updateFields.operatorEmail = 'user@flashfirehq';
-        // Set appliedDate when job moves to applied status (for regular users too)
-        if (current?.currentStatus === "saved" && statusToSet.includes("applied")) {
-          updateFields.appliedDate = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
-        }
-      }
-
+    if (action === "UpdateStatus") {
       await JobModel.findOneAndUpdate(
         { jobID, userID: userEmail },
         {
@@ -63,7 +27,7 @@ export default async function UpdateChanges(req, res) {
    Job Title: ${current?.jobTitle}
    Status: ${statusToSet}
    Previous: ${current?.currentStatus}`; 
-      if(baseStatus !== 'deleted') await DiscordConnect(process.env.DISCORD_APPLICATION_TRACKING_CHANNEL,discordMessage);
+     // if(baseStatus !== 'deleted') await DiscordConnect(process.env.DISCORD_APPLICATION_TRACKING_CHANNEL,discordMessage);
       
   }
     
@@ -165,7 +129,7 @@ export default async function UpdateChanges(req, res) {
         `  Job Title: ${updated.jobTitle}\n` +
         `  Status: ${nextStatus}\n` +
         `  Previous: ${existing.currentStatus}`;
-      await DiscordConnect(process.env.DISCORD_APPLICATION_TRACKING_CHANNEL, discordMessage);
+    //  await DiscordConnect(process.env.DISCORD_APPLICATION_TRACKING_CHANNEL, discordMessage);
     }
   } catch (e) {
     console.log('Discord notify (edit) failed:', e);

@@ -11,8 +11,6 @@ import StoreJobAndUserDetails, { saveToDashboard } from "./Controllers/StoreJobA
 import UpdateChanges from "./Controllers/UpdateChanges.js";
 import PlanSelect from "./Controllers/PlanSelect.js";
 import { uploadProfileFile, upload } from "./Controllers/UploadProfileFile.js";
-import { uploadSingleFile, uploadBase64File, upload as uploadMiddleware } from "./Controllers/UploadFile.js";
-import { serveCachedImage, getCacheStats, clearCache } from "./Controllers/ImageProxy.js";
 import LocalTokenValidator from "./Middlewares/LocalTokenValidator.js";
 import RegisterVerify from "./Middlewares/RegisterVerify.js";
 import ProfileCheck from "./Middlewares/ProfileCheck.js";
@@ -22,7 +20,8 @@ import Tokenizer from "./Middlewares/Tokenizer.js";
 import UpdateActionsVerifier from "./Middlewares/UpdateActionsVerifier.js";
 import VerifyJobIDAndChanges from "./Middlewares/VerifyJobIDAndChanges.js";
 import RefreshToken from "./Controllers/RefreshToken.js";
-import { getJobById, getJobDescription, getJobDescriptionByUrl, saveChangedSession, testJobController } from "./Controllers/Optimizer/jobController.js";
+import { ProfileModel } from "./Schema_Models/ProfileModel.js";
+import { getJobDescription, getJobDescriptionByUrl, saveChangedSession, testJobController } from "./Controllers/Optimizer/jobController.js";
 import GetJobDescription, { GetJobDescriptionByUrl } from "./Controllers/GetJobDescription.js";
 import { updateBaseResume } from "./Controllers/Admin/SetBaseResume.js";
 import { assignUserToOperations } from "./Controllers/Admin/AssignUserToOperatios.js";
@@ -35,10 +34,11 @@ import ForgotPassword from "./Controllers/ForgotPassword.js";
 import ExtensionLogin from "./Controllers/Extensions/login.js";
 import { ReciveData } from "./Controllers/Extensions/reciveData.js";
 import ClientLogin from "./Controllers/Extensions/clientLogin.js";
-import { ProfileModel } from "./Schema_Models/ProfileModel.js";
+// import { ProfileModel } from "./Schema_Models/ProfileModel.js";
 import { UserModel } from "./Schema_Models/UserModel.js";
-import CheckProfile from "./Controllers/CheckProfile.js";
-
+import R2EndPoint from './Utils/R2EndPoint.js';
+import { getJobById } from "./Controllers/Optimizer/jobController.js";
+// import { ProfileModel } from "./Schema_Models/ProfileModel.js";
 
 
 const app = express.Router();
@@ -73,21 +73,10 @@ app.post('/get-updated-user', async(req, res)=>{
 })
 
 // Profile routes
-app.post("/check-profile", CheckProfile);
 app.post("/setprofile", LocalTokenValidator, ProfileCheck, Add_Update_Profile);
 app.post("/upload-profile-file", upload.single('file'), LocalTokenValidator, uploadProfileFile);
 
-// Generic file upload routes (supports both Cloudinary and R2)
-// No authentication required - trusted users only
-app.post("/upload-file", uploadMiddleware.single('file'), uploadSingleFile);
-app.post("/upload-base64", uploadBase64File);
-
-// Image caching and proxy routes
-app.get("/image-proxy", serveCachedImage);
-app.get("/cache-stats", getCacheStats);
-app.post("/clear-cache", clearCache);
-
-
+app.use('/api', R2EndPoint); // R2 EndPoint for file uploads
 // Job routes
 app.post("/addjob", LocalTokenValidator, CheckForDuplicateJobs, AddJob);
 app.get("/getalljobs", LocalTokenValidator, GetAllJobs);

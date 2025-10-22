@@ -1,4 +1,4 @@
-import { uploadFile } from "../Utils/storageService.js";
+import { saveFileLocally, getFileUrl } from "../Utils/localFileStorage.js";
 import { ProfileModel } from "../Schema_Models/ProfileModel.js";
 
 export default async function FileUpload(req, res) {
@@ -22,31 +22,23 @@ export default async function FileUpload(req, res) {
     // Convert base64 to buffer
     const fileBuffer = Buffer.from(fileData.split(',')[1], 'base64');
     
-    // Determine file extension and content type from base64 data
-    const mimeMatch = fileData.match(/^data:([^;]+);base64,/);
-    const contentType = mimeMatch ? mimeMatch[1] : 'application/pdf';
-    const extension = contentType.includes('pdf') ? 'pdf' : 'doc';
-    
-    // Upload using unified storage service (automatically uses R2 or Cloudinary)
-    const originalName = `${fileType}.${extension}`;
-    const uploadResult = await uploadFile(fileBuffer, {
-      folder: `flashfire-${fileType}s`,
-      filename: originalName,
-      contentType: contentType,
-    });
+    // Save file locally
+    const originalName = `${fileType}.pdf`;
+    const uploadResult = await saveFileLocally(fileBuffer, originalName, fileType);
     
     if (!uploadResult.success) {
       return res.status(500).json({ 
-        message: "Failed to upload file",
+        message: "Failed to save file locally",
         error: uploadResult.error 
       });
     }
 
-    // Update profile with the new file URL
+    // Update profile with the new file path
     const updateField = fileType === 'resume' ? 'resumeUrl' : 'coverLetterUrl';
+    const fileUrl = getFileUrl(uploadResult.filePath);
     const updated = await ProfileModel.findOneAndUpdate(
       { email },
-      { $set: { [updateField]: uploadResult.url } },
+      { $set: { [updateField]: fileUrl } },
       { new: true }
     );
 
@@ -58,8 +50,7 @@ export default async function FileUpload(req, res) {
 
     return res.json({
       message: `${fileType} uploaded successfully`,
-      url: uploadResult.url,
-      storage: uploadResult.storage,
+      url: fileUrl,
       profile: updated
     });
 

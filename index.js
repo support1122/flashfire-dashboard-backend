@@ -152,6 +152,7 @@ import helmet from "helmet";
 import rateLimit from "express-rate-limit";
 import connectDB from "./Utils/ConnectDB.js";
 import Routes from "./Routes.js";
+import { ProfileModel } from "./Schema_Models/ProfileModel.js";
 
 dotenv.config();
 
@@ -166,49 +167,49 @@ console.log(`🚀 Starting server with NODE_ENV: ${NODE_ENV}`);
 console.log(`🌐 Server will run on port: ${PORT}`);
 
 // CORS configuration - MUST come before other middleware
-//const corsOptions = {
-  //origin: function (origin, callback) {
-    //const allowedOrigins = NODE_ENV === "production" 
-     // ? [
-       //   "https://portal.flashfirejobs.com",
-         // "http://localhost:3000",
-         // "https://www.portal.flashfirejobs.com",
-       //   "https://flashfire-dashboard-frontend.vercel.app",
-         // "chrome://extensions/?id=feekbkgobkhnfchgngipimimiiglgpnj",
-         // "https://flashfire-dashboard.vercel.app",
-         // ...(process.env.ALLOWED_ORIGINS?.split(",") || [])
-       // ]
-    //  : ["http://localhost:3000"];
+const corsOptions = {
+  origin: function (origin, callback) {
+    const allowedOrigins = NODE_ENV === "production" 
+     ? [
+         "https://portal.flashfirejobs.com",
+         "http://localhost:3000",
+         "https://www.portal.flashfirejobs.com",
+         "https://flashfire-dashboard-frontend.vercel.app",
+         "chrome://extensions/?id=feekbkgobkhnfchgngipimimiiglgpnj",
+         "https://flashfire-dashboard.vercel.app",
+         ...(process.env.ALLOWED_ORIGINS?.split(",") || [])
+       ]
+     : ["http://localhost:3000"];
     
-   // console.log(`CORS check - Origin: ${origin}, NODE_ENV: ${NODE_ENV}`);
-   // console.log(`Allowed origins: ${allowedOrigins.join(', ')}`);
+   console.log(`CORS check - Origin: ${origin}, NODE_ENV: ${NODE_ENV}`);
+   console.log(`Allowed origins: ${allowedOrigins.join(', ')}`);
     
     // Allow requests with no origin (like mobile apps or curl requests)
-   // if (!origin) {
-     // console.log('CORS: Allowing request with no origin');
-     // return callback(null, true);
-   // }
+   if (!origin) {
+     console.log('CORS: Allowing request with no origin');
+     return callback(null, true);
+   }
     
-  //  if (allowedOrigins.indexOf(origin) !== -1) {
-    //  console.log(`CORS: Allowing origin ${origin}`);
-     // callback(null, true);
-   // } else {
-     // console.log(`CORS blocked origin: ${origin}`);
-   //   callback(new Error('Not allowed by CORS'));
-    //}
- // },
-//  credentials: true,
-//  optionsSuccessStatus: 200,
-//  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
-//  allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With", "Origin", "Accept"],
-//  exposedHeaders: ["Content-Length", "X-Requested-With"],
-  //preflightContinue: false,
- // maxAge: 86400 // 24 hours
-//};
+   if (allowedOrigins.indexOf(origin) !== -1) {
+     console.log(`CORS: Allowing origin ${origin}`);
+     callback(null, true);
+   } else {
+     console.log(`CORS blocked origin: ${origin}`);
+     callback(new Error('Not allowed by CORS'));
+    }
+ },
+ credentials: true,
+ optionsSuccessStatus: 200,
+ methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
+ allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With", "Origin", "Accept"],
+ exposedHeaders: ["Content-Length", "X-Requested-With"],
+  preflightContinue: false,
+ maxAge: 86400 // 24 hours
+};
 
 // Apply CORS FIRST, before any other middleware
-//app.use(cors());
-
+app.use(cors(corsOptions));
+app.use("/api", Routes);
 // Security middleware
 // app.use(helmet({
 //   contentSecurityPolicy: {
@@ -224,44 +225,44 @@ console.log(`🌐 Server will run on port: ${PORT}`);
 // }));
 
 // CORS configuration
-const corsOptions = {
-  origin: function (origin, callback) {
-    const allowedOrigins = NODE_ENV === "production" 
-      ? [
-          "https://portal.flashfirejobs.com",
-          "http://localhost:3000",
-          "https://www.portal.flashfirejobs.com",
-          "https://flashfire-dashboard-frontend.vercel.app",
-          "chrome://extensions/?id=feekbkgobkhnfchgngipimimiiglgpnj",
-          "https://flashfire-dashboard.vercel.app",
-          // "https://clients-tracking.vercel.app",
-          // "https://dashboardtracking.vercel.app",
-          // "https://utm-track-frontend.vercel.app",
-          ...(process.env.ALLOWED_ORIGINS?.split(",") || [])
-        ]
-        : ["http://localhost:3000"];
+// const corsOptions = {
+//   origin: function (origin, callback) {
+//     const allowedOrigins = NODE_ENV === "production" 
+//       ? [
+//           "https://portal.flashfirejobs.com",
+//           "http://localhost:3000",
+//           "https://www.portal.flashfirejobs.com",
+//           "https://flashfire-dashboard-frontend.vercel.app",
+//           "chrome://extensions/?id=feekbkgobkhnfchgngipimimiiglgpnj",
+//           "https://flashfire-dashboard.vercel.app",
+//           // "https://clients-tracking.vercel.app",
+//           // "https://dashboardtracking.vercel.app",
+//           // "https://utm-track-frontend.vercel.app",
+//           ...(process.env.ALLOWED_ORIGINS?.split(",") || [])
+//         ]
+//         : ["http://localhost:3000"];
     
-    // Allow requests with no origin (like mobile apps or curl requests)
-    if (!origin) return callback(null, true);
+//     // Allow requests with no origin (like mobile apps or curl requests)
+//     if (!origin) return callback(null, true);
     
-    if (allowedOrigins.indexOf(origin) !== -1) {
-      callback(null, true);
-    } else {
-      console.log(`CORS blocked origin: ${origin}`);
-      console.log(`Allowed origins: ${allowedOrigins.join(', ')}`);
-      callback(new Error('Not allowed by CORS'));
-    }
-  },
-  credentials: true,
-  optionsSuccessStatus: 200,
-  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With", "Origin", "Accept"],
-     exposedHeaders: ["Content-Length", "X-Requested-With"],
-  preflightContinue: false,
-  maxAge: 86400 // 24 hours
-};
+//     if (allowedOrigins.indexOf(origin) !== -1) {
+//       callback(null, true);
+//     } else {
+//       console.log(`CORS blocked origin: ${origin}`);
+//       console.log(`Allowed origins: ${allowedOrigins.join(', ')}`);
+//       callback(new Error('Not allowed by CORS'));
+//     }
+//   },
+//   credentials: true,
+//   optionsSuccessStatus: 200,
+//   methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+//   allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With", "Origin", "Accept"],
+//      exposedHeaders: ["Content-Length", "X-Requested-With"],
+//   preflightContinue: false,
+//   maxAge: 86400 // 24 hours
+// };
 
-app.use(cors());
+// app.use(cors());
 
 app.use(helmet({
   contentSecurityPolicy: {
@@ -369,5 +370,4 @@ app.listen(PORT, () => {
   console.log(`📊 Health check available at http://localhost:${PORT}/health`);
   console.log(`🌐 API available at http://localhost:${PORT}`);
 });
-
 

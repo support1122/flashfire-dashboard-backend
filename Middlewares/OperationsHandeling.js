@@ -4,9 +4,9 @@ export default async function OperationsHandeling(req, res, next) {
      let { id } = req.body;
 
      try {
-          console.log(req.body);
+          // console.log(req.body);
           let existanceOfUser = await UserModel.findById({ _id: id });
-          console.log(existanceOfUser)
+          // console.log(existanceOfUser)
           if (!existanceOfUser) {
                return res.status(404).json({ message: 'User Not Found. Sign Up to continue ' });
           }
