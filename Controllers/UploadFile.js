@@ -1,0 +1,133 @@
+import multer from "multer";
+import { uploadFile } from "../Utils/storageService.js";
+import dotenv from "dotenv";
+
+dotenv.config();
+
+// Configure multer for memory storage
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 10 * 1024 * 1024, // 10MB limit
+  },
+});
+
+/**
+ * Generic file upload endpoint
+ * Supports multiple file types: images, PDFs, documents
+ */
+export const uploadSingleFile = async (req, res) => {
+  try {
+    // Check if file exists
+    if (!req.file) {
+      return res.status(400).json({ 
+        success: false,
+        message: "No file uploaded" 
+      });
+    }
+
+    const { folder = 'flashfire-uploads' } = req.body;
+
+    // Upload file using unified storage service
+    const fileBuffer = req.file.buffer;
+    
+    const uploadResult = await uploadFile(fileBuffer, {
+      folder,
+      filename: req.file.originalname,
+      contentType: req.file.mimetype,
+    });
+
+    if (!uploadResult.success) {
+      return res.status(500).json({
+        success: false,
+        message: "Failed to upload file",
+        error: uploadResult.error,
+      });
+    }
+
+    res.json({
+      success: true,
+      url: uploadResult.url,
+      secure_url: uploadResult.url,
+      key: uploadResult.key,
+      storage: uploadResult.storage,
+      contentType: uploadResult.contentType,
+      size: uploadResult.size,
+      message: "File uploaded successfully",
+    });
+
+  } catch (error) {
+    console.error("File upload error:", error);
+    res.status(500).json({ 
+      success: false,
+      message: error.message || "Failed to upload file" 
+    });
+  }
+};
+
+/**
+ * Base64 file upload endpoint
+ * Accepts base64 encoded files
+ */
+export const uploadBase64File = async (req, res) => {
+  try {
+    const { fileData, filename, folder = 'flashfire-uploads' } = req.body;
+
+    if (!fileData || !filename) {
+      return res.status(400).json({
+        success: false,
+        message: "File data and filename are required",
+      });
+    }
+
+    // Extract content type from base64 string
+    const mimeMatch = fileData.match(/^data:([^;]+);base64,/);
+    if (!mimeMatch) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid base64 file format",
+      });
+    }
+
+    const contentType = mimeMatch[1];
+    const base64Data = fileData.split(',')[1];
+    const fileBuffer = Buffer.from(base64Data, 'base64');
+
+    // Upload file using unified storage service
+    const uploadResult = await uploadFile(fileBuffer, {
+      folder,
+      filename,
+      contentType,
+    });
+
+    if (!uploadResult.success) {
+      return res.status(500).json({
+        success: false,
+        message: "Failed to upload file",
+        error: uploadResult.error,
+      });
+    }
+
+    res.json({
+      success: true,
+      url: uploadResult.url,
+      secure_url: uploadResult.url,
+      key: uploadResult.key,
+      storage: uploadResult.storage,
+      contentType: uploadResult.contentType,
+      size: uploadResult.size,
+      message: "File uploaded successfully",
+    });
+
+  } catch (error) {
+    console.error("Base64 upload error:", error);
+    res.status(500).json({
+      success: false,
+      message: error.message || "Failed to upload file",
+    });
+  }
+};
+
+// Export the multer middleware for use in routes
+export { upload };
+

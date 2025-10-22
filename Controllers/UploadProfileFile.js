@@ -1,15 +1,8 @@
 import multer from "multer";
-import { v2 as cloudinary } from "cloudinary";
+import { uploadFile } from "../Utils/storageService.js";
 import dotenv from "dotenv";
 
 dotenv.config();
-
-// Configure Cloudinary
-cloudinary.config({
-  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-  api_key: process.env.CLOUDINARY_API_KEY,
-  api_secret: process.env.CLOUDINARY_API_SECRET,
-});
 
 // Configure multer for memory storage
 const upload = multer({
@@ -42,24 +35,29 @@ export const uploadProfileFile = async (req, res) => {
       return res.status(400).json({ message: "Email is required" });
     }
 
-    // Convert buffer to base64
+    // Upload file using unified storage service (automatically uses R2 or Cloudinary)
     const fileBuffer = req.file.buffer;
-    const base64File = fileBuffer.toString('base64');
-    const dataURI = `data:${req.file.mimetype};base64,${base64File}`;
-
-    // Upload to Cloudinary
-    const uploadResult = await cloudinary.uploader.upload(dataURI, {
+    
+    const uploadResult = await uploadFile(fileBuffer, {
       folder: 'flashfire-profiles',
-      resource_type: 'raw',
-      public_id: `${email}_${Date.now()}_${req.file.originalname}`,
-      overwrite: true,
+      filename: req.file.originalname,
+      contentType: req.file.mimetype,
     });
+
+    if (!uploadResult.success) {
+      return res.status(500).json({
+        success: false,
+        message: "Failed to upload file",
+        error: uploadResult.error,
+      });
+    }
 
     res.json({
       success: true,
-      secure_url: uploadResult.secure_url,
-      public_id: uploadResult.public_id,
-      message: "File uploaded successfully"
+      secure_url: uploadResult.url,
+      public_id: uploadResult.key || uploadResult.public_id,
+      storage: uploadResult.storage,
+      message: "File uploaded successfully",
     });
 
   } catch (error) {

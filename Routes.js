@@ -11,6 +11,8 @@ import StoreJobAndUserDetails, { saveToDashboard } from "./Controllers/StoreJobA
 import UpdateChanges from "./Controllers/UpdateChanges.js";
 import PlanSelect from "./Controllers/PlanSelect.js";
 import { uploadProfileFile, upload } from "./Controllers/UploadProfileFile.js";
+import { uploadSingleFile, uploadBase64File, upload as uploadMiddleware } from "./Controllers/UploadFile.js";
+import { serveCachedImage, getCacheStats, clearCache } from "./Controllers/ImageProxy.js";
 import LocalTokenValidator from "./Middlewares/LocalTokenValidator.js";
 import RegisterVerify from "./Middlewares/RegisterVerify.js";
 import ProfileCheck from "./Middlewares/ProfileCheck.js";
@@ -74,6 +76,16 @@ app.post('/get-updated-user', async(req, res)=>{
 app.post("/check-profile", CheckProfile);
 app.post("/setprofile", LocalTokenValidator, ProfileCheck, Add_Update_Profile);
 app.post("/upload-profile-file", upload.single('file'), LocalTokenValidator, uploadProfileFile);
+
+// Generic file upload routes (supports both Cloudinary and R2)
+// No authentication required - trusted users only
+app.post("/upload-file", uploadMiddleware.single('file'), uploadSingleFile);
+app.post("/upload-base64", uploadBase64File);
+
+// Image caching and proxy routes
+app.get("/image-proxy", serveCachedImage);
+app.get("/cache-stats", getCacheStats);
+app.post("/clear-cache", clearCache);
 
 
 // Job routes
