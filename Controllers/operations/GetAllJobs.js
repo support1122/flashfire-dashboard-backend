@@ -16,7 +16,7 @@ export default async function GetAllJobsOPS(req,res) {
             _id: job._id.toString()
         }));
         
-        // console.log("all jobs ", allJobs)
+        console.log("all jobs ", allJobs)
         console.log('Operations GetAllJobs - Sample job with _id:', allJobs[0]?._id);
         
         res.status(200).json({
