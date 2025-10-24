@@ -81,6 +81,32 @@ export const JobSchema = new mongoose.Schema({
     required: false,
     default: null
   },
+  optimizedResume: {
+    resumeData: {
+      type: mongoose.Schema.Types.Mixed,
+      default: null
+    },
+    showSummary: {
+      type: Boolean,
+      default: true
+    },
+    showProjects: {
+      type: Boolean,
+      default: false
+    },
+    showLeadership: {
+      type: Boolean,
+      default: true
+    },
+    showPublications: {
+      type: Boolean,
+      default: false
+    },
+    version: {
+      type: Number,
+      default: 0
+    }
+  }
 });
 
 export const JobModel = mongoose.model('JobDB', JobSchema)

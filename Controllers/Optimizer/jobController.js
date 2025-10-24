@@ -66,7 +66,7 @@ export const getJobDescriptionByUrl = async (req, res) => {
 // showing the changes made in the user dashboard route
 export const saveChangedSession = async (req, res) => {
      try {
-          const { id, startingContent, finalChanges } = req.body;
+          const { id, startingContent, finalChanges, optimizedResume } = req.body;
 
           if (!id || !startingContent) {
                return res.status(400).json({ error: "Job ID and starting content are required" });
@@ -82,16 +82,25 @@ export const saveChangedSession = async (req, res) => {
                changedSections: Object.keys(startingContent)
           };
 
+          // Prepare update object
+          const updateData = {
+               changesMade,
+               updatedAt: new Date().toLocaleString("en-US", "Asia/Kolkata")
+          };
+
+          // Add optimized resume data if provided
+          if (optimizedResume) {
+               updateData.optimizedResume = optimizedResume;
+               console.log('saveChangedSession - Adding optimized resume data');
+          }
+
           // Try both _id and jobID fields
           let updatedJob;
           try {
                // First try with MongoDB _id
                updatedJob = await JobModel.findOneAndUpdate(
                     { _id: id },
-                    {
-                         changesMade,
-                         updatedAt: new Date().toLocaleString("en-US", "Asia/Kolkata")
-                    },
+                    updateData,
                     { new: true }
                );
           } catch (error) {
@@ -102,10 +111,7 @@ export const saveChangedSession = async (req, res) => {
           if (!updatedJob) {
                updatedJob = await JobModel.findOneAndUpdate(
                     { jobID: id },
-                    {
-                         changesMade,
-                         updatedAt: new Date().toLocaleString("en-US", "Asia/Kolkata")
-                    },
+                    updateData,
                     { new: true }
                );
           }
@@ -123,6 +129,63 @@ export const saveChangedSession = async (req, res) => {
           });
      } catch (error) {
           console.error("Error saving changed session:", error);
+          return res.status(500).json({ error: "Server error" });
+     }
+};
+
+// Get optimized resume data by job ID
+export const getOptimizedResume = async (req, res) => {
+     try {
+          const { jobId } = req.params;
+
+          if (!jobId) {
+               return res.status(400).json({ error: "Job ID is required" });
+          }
+
+          console.log('getOptimizedResume - Fetching resume for job ID:', jobId);
+
+          let job = null;
+          
+          // First try to find by jobID field (string)
+          try {
+               job = await JobModel.findOne({ jobID: jobId }).select('optimizedResume');
+               if (job) {
+                    console.log('getOptimizedResume - Found job by jobID field');
+               }
+          } catch (error) {
+               console.log('getOptimizedResume - Error searching by jobID:', error.message);
+          }
+          
+          // If not found by jobID, try by _id (ObjectId) only if it looks like a valid ObjectId
+          if (!job && jobId.length === 24 && /^[0-9a-fA-F]{24}$/.test(jobId)) {
+               try {
+                    job = await JobModel.findOne({ _id: jobId }).select('optimizedResume');
+                    if (job) {
+                         console.log('getOptimizedResume - Found job by _id field');
+                    }
+               } catch (error) {
+                    console.log('getOptimizedResume - Error searching by _id:', error.message);
+               }
+          }
+
+          if (!job) {
+               console.log('getOptimizedResume - Job not found for ID:', jobId);
+               return res.status(404).json({ error: "Job not found" });
+          }
+
+          if (!job.optimizedResume || !job.optimizedResume.resumeData) {
+               console.log('getOptimizedResume - No optimized resume found for job:', jobId);
+               return res.status(404).json({ error: "No optimized resume found for this job" });
+          }
+
+          console.log('getOptimizedResume - Resume data found for job:', jobId);
+          return res.status(200).json({
+               success: true,
+               optimizedResume: job.optimizedResume
+          });
+
+     } catch (error) {
+          console.error("Error fetching optimized resume:", error);
           return res.status(500).json({ error: "Server error" });
      }
 };
