@@ -90,8 +90,11 @@ export const saveChangedSession = async (req, res) => {
 
           // Add optimized resume data if provided
           if (optimizedResume) {
-               updateData.optimizedResume = optimizedResume;
-               console.log('saveChangedSession - Adding optimized resume data');
+               updateData.optimizedResume = {
+                    ...optimizedResume,
+                    hasResume: true
+               };
+               console.log('saveChangedSession - Adding optimized resume data with hasResume: true');
           }
 
           // Try both _id and jobID fields
@@ -186,6 +189,53 @@ export const getOptimizedResume = async (req, res) => {
 
      } catch (error) {
           console.error("Error fetching optimized resume:", error);
+          return res.status(500).json({ error: "Server error" });
+     }
+};
+
+// Get all jobs with optimized resumes for Documents section
+export const getJobsWithOptimizedResumes = async (req, res) => {
+     try {
+          const userEmail = req.body?.email || req.body?.userDetails?.email || req.email;
+          
+          if (!userEmail) {
+               return res.status(400).json({ error: "User email not found" });
+          }
+
+          console.log('getJobsWithOptimizedResumes - User email:', userEmail);
+
+          // Find jobs that have optimized resumes
+          const jobsWithResumes = await JobModel.find({ 
+               userID: userEmail,
+               'optimizedResume.hasResume': true 
+          })
+          .select('jobTitle companyName jobID optimizedResume.hasResume optimizedResume.version updatedAt createdAt')
+          .lean();
+
+          // Format the data for the Documents section
+          const optimizedResumes = jobsWithResumes.map(job => ({
+               id: job._id.toString(),
+               jobID: job.jobID,
+               title: `${job.jobTitle} at ${job.companyName}`,
+               jobRole: job.jobTitle,
+               companyName: job.companyName,
+               jobLink: `#`, // We'll handle this in frontend
+               createdAt: job.updatedAt || job.createdAt,
+               category: 'Resume',
+               version: job.optimizedResume.version,
+               hasResume: job.optimizedResume.hasResume
+          }));
+
+          console.log(`getJobsWithOptimizedResumes - Found ${optimizedResumes.length} jobs with optimized resumes`);
+
+          return res.status(200).json({
+               success: true,
+               optimizedResumes,
+               count: optimizedResumes.length
+          });
+
+     } catch (error) {
+          console.error("Error fetching jobs with optimized resumes:", error);
           return res.status(500).json({ error: "Server error" });
      }
 };

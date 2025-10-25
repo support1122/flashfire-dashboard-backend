@@ -86,6 +86,10 @@ export const JobSchema = new mongoose.Schema({
       type: mongoose.Schema.Types.Mixed,
       default: null
     },
+    hasResume: {
+      type: Boolean,
+      default: false
+    },
     showSummary: {
       type: Boolean,
       default: true
