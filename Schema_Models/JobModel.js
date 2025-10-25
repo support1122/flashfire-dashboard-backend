@@ -109,6 +109,10 @@ export const JobSchema = new mongoose.Schema({
     version: {
       type: Number,
       default: 0
+    },
+    createdAt: {
+      type: String,
+      default: () => new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })
     }
   }
 });
