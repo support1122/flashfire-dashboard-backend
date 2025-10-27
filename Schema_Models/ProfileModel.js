@@ -43,10 +43,12 @@ export const profileSchema = new mongoose.Schema({
     required: true,
   },
   otherVisaType: {
-    type: String,
-    required: false,
-    default: "",
+  type: String,
+  required: function () {
+    return this.visaStatus === "Other";
   },
+  default: "",
+},
   bachelorsUniDegree: {
     type: String,
     required: true,
