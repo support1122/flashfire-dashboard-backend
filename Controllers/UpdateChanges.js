@@ -5,9 +5,15 @@ import { DiscordConnect } from "../Utils/DiscordConnect.js";
 
 // Helper function to check job removal limit
 async function checkJobRemovalLimit(userEmail, userRole) {
+  console.log("🔍 DEBUG: checkJobRemovalLimit called with:", { userEmail, userRole });
+  
   if (userRole !== "operations") {
+    console.log("🔍 DEBUG: User is not operations, checking limit...");
     const user = await UserModel.findOne({ email: userEmail });
+    console.log("🔍 DEBUG: User found:", user ? { email: user.email, removedJobsCount: user.removedJobsCount } : "null");
+    
     if (user && user.removedJobsCount >= 100) {
+      console.log("🔍 DEBUG: User has reached removal limit");
       return {
         exceeded: true,
         error: {
@@ -16,6 +22,9 @@ async function checkJobRemovalLimit(userEmail, userRole) {
         }
       };
     }
+    console.log("🔍 DEBUG: User has not reached removal limit");
+  } else {
+    console.log("🔍 DEBUG: User is operations, skipping limit check");
   }
   return { exceeded: false };
 }
@@ -32,19 +41,31 @@ export default async function UpdateChanges(req, res) {
   if (action === "UpdateStatus") {
       const current = await JobModel.findOne({ jobID, userID: userEmail });
 
-      const baseStatus = String(req.body?.status || "").trim();
-      const alreadyAttributed = /\sby\s/i.test(baseStatus);
+      // Extract base status from the full status (remove " by user" or " by operations" suffix)
+      const fullStatus = String(req.body?.status || "").trim();
+      const baseStatus = fullStatus.replace(/\s+by\s+\w+$/i, "").trim();
+      const alreadyAttributed = /\sby\s/i.test(fullStatus);
       const actorName = req.body?.role === 'operations' ? (userDetails?.name || 'operations') : 'user';
       const statusToSet = alreadyAttributed || baseStatus === ''
-        ? baseStatus
+        ? fullStatus  // Use the original full status if it already has attribution
         : `${baseStatus} by ${actorName}`;
 
       // Check if user is trying to move job to "deleted" (removed) status
       if (baseStatus === "deleted") {
+        console.log("🔍 DEBUG: Job removal attempt detected");
+        console.log("🔍 DEBUG: fullStatus:", fullStatus);
+        console.log("🔍 DEBUG: baseStatus:", baseStatus);
+        console.log("🔍 DEBUG: userEmail:", userEmail);
+        console.log("🔍 DEBUG: req.body?.role:", req.body?.role);
+        
         const limitCheck = await checkJobRemovalLimit(userEmail, req.body?.role);
+        console.log("🔍 DEBUG: limitCheck result:", limitCheck);
+        
         if (limitCheck.exceeded) {
+          console.log("🔍 DEBUG: Removal limit exceeded, returning error");
           return res.status(400).json(limitCheck.error);
         }
+        console.log("🔍 DEBUG: Removal limit check passed, continuing...");
       }
 
       // Check if operations user is moving job from saved to applied
