@@ -32,7 +32,7 @@ const PUBLIC_URL = process.env.R2_PUBLIC_URL || '';
 export async function uploadToR2(fileBuffer, options = {}) {
   try {
     const {
-      folder = 'flashfire-uploads',
+      folder = 'flashfirejobs',
       filename = 'file',
       contentType = 'application/octet-stream',
       clientName = null,
@@ -44,11 +44,15 @@ export async function uploadToR2(fileBuffer, options = {}) {
     const randomString = crypto.randomBytes(8).toString('hex');
     const sanitizedFilename = filename.replace(/[^a-zA-Z0-9._-]/g, '_');
     
-    // Create client-based folder structure: baseFolder/client/resumes or baseFolder/client/attachments
+    // Create client-based folder structure: folder/email/fileType
+    // Example: flashfirejobs/john_email_com/resume or flashfirejobs/john_email_com/attachments
     let finalFolder = folder;
     if (clientName) {
       const sanitizedClientName = clientName.replace(/[^a-zA-Z0-9._-]/g, '_');
       finalFolder = `${folder}/${sanitizedClientName}/${fileType}`;
+    } else {
+      // If no client name, just use folder/fileType
+      finalFolder = `${folder}/${fileType}`;
     }
     
     const key = `${finalFolder}/${timestamp}_${randomString}_${sanitizedFilename}`;
@@ -68,9 +72,23 @@ export async function uploadToR2(fileBuffer, options = {}) {
     await r2Client.send(command);
 
     // Construct public URL
-    const url = PUBLIC_URL 
-      ? `${PUBLIC_URL}/${key}`
-      : `https://${BUCKET_NAME}.r2.cloudflarestorage.com/${key}`;
+    let url;
+    if (PUBLIC_URL) {
+      // Remove trailing slash from PUBLIC_URL and leading slash from key if present
+      const baseUrl = PUBLIC_URL.replace(/\/$/, '');
+      const cleanKey = key.replace(/^\//, '');
+      url = `${baseUrl}/${cleanKey}`;
+    } else {
+      url = `https://${BUCKET_NAME}.r2.cloudflarestorage.com/${key}`;
+    }
+
+    console.log('R2 Upload Success:', {
+      url,
+      key,
+      folder: finalFolder,
+      contentType,
+      size: fileBuffer.length,
+    });
 
     return {
       success: true,
