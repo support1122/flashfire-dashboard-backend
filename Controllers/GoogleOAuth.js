@@ -151,4 +151,3 @@ const GoogleOAuth = async (req, res) => {
      }
 };
 export default GoogleOAuth;
-

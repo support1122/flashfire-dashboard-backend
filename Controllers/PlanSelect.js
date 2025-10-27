@@ -1,5 +1,4 @@
 import { UserModel } from "../Schema_Models/UserModel.js";
-import { ProfileModel } from "../Schema_Models/ProfileModel.js";
 
 export default async function PlanSelect(req, res) {
   console.log(req.body)
@@ -84,7 +83,7 @@ export default async function PlanSelect(req, res) {
     const pushOps = {};
     const pullOps = {};
 
-    // ✅ Base resume - Store in BOTH UserModel and ProfileModel
+    // ✅ Base resume
     if (typeof resumeLink !== "undefined" && resumeLink) {
       let resumeUrl = "";
       if (typeof resumeLink === "string") {
@@ -100,9 +99,6 @@ export default async function PlanSelect(req, res) {
           link: resumeUrl,
         };
         pushOps.resumeLink = { $each: [resumeEntry] };
-        
-        // Also update ProfileModel.resumeUrl for profile display
-        setFields.resumeUrl = resumeUrl;
       }
     }
 
@@ -164,15 +160,6 @@ export default async function PlanSelect(req, res) {
     );
 
     if (!user) return res.status(404).json({ message: "User not found" });
-
-    // Also update ProfileModel if resumeUrl was set
-    if (setFields.resumeUrl) {
-      await ProfileModel.findOneAndUpdate(
-        { email: userDetails.email },
-        { $set: { resumeUrl: setFields.resumeUrl } },
-        { new: true }
-      );
-    }
 
     return res.status(200).json({
       message: "Updated successfully",

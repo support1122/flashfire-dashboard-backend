@@ -1,5 +1,6 @@
 // controllers/UpdateChanges.js
 import { JobModel } from "../Schema_Models/JobModel.js";
+import { UserModel } from "../Schema_Models/UserModel.js";
 import { DiscordConnect } from "../Utils/DiscordConnect.js";
 
 export default async function UpdateChanges(req, res) {
@@ -20,6 +21,18 @@ export default async function UpdateChanges(req, res) {
       const statusToSet = alreadyAttributed || baseStatus === ''
         ? baseStatus
         : `${baseStatus} by ${actorName}`;
+
+      // Check if user is trying to move job to "deleted" (removed) status
+      if (baseStatus === "deleted" && req.body?.role !== "operations") {
+        // Check user's removal limit (100 jobs max)
+        const user = await UserModel.findOne({ email: userEmail });
+        if (user && user.removedJobsCount >= 100) {
+          return res.status(400).json({ 
+            message: "Removal limit exceeded", 
+            error: "You have reached the maximum limit of 100 job removals. Please contact support if you need to remove more jobs." 
+          });
+        }
+      }
 
       // Check if operations user is moving job from saved to applied
       let updateFields = {
@@ -56,6 +69,15 @@ export default async function UpdateChanges(req, res) {
         },
         { new: true, upsert: false }
       );
+
+      // Increment removal counter if job is moved to deleted status by regular user
+      if (baseStatus === "deleted" && req.body?.role !== "operations") {
+        await UserModel.findOneAndUpdate(
+          { email: userEmail },
+          { $inc: { removedJobsCount: 1 } },
+          { new: true }
+        );
+      }
       const discordMessage =
   `📌 Job Update:
   Client: ${userDetails.name}
@@ -94,6 +116,18 @@ export default async function UpdateChanges(req, res) {
 
   if (!existing) {
     return res.status(404).json({ message: "Job not found for this user" });
+  }
+
+  // Check if user is trying to move job to "deleted" (removed) status
+  if (req.body?.status === "deleted" && req.body?.role !== "operations") {
+    // Check user's removal limit (100 jobs max)
+    const user = await UserModel.findOne({ email: userEmail });
+    if (user && user.removedJobsCount >= 100) {
+      return res.status(400).json({ 
+        message: "Removal limit exceeded", 
+        error: "You have reached the maximum limit of 100 job removals. Please contact support if you need to remove more jobs." 
+      });
+    }
   }
   const baseNextStatus = existing.currentStatus === "saved" ? "applied" : existing.currentStatus;
   const opsName = req.body?.role === "operations" ? (req.body?.userDetails?.name || null) : null;
@@ -140,6 +174,15 @@ export default async function UpdateChanges(req, res) {
 
   if (!updated) {
     return res.status(404).json({ message: "Job not found for this user" });
+  }
+
+  // Increment removal counter if job is moved to deleted status by regular user
+  if (req.body?.status === "deleted" && req.body?.role !== "operations") {
+    await UserModel.findOneAndUpdate(
+      { email: userEmail },
+      { $inc: { removedJobsCount: 1 } },
+      { new: true }
+    );
   }
 
   // Send Discord notification if status changed to an important status
