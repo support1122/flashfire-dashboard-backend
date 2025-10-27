@@ -3,6 +3,23 @@ import { JobModel } from "../Schema_Models/JobModel.js";
 import { UserModel } from "../Schema_Models/UserModel.js";
 import { DiscordConnect } from "../Utils/DiscordConnect.js";
 
+// Helper function to check job removal limit
+async function checkJobRemovalLimit(userEmail, userRole) {
+  if (userRole !== "operations") {
+    const user = await UserModel.findOne({ email: userEmail });
+    if (user && user.removedJobsCount >= 100) {
+      return {
+        exceeded: true,
+        error: {
+          message: "Removal limit exceeded", 
+          error: "You have reached the maximum limit of 100 job removals. Please contact support if you need to remove more jobs."
+        }
+      };
+    }
+  }
+  return { exceeded: false };
+}
+
 export default async function UpdateChanges(req, res) {
   const { jobID, userDetails, action } = req.body;
   const userEmail = userDetails?.email;
@@ -23,14 +40,10 @@ export default async function UpdateChanges(req, res) {
         : `${baseStatus} by ${actorName}`;
 
       // Check if user is trying to move job to "deleted" (removed) status
-      if (baseStatus === "deleted" && req.body?.role !== "operations") {
-        // Check user's removal limit (100 jobs max)
-        const user = await UserModel.findOne({ email: userEmail });
-        if (user && user.removedJobsCount >= 100) {
-          return res.status(400).json({ 
-            message: "Removal limit exceeded", 
-            error: "You have reached the maximum limit of 100 job removals. Please contact support if you need to remove more jobs." 
-          });
+      if (baseStatus === "deleted") {
+        const limitCheck = await checkJobRemovalLimit(userEmail, req.body?.role);
+        if (limitCheck.exceeded) {
+          return res.status(400).json(limitCheck.error);
         }
       }
 
@@ -119,14 +132,10 @@ export default async function UpdateChanges(req, res) {
   }
 
   // Check if user is trying to move job to "deleted" (removed) status
-  if (req.body?.status === "deleted" && req.body?.role !== "operations") {
-    // Check user's removal limit (100 jobs max)
-    const user = await UserModel.findOne({ email: userEmail });
-    if (user && user.removedJobsCount >= 100) {
-      return res.status(400).json({ 
-        message: "Removal limit exceeded", 
-        error: "You have reached the maximum limit of 100 job removals. Please contact support if you need to remove more jobs." 
-      });
+  if (req.body?.status === "deleted") {
+    const limitCheck = await checkJobRemovalLimit(userEmail, req.body?.role);
+    if (limitCheck.exceeded) {
+      return res.status(400).json(limitCheck.error);
     }
   }
   const baseNextStatus = existing.currentStatus === "saved" ? "applied" : existing.currentStatus;
