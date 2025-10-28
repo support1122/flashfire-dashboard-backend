@@ -3,227 +3,308 @@ import { JobModel } from "../Schema_Models/JobModel.js";
 import { UserModel } from "../Schema_Models/UserModel.js";
 import { DiscordConnect } from "../Utils/DiscordConnect.js";
 
-export default async function UpdateChanges(req, res) {
-  const { jobID, userDetails, action } = req.body;
-  const userEmail = userDetails?.email;
+const REMOVAL_LIMIT = 100;
+const OPERATIONS_EMAIL_DOMAIN = 'operations@flashfirehq';
+const USER_EMAIL_DOMAIN = 'user@flashfirehq';
+const TIMEZONE = 'Asia/Kolkata';
+const IMPORTANT_STATUSES = ['saved', 'applied', 'interviewing', 'offer', 'rejected', 'deleted'];
 
+const getCurrentISTTime = () => new Date().toLocaleString('en-IN', { timeZone: TIMEZONE });
+
+const isOperationsUser = (role) => role === 'operations';
+
+const shouldAttributeStatus = (baseStatus) => {
+  return baseStatus !== '' && !/\sby\s/i.test(baseStatus);
+};
+
+const formatStatusWithAttribution = (baseStatus, actorName) => {
+  if (!shouldAttributeStatus(baseStatus)) return baseStatus;
+  return `${baseStatus} by ${actorName}`;
+};
+
+const getActorName = (role, userDetails) => {
+  return isOperationsUser(role) ? (userDetails?.name || 'operations') : 'user';
+};
+
+const normalizeAttachmentUrls = (body) => {
+  const raw = body?.attachmentUrls ?? body?.attachmentUrl ?? body?.urls ?? [];
+  return (Array.isArray(raw) ? raw : [raw]).filter(Boolean);
+};
+
+const validateRequiredFields = (jobID, userEmail) => {
   if (!jobID || !userEmail) {
-    return res.status(400).json({ message: "jobID and userDetails.email are required" });
+    throw { status: 400, message: "jobID and userDetails.email are required" };
   }
+};
 
-  try {
-  if (action === "UpdateStatus") {
-      const current = await JobModel.findOne({ jobID, userID: userEmail });
+const validateAttachmentUrls = (urls) => {
+  if (!urls.length) {
+    throw { status: 400, message: "No attachment URLs provided" };
+  }
+};
 
-      const baseStatus = String(req.body?.status || "").trim();
-      const alreadyAttributed = /\sby\s/i.test(baseStatus);
-      const actorName = req.body?.role === 'operations' ? (userDetails?.name || 'operations') : 'user';
-      const statusToSet = alreadyAttributed || baseStatus === ''
-        ? baseStatus
-        : `${baseStatus} by ${actorName}`;
-
-      // Check if user is trying to move job to "deleted" (removed) status
-      if (baseStatus === "deleted" && req.body?.role !== "operations") {
-        // Check user's removal limit (100 jobs max)
-        const user = await UserModel.findOne({ email: userEmail });
-        if (user && user.removedJobsCount >= 100) {
-          return res.status(400).json({ 
-            message: "Removal limit exceeded", 
-            error: "You have reached the maximum limit of 100 job removals. Please contact support if you need to remove more jobs." 
-          });
-        }
-      }
-
-      // Check if operations user is moving job from saved to applied
-      let updateFields = {
-        currentStatus: statusToSet,
-        updatedAt: new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }),
+const checkRemovalLimit = async (userEmail, status, role) => {
+  if (status === "deleted" && !isOperationsUser(role)) {
+    const user = await UserModel.findOne({ email: userEmail }).select('removedJobsCount').lean();
+    if (user && user.removedJobsCount >= REMOVAL_LIMIT) {
+      throw {
+        status: 400,
+        message: "Removal limit exceeded",
+        error: `You have reached the maximum limit of ${REMOVAL_LIMIT} job removals. Please contact support if you need to remove more jobs.`
       };
-
-      // Track operations when moving from saved to applied
-      if (req.body?.role === "operations" && current?.currentStatus === "saved" && statusToSet.includes("applied")) {
-        console.log("🔄 Operations tracking triggered - UpdateStatus action");
-        console.log("📊 Operations user:", req.body?.operationsName || userDetails?.name || 'operations');
-        console.log("📧 Operations email:", req.body?.operationsEmail || 'operations@flashfirehq');
-        
-        // Set operatorName and operatorEmail to operations user details
-        updateFields.operatorName = req.body?.operationsName || userDetails?.name || 'operations';
-        updateFields.operatorEmail = req.body?.operationsEmail || 'operations@flashfirehq';
-        // Set appliedDate when job moves to applied status
-        updateFields.appliedDate = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
-      } else if (req.body?.role !== "operations") {
-        // If not operations user, set to 'user'
-        updateFields.operatorName = 'user';
-        updateFields.operatorEmail = 'user@flashfirehq';
-        // Set appliedDate when job moves to applied status (for regular users too)
-        if (current?.currentStatus === "saved" && statusToSet.includes("applied")) {
-          updateFields.appliedDate = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
-        }
-      }
-
-      await JobModel.findOneAndUpdate(
-        { jobID, userID: userEmail },
-        {
-          $set: updateFields,
-          $push: { timeline: statusToSet },
-        },
-        { new: true, upsert: false }
-      );
-
-      // Increment removal counter if job is moved to deleted status by regular user
-      if (baseStatus === "deleted" && req.body?.role !== "operations") {
-        await UserModel.findOneAndUpdate(
-          { email: userEmail },
-          { $inc: { removedJobsCount: 1 } },
-          { new: true }
-        );
-      }
-      const discordMessage =
-  `📌 Job Update:
-  Client: ${userDetails.name}
-   Company: ${current?.companyName}
-   Job Title: ${current?.jobTitle}
-   Status: ${statusToSet}
-   Previous: ${current?.currentStatus}`; 
-      if(baseStatus !== 'deleted') await DiscordConnect(process.env.DISCORD_APPLICATION_TRACKING_CHANNEL,discordMessage);
-      
-  }
-    
-
-  else if (action === "edit") {
-  const userEmail = userDetails?.email;
-
-  // Accept single string or array and normalize
-  const raw =
-    req.body?.attachmentUrls ??
-    req.body?.attachmentUrl ??
-    req.body?.urls ??
-    [];
-  const attachmentUrls = (Array.isArray(raw) ? raw : [raw]).filter(Boolean);
-
-  if (!jobID || !userEmail) {
-    return res.status(400).json({ message: "jobID and userDetails.email are required" });
-  }
-  if (!attachmentUrls.length) {
-    return res.status(400).json({ message: "No attachment URLs provided" });
-  }
-
-  // Fetch current status to decide whether to flip "saved" -> "applied"
-  const existing = await JobModel.findOne(
-    { jobID, userID: userEmail },
-    { currentStatus: 1 }
-  ).lean();
-
-  if (!existing) {
-    return res.status(404).json({ message: "Job not found for this user" });
-  }
-
-  // Check if user is trying to move job to "deleted" (removed) status
-  if (req.body?.status === "deleted" && req.body?.role !== "operations") {
-    // Check user's removal limit (100 jobs max)
-    const user = await UserModel.findOne({ email: userEmail });
-    if (user && user.removedJobsCount >= 100) {
-      return res.status(400).json({ 
-        message: "Removal limit exceeded", 
-        error: "You have reached the maximum limit of 100 job removals. Please contact support if you need to remove more jobs." 
-      });
     }
   }
-  const baseNextStatus = existing.currentStatus === "saved" ? "applied" : existing.currentStatus;
-  const opsName = req.body?.role === "operations" ? (req.body?.userDetails?.name || null) : null;
-  const nextStatus = opsName
-    ? `${baseNextStatus} by ${opsName}`
-    : (existing.currentStatus === "saved" ? "applied by user" : baseNextStatus);
+};
 
-  // Check if operations user is moving job from saved to applied
-  let updateFields = {
-    updatedAt: new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" }),
-    currentStatus: nextStatus,
-  };
-
-  // Track operations when moving from saved to applied
-  if (req.body?.role === "operations" && existing.currentStatus === "saved" && nextStatus.includes("applied")) {
-    console.log("🔄 Operations tracking triggered - edit action");
-    console.log("📊 Operations user:", req.body?.operationsName || userDetails?.name || 'operations');
-    console.log("📧 Operations email:", req.body?.operationsEmail || 'operations@flashfirehq');
-    
-    // Set operatorName and operatorEmail to operations user details
-    updateFields.operatorName = req.body?.operationsName || userDetails?.name || 'operations';
-    updateFields.operatorEmail = req.body?.operationsEmail || 'operations@flashfirehq';
-    updateFields.appliedDate = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
-  } else if (req.body?.role !== "operations") {
-    // If not operations user, set to 'user'
-    updateFields.operatorName = 'user';
-    updateFields.operatorEmail = 'user@flashfirehq';
-    // Set appliedDate when job moves to applied status (for regular users too)
-    if (existing.currentStatus === "saved" && nextStatus.includes("applied")) {
-      updateFields.appliedDate = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
-    }
+const buildOperatorFields = (role, body, userDetails) => {
+  const fields = {};
+  
+  if (isOperationsUser(role)) {
+    fields.operatorName = body?.operationsName || userDetails?.name || 'operations';
+    fields.operatorEmail = body?.operationsEmail || OPERATIONS_EMAIL_DOMAIN;
+  } else {
+    fields.operatorName = 'user';
+    fields.operatorEmail = USER_EMAIL_DOMAIN;
   }
+  
+  return fields;
+};
 
-  const update = {
-    $set: updateFields,
-    $addToSet: { attachments: { $each: attachmentUrls }, timeline: nextStatus },
-  };
+const shouldSetAppliedDate = (currentStatus, newStatus) => {
+  return currentStatus === "saved" && 
+         (newStatus.includes("applied") || newStatus === "applied");
+};
 
-  const updated = await JobModel.findOneAndUpdate(
-    { jobID, userID: userEmail },
-    update,
-    { new: true, upsert: false }
-  );
-
-  if (!updated) {
-    return res.status(404).json({ message: "Job not found for this user" });
-  }
-
-  // Increment removal counter if job is moved to deleted status by regular user
-  if (req.body?.status === "deleted" && req.body?.role !== "operations") {
+const incrementRemovalCount = async (userEmail, status, role) => {
+  if (status === "deleted" && !isOperationsUser(role)) {
     await UserModel.findOneAndUpdate(
       { email: userEmail },
       { $inc: { removedJobsCount: 1 } },
       { new: true }
-    );
+    ).lean();
   }
+};
 
-  // Send Discord notification if status changed to an important status
+const buildDiscordMessage = (clientName, job, newStatus, oldStatus) => {
+  return `📌 Job Update:
+  Client: ${clientName}
+  Company: ${job?.companyName || 'N/A'}
+  Job Title: ${job?.jobTitle || 'N/A'}
+  Status: ${newStatus}
+  Previous: ${oldStatus}`;
+};
+
+const sendDiscordNotification = async (userDetails, job, newStatus, oldStatus, role, userEmail) => {
   try {
-    const importantStatuses = ['saved', 'applied', 'interviewing', 'offer', 'rejected', 'deleted'];
-    const isImportantChange = importantStatuses.some((s) =>
-      String(nextStatus).toLowerCase().includes(s)
-    );
+    // Don't send notification for deleted status
+    if (newStatus.toLowerCase().includes('deleted')) return;
 
-    if (isImportantChange && existing.currentStatus !== nextStatus) {
-      // Determine client name: if operations user, look up user's name by email
-      let clientName = userDetails.name;
-      if (req.body?.role === 'operations') {
-        const { UserModel } = await import("../Schema_Models/UserModel.js");
-        const clientUser = await UserModel.findOne({ email: userEmail }).select('name');
-        clientName = clientUser?.name || userEmail;
-      }
-
-      const discordMessage =
-        `📌 Job Update:\n` +
-        `  Client: ${clientName}\n` +
-        `  Company: ${updated.companyName}\n` +
-        `  Job Title: ${updated.jobTitle}\n` +
-        `  Status: ${nextStatus}\n` +
-        `  Previous: ${existing.currentStatus}`;
-      await DiscordConnect(process.env.DISCORD_APPLICATION_TRACKING_CHANNEL, discordMessage);
+    let clientName = userDetails.name;
+    
+    // For operations users, fetch the actual client name
+    if (isOperationsUser(role)) {
+      const clientUser = await UserModel.findOne({ email: userEmail })
+        .select('name')
+        .lean();
+      clientName = clientUser?.name || userEmail;
     }
-  } catch (e) {
-    console.log('Discord notify (edit) failed:', e);
+
+    const discordMessage = buildDiscordMessage(clientName, job, newStatus, oldStatus);
+    await DiscordConnect(process.env.DISCORD_APPLICATION_TRACKING_CHANNEL, discordMessage);
+  } catch (error) {
+    console.error('Discord notification failed:', error);
   }
-}
+};
 
-    else if (action === "delete") {
-      await JobModel.findOneAndDelete({ jobID, userID: userEmail });
+// Action Handlers
+const handleUpdateStatus = async (req, res, jobID, userEmail, userDetails) => {
+  const { status: baseStatus = '', role } = req.body;
+  const trimmedStatus = String(baseStatus).trim();
+
+  // Validate removal limit before any database operations
+  await checkRemovalLimit(userEmail, trimmedStatus, role);
+
+  // Fetch current job
+  const currentJob = await JobModel.findOne({ jobID, userID: userEmail })
+    .select('currentStatus companyName jobTitle')
+    .lean();
+
+  if (!currentJob) {
+    throw { status: 404, message: "Job not found for this user" };
+  }
+
+  const actorName = getActorName(role, userDetails);
+  const statusToSet = formatStatusWithAttribution(trimmedStatus, actorName);
+
+  // Build update fields
+  const updateFields = {
+    currentStatus: statusToSet,
+    updatedAt: getCurrentISTTime(),
+    ...buildOperatorFields(role, req.body, userDetails)
+  };
+
+  // Set appliedDate if transitioning from saved to applied
+  if (shouldSetAppliedDate(currentJob.currentStatus, statusToSet)) {
+    updateFields.appliedDate = getCurrentISTTime();
+    console.log('🔄 Operations tracking triggered - UpdateStatus action');
+    console.log('📊 Operations user:', updateFields.operatorName);
+    console.log('📧 Operations email:', updateFields.operatorEmail);
+  }
+
+  // Update job
+  await JobModel.findOneAndUpdate(
+    { jobID, userID: userEmail },
+    {
+      $set: updateFields,
+      $push: { timeline: statusToSet }
+    },
+    { new: true }
+  ).lean();
+
+  // Increment removal count if applicable
+  await incrementRemovalCount(userEmail, trimmedStatus, role);
+
+  // Send Discord notification
+  await sendDiscordNotification(
+    userDetails,
+    currentJob,
+    statusToSet,
+    currentJob.currentStatus,
+    role,
+    userEmail
+  );
+};
+
+const handleEdit = async (req, res, jobID, userEmail, userDetails) => {
+  const { role, status } = req.body;
+  const attachmentUrls = normalizeAttachmentUrls(req.body);
+
+  // Validate inputs
+  validateAttachmentUrls(attachmentUrls);
+  await checkRemovalLimit(userEmail, status, role);
+
+  // Fetch existing job
+  const existingJob = await JobModel.findOne({ jobID, userID: userEmail })
+    .select('currentStatus companyName jobTitle')
+    .lean();
+
+  if (!existingJob) {
+    throw { status: 404, message: "Job not found for this user" };
+  }
+
+  // Determine next status
+  const baseNextStatus = existingJob.currentStatus === "saved" 
+    ? "applied" 
+    : existingJob.currentStatus;
+  
+  const opsName = isOperationsUser(role) ? (userDetails?.name || null) : null;
+  const nextStatus = opsName
+    ? `${baseNextStatus} by ${opsName}`
+    : (existingJob.currentStatus === "saved" ? "applied by user" : baseNextStatus);
+
+  // Build update fields
+  const updateFields = {
+    updatedAt: getCurrentISTTime(),
+    currentStatus: nextStatus,
+    ...buildOperatorFields(role, req.body, userDetails)
+  };
+
+  // Set appliedDate if transitioning from saved to applied
+  if (shouldSetAppliedDate(existingJob.currentStatus, nextStatus)) {
+    updateFields.appliedDate = getCurrentISTTime();
+    console.log('🔄 Operations tracking triggered - edit action');
+    console.log('📊 Operations user:', updateFields.operatorName);
+    console.log('📧 Operations email:', updateFields.operatorEmail);
+  }
+
+  // Update job with attachments
+  const updatedJob = await JobModel.findOneAndUpdate(
+    { jobID, userID: userEmail },
+    {
+      $set: updateFields,
+      $addToSet: { 
+        attachments: { $each: attachmentUrls },
+        timeline: nextStatus 
+      }
+    },
+    { new: true }
+  ).lean();
+
+  if (!updatedJob) {
+    throw { status: 404, message: "Job not found for this user" };
+  }
+
+  // Increment removal count if applicable
+  await incrementRemovalCount(userEmail, status, role);
+
+  // Send Discord notification if status changed to important status
+  const isImportantChange = IMPORTANT_STATUSES.some(s => 
+    String(nextStatus).toLowerCase().includes(s)
+  );
+
+  if (isImportantChange && existingJob.currentStatus !== nextStatus) {
+    await sendDiscordNotification(
+      userDetails,
+      updatedJob,
+      nextStatus,
+      existingJob.currentStatus,
+      role,
+      userEmail
+    );
+  }
+};
+
+const handleDelete = async (req, res, jobID, userEmail) => {
+  await JobModel.findOneAndDelete({ jobID, userID: userEmail }).lean();
+};
+
+// Main Controller
+export default async function UpdateChanges(req, res) {
+  const { jobID, userDetails, action } = req.body;
+  const userEmail = userDetails?.email;
+
+  try {
+    // Validate required fields
+    validateRequiredFields(jobID, userEmail);
+
+    // Route to appropriate handler
+    switch (action) {
+      case "UpdateStatus":
+        await handleUpdateStatus(req, res, jobID, userEmail, userDetails);
+        break;
+      
+      case "edit":
+        await handleEdit(req, res, jobID, userEmail, userDetails);
+        break;
+      
+      case "delete":
+        await handleDelete(req, res, jobID, userEmail);
+        break;
+      
+      default:
+        throw { status: 400, message: "Invalid action specified" };
     }
 
-    const updatedJobs = await JobModel.find({ userID: userEmail }).sort({ createdAt: -1 });
-    return res.status(200).json({ message: "Jobs updated successfully", updatedJobs });
+    // Fetch and return updated jobs
+    const updatedJobs = await JobModel.find({ userID: userEmail })
+      .sort({ createdAt: -1 })
+      .lean();
+
+    return res.status(200).json({ 
+      message: "Jobs updated successfully", 
+      updatedJobs 
+    });
+
   } catch (error) {
     console.error("UpdateChanges error:", error);
-    return res.status(500).json({ message: "Server error", error: String(error) });
+    
+    const status = error.status || 500;
+    const message = error.message || "Server error";
+    const errorDetail = error.error || String(error);
+
+    return res.status(status).json({ 
+      message, 
+      ...(error.error && { error: errorDetail })
+    });
   }
 }
-

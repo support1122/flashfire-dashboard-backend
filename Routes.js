@@ -93,7 +93,7 @@ app.post("/addjob", LocalTokenValidator, CheckForDuplicateJobs, AddJob);
 app.get("/getalljobs", LocalTokenValidator, GetAllJobs);
 app.post("/getalljobs",  GetAllJobs);
 app.post("/storejobanduserdetails", StoreJobAndUserDetails);
-app.put("/updatechanges", LocalTokenValidator, VerifyJobIDAndChanges, UpdateChanges);
+app.put("/updatechanges",  VerifyJobIDAndChanges, UpdateChanges);
 
 // Plan routes
 app.post('/api/plans/select', PlanSelect);

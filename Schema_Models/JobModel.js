@@ -106,6 +106,19 @@ export const JobSchema = new mongoose.Schema({
       type: Boolean,
       default: false
     },
+    sectionOrder: {
+      type: [String],
+      default: [
+        "personalInfo",
+        "summary", 
+        "workExperience",
+        "projects",
+        "leadership",
+        "skills",
+        "education",
+        "publications"
+      ]
+    },
     version: {
       type: Number,
       default: 0
