@@ -42,6 +42,11 @@ export const profileSchema = new mongoose.Schema({
     enum: ["CPT", "F1", "F1 OPT", "F1 STEM OPT", "H1B", "Green Card", "U.S. Citizen", "Other"],
     required: true,
   },
+  otherVisaType: {
+    type: String,
+    required: false,
+    default: "",
+  },
   bachelorsUniDegree: {
     type: String,
     required: true,
