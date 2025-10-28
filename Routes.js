@@ -89,7 +89,7 @@ app.post("/clear-cache", clearCache);
 
 
 // Job routes
-app.post("/addjob", LocalTokenValidator, CheckForDuplicateJobs, AddJob);
+app.post("/addjob", CheckForDuplicateJobs, AddJob);
 app.get("/getalljobs", LocalTokenValidator, GetAllJobs);
 app.post("/getalljobs",  GetAllJobs);
 app.post("/storejobanduserdetails", StoreJobAndUserDetails);
