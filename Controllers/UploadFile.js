@@ -27,18 +27,33 @@ export const uploadSingleFile = async (req, res) => {
       });
     }
 
-    const { folder = '', email, fileType = 'attachments' } = req.body;
+    const { folder = 'flashfirejobs', email, fileType = 'attachments' } = req.body;
 
-    // Get client information if email is provided
-    let clientName = null;
-    if (email) {
-      const profile = await ProfileModel.findOne({ email });
-      if (profile) {
-        clientName = `${profile.firstName}_${profile.lastName}`.replace(/[^a-zA-Z0-9._-]/g, '_');
-      }
+    // Determine file type based on file extension or MIME type if not provided
+    const fileName = req.file.originalname.toLowerCase();
+    let determinedFileType = fileType;
+    
+    // Check if it's a PDF, DOC, DOCX, TXT (these should go to resume folder)
+    if (fileName.endsWith('.pdf') || 
+        fileName.endsWith('.doc') || 
+        fileName.endsWith('.docx') || 
+        fileName.endsWith('.txt') ||
+        req.file.mimetype === 'application/pdf' ||
+        req.file.mimetype === 'application/msword' ||
+        req.file.mimetype === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
+        req.file.mimetype === 'text/plain') {
+      determinedFileType = 'resume'; // PDFs and documents go to resume folder
     }
 
-    // Upload file using unified storage service
+    // Use email as client identifier (unique and always available)
+    // Sanitize email for use as folder name
+    let clientName = null;
+    if (email) {
+      // Use email directly as folder identifier
+      clientName = email.replace(/[^a-zA-Z0-9._-]/g, '_');
+    }
+
+    // Upload file using unified storage service with email-based folder structure
     const fileBuffer = req.file.buffer;
     
     const uploadResult = await uploadFile(fileBuffer, {
@@ -46,7 +61,7 @@ export const uploadSingleFile = async (req, res) => {
       filename: req.file.originalname,
       contentType: req.file.mimetype,
       clientName,
-      fileType,
+      fileType: determinedFileType,
     });
 
     if (!uploadResult.success) {

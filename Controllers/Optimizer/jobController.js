@@ -93,9 +93,20 @@ export const saveChangedSession = async (req, res) => {
                updateData.optimizedResume = {
                     ...optimizedResume,
                     hasResume: true,
-                    createdAt: new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })
+                    createdAt: new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }),
+                    // Ensure sectionOrder is included with default if not provided
+                    sectionOrder: optimizedResume.sectionOrder || [
+                         "personalInfo",
+                         "summary", 
+                         "workExperience",
+                         "projects",
+                         "leadership",
+                         "skills",
+                         "education",
+                         "publications"
+                    ]
                };
-               console.log('saveChangedSession - Adding optimized resume data with hasResume: true and timestamp');
+               console.log('saveChangedSession - Adding optimized resume data with hasResume: true, timestamp, and sectionOrder');
           }
 
           // Try both _id and jobID fields
@@ -312,7 +323,17 @@ export const getOptimizedResumesForDocuments = async (req, res) => {
                     showSummary: job.optimizedResume.showSummary,
                     showProjects: job.optimizedResume.showProjects,
                     showLeadership: job.optimizedResume.showLeadership,
-                    showPublications: job.optimizedResume.showPublications
+                    showPublications: job.optimizedResume.showPublications,
+                    sectionOrder: job.optimizedResume.sectionOrder || [
+                         "personalInfo",
+                         "summary", 
+                         "workExperience",
+                         "projects",
+                         "leadership",
+                         "skills",
+                         "education",
+                         "publications"
+                    ]
                };
           });
 

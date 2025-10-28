@@ -74,8 +74,8 @@ app.post('/get-updated-user', async(req, res)=>{
 
 // Profile routes
 app.post("/check-profile", CheckProfile);
-app.post("/setprofile",ProfileCheck, Add_Update_Profile);
-app.post("/upload-profile-file", upload.single('file'),uploadProfileFile);
+app.post("/setprofile", ProfileCheck, Add_Update_Profile);
+app.post("/upload-profile-file", upload.single('file'),  uploadProfileFile);
 
 // Generic file upload routes (supports both Cloudinary and R2)
 // No authentication required - trusted users only
@@ -89,11 +89,11 @@ app.post("/clear-cache", clearCache);
 
 
 // Job routes
-app.post("/addjob", CheckForDuplicateJobs, AddJob);
-app.get("/getalljobs", GetAllJobs);
-app.post("/getalljobs", GetAllJobs);
+app.post("/addjob", LocalTokenValidator, CheckForDuplicateJobs, AddJob);
+app.get("/getalljobs", LocalTokenValidator, GetAllJobs);
+app.post("/getalljobs",  GetAllJobs);
 app.post("/storejobanduserdetails", StoreJobAndUserDetails);
-app.put("/updatechanges", VerifyJobIDAndChanges, UpdateChanges);
+app.put("/updatechanges",  VerifyJobIDAndChanges, UpdateChanges);
 
 // Plan routes
 app.post('/api/plans/select', PlanSelect);

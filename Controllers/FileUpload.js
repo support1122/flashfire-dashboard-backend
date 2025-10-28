@@ -20,12 +20,12 @@ export default async function FileUpload(req, res) {
     }
 
     // Get client information from profile
-    const profile = await ProfileModel.findOne({ email });
-    if (!profile) {
-      return res.status(404).json({ 
-        message: "Profile not found" 
-      });
-    }
+    // const profile = await ProfileModel.findOne({ email });
+    // if (!profile) {
+    //   return res.status(404).json({ 
+    //     message: "Profile not found" 
+    //   });
+    // }
 
     // Create client name from firstName and lastName
     const clientName = `${profile.firstName}_${profile.lastName}`.replace(/[^a-zA-Z0-9._-]/g, '_');
@@ -57,11 +57,11 @@ export default async function FileUpload(req, res) {
 
     // Update profile with the new file URL
     const updateField = fileType === 'resume' ? 'resumeUrl' : 'coverLetterUrl';
-    const updated = await ProfileModel.findOneAndUpdate(
-      { email },
-      { $set: { [updateField]: uploadResult.url } },
-      { new: true }
-    );
+    // const updated = await ProfileModel.findOneAndUpdate(
+    //   { email },
+    //   { $set: { [updateField]: uploadResult.url } },
+    //   { new: true }
+    // );
 
     if (!updated) {
       return res.status(404).json({ 

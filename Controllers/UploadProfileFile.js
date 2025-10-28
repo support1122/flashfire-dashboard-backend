@@ -36,26 +36,34 @@ export const uploadProfileFile = async (req, res) => {
       return res.status(400).json({ message: "Email is required" });
     }
 
-    // Get client information from profile
-    const profile = await ProfileModel.findOne({ email });
-    if (!profile) {
-      return res.status(404).json({ 
-        message: "Profile not found" 
-      });
+    // Determine file type based on file extension or MIME type
+    const fileName = req.file.originalname.toLowerCase();
+    let fileType = 'attachments'; // default for attachments
+    
+    // Check if it's a PDF, DOC, DOCX, TXT (these should go to resume folder)
+    if (fileName.endsWith('.pdf') || 
+        fileName.endsWith('.doc') || 
+        fileName.endsWith('.docx') || 
+        fileName.endsWith('.txt') ||
+        req.file.mimetype === 'application/pdf' ||
+        req.file.mimetype === 'application/msword' ||
+        req.file.mimetype === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
+        req.file.mimetype === 'text/plain') {
+      fileType = 'resume'; // PDFs and documents go to resume folder
     }
 
-    // Create client name from firstName and lastName
-    const clientName = `${profile.firstName}_${profile.lastName}`.replace(/[^a-zA-Z0-9._-]/g, '_');
+    // Use email as client identifier (unique and always available)
+    const clientEmail = email.replace(/[^a-zA-Z0-9._-]/g, '_');
 
-    // Upload file using unified storage service with client-based folder structure
+    // Upload file using unified storage service with email-based folder structure
     const fileBuffer = req.file.buffer;
     
     const uploadResult = await uploadFile(fileBuffer, {
-      folder: '', // Empty folder since base URL already includes /test
+      folder: 'flashfirejobs', // Base folder
       filename: req.file.originalname,
       contentType: req.file.mimetype,
-      clientName: clientName,
-      fileType: 'attachments', // Use 'attachments' for profile files
+      clientName: clientEmail, // Use email as client identifier
+      fileType: fileType, // 'resume' for PDFs/docs, 'attachments' for images
     });
 
     if (!uploadResult.success) {
@@ -66,10 +74,20 @@ export const uploadProfileFile = async (req, res) => {
       });
     }
 
+    console.log('Upload Profile File Response:', {
+      url: uploadResult.url,
+      key: uploadResult.key,
+      storage: uploadResult.storage,
+      email,
+      filename: req.file.originalname,
+    });
+
     res.json({
       success: true,
       secure_url: uploadResult.url,
+      url: uploadResult.url, // Also include url for consistency
       public_id: uploadResult.key || uploadResult.public_id,
+      key: uploadResult.key,
       storage: uploadResult.storage,
       message: "File uploaded successfully",
     });
