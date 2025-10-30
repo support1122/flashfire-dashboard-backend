@@ -130,6 +130,11 @@ export const JobSchema = new mongoose.Schema({
   }
 });
 
+// Performance indexes for fast per-user queries and recent-first sorting
+JobSchema.index({ userID: 1, _id: -1 });
+JobSchema.index({ operatorEmail: 1, _id: -1 });
+JobSchema.index({ currentStatus: 1 });
+
 export const JobModel = mongoose.model('JobDB', JobSchema)
 
 

@@ -30,6 +30,7 @@ import { listOperations, removeManagedUser, removeOperationUser, listAllUsers, l
 import { OperationsLogin, OperationsRegister } from "./Controllers/operations/Login.js";
 import OperationsHandeling from "./Middlewares/OperationsHandeling.js";
 import GetUserDetails from "./Controllers/operations/GetUserDetails.js";
+import GetUserResumes from "./Controllers/operations/GetUserResumes.js";
 import GetAllJobsOPS from "./Controllers/operations/GetAllJobs.js";
 import ForgotPassword from "./Controllers/ForgotPassword.js";
 import ExtensionLogin from "./Controllers/Extensions/login.js";
@@ -124,6 +125,7 @@ app.post("/operations/login", OperationsLogin);
 app.post("/operations/register", OperationsRegister);
 app.post("/operations/verify-session-key", verifySessionKey);
 app.post("/operations/getUserDetails", OperationsHandeling, GetUserDetails); // login does this for normal users
+app.post("/operations/user-resumes", GetUserResumes);
 app.post('/operations/alljobs', GetAllJobsOPS);
 
 app.post("/operations/getalljobs", GetAllJobs);

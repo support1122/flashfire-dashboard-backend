@@ -3,21 +3,28 @@ import { JobModel } from "../../Schema_Models/JobModel.js";
 export default async function GetAllJobsOPS(req,res) {
     let {email}= req.body;
     try {
-        console.log(email)
-        
-        // Get all jobs and use lean() to get plain JavaScript objects with _id
-        let allJobs = await JobModel.find({userID : email})
-        .select('-jobDescription -optimizedResume.resumeData')
-            .lean();
-        
-        // Ensure _id is converted to string for frontend compatibility
-        allJobs = allJobs.map(job => ({
-            ...job,
-            _id: job._id.toString()
-        }));
-        
-        console.log("all jobs ", allJobs)
-        console.log('Operations GetAllJobs - Sample job with _id:', allJobs[0]?._id);
+        email = (email || '').toLowerCase();
+
+        // Optional pagination
+        const page = Math.max(parseInt(req.query?.page || req.body?.page || '1', 10), 1);
+        const limit = Math.max(parseInt(req.query?.limit || req.body?.limit || '0', 10), 0);
+        const skip = limit > 0 ? (page - 1) * limit : 0;
+
+        const query = { userID: email };
+        const projection = '-jobDescription -optimizedResume.resumeData';
+
+        let cursor = JobModel.find(query)
+            .select(projection)
+            .sort({ _id: -1 })
+            .hint({ userID: 1, _id: -1 })
+            .lean({ virtuals: false, getters: false });
+
+        if (limit > 0) {
+            cursor = cursor.skip(skip).limit(limit);
+        }
+
+        const allJobsRaw = await cursor;
+        const allJobs = allJobsRaw.map(job => ({ ...job, _id: job._id.toString() }));
         
         res.status(200).json({
             message : 'all Jobs List',
