@@ -28,6 +28,16 @@ const OperationsSchema = new Schema({
           type: Types.ObjectId,
           ref: 'users', 
      }],
+     sessionKeys: [{
+          sessionKey: { type: String, required: true }, // 8-digit numeric string
+          createdBy: { type: String, default: 'admin' },
+          duration: { type: Number, default: 720 }, // hours (30 days)
+          target: { type: String, enum: ['optimizer', 'dashboard'], default: 'dashboard' },
+          expiresAt: { type: Date, required: true },
+          isUsed: { type: Boolean, default: false },
+          isActive: { type: Boolean, default: true },
+          createdAt: { type: Date, default: Date.now }
+     }],
 }, {
      timestamps: true, 
 });

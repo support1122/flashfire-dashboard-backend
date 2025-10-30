@@ -38,6 +38,7 @@ import ClientLogin from "./Controllers/Extensions/clientLogin.js";
 import { ProfileModel } from "./Schema_Models/ProfileModel.js";
 import { UserModel } from "./Schema_Models/UserModel.js";
 import CheckProfile from "./Controllers/CheckProfile.js";
+import { generateSessionKey, listSessionKeys, revokeSession, revokeUserSessions, listActiveSessions, verifySessionKey } from "./Controllers/operations/SessionKeys.js";
 
 
 
@@ -121,6 +122,7 @@ app.get("/admin/list/operations", listAllOperations);
 // app.post("/operations/getAllJobs", GetAllJobsOPS)
 app.post("/operations/login", OperationsLogin);
 app.post("/operations/register", OperationsRegister);
+app.post("/operations/verify-session-key", verifySessionKey);
 app.post("/operations/getUserDetails", OperationsHandeling, GetUserDetails); // login does this for normal users
 app.post('/operations/alljobs', GetAllJobsOPS);
 
@@ -134,6 +136,13 @@ app.post('/extension/login', ExtensionLogin);
 app.post('/extension/sendData', ReciveData);
 app.post('/extension/saveToDashboard', saveToDashboard);
 app.post('/extension/clientLogin', ClientLogin);
+
+// Session management routes for admin dashboard
+app.post('/api/sessions/generate-session-key', generateSessionKey);
+app.get('/api/sessions/session-keys', listSessionKeys);
+app.get('/api/sessions/active-sessions', listActiveSessions);
+app.post('/api/sessions/revoke-session', revokeSession);
+app.post('/api/sessions/revoke-user-sessions', revokeUserSessions);
 
 // Dashboard Manager routes
 app.get('/dashboard-managers', getDashboardManagers);
