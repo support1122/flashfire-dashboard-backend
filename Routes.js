@@ -23,6 +23,7 @@ import UpdateActionsVerifier from "./Middlewares/UpdateActionsVerifier.js";
 import VerifyJobIDAndChanges from "./Middlewares/VerifyJobIDAndChanges.js";
 import RefreshToken from "./Controllers/RefreshToken.js";
 import { getJobById, getJobDescription, getJobDescriptionByUrl, saveChangedSession, testJobController, getOptimizedResume, getJobsWithOptimizedResumes, getOptimizedResumesForDocuments } from "./Controllers/Optimizer/jobController.js";
+import { migrateResumeDataToR2, getMigrationStatus } from "./Controllers/Optimizer/migrateToR2.js";
 import GetJobDescription, { GetJobDescriptionByUrl } from "./Controllers/GetJobDescription.js";
 import { updateBaseResume } from "./Controllers/Admin/SetBaseResume.js";
 import { assignUserToOperations } from "./Controllers/Admin/AssignUserToOperatios.js";
@@ -30,6 +31,7 @@ import { listOperations, removeManagedUser, removeOperationUser, listAllUsers, l
 import { OperationsLogin, OperationsRegister } from "./Controllers/operations/Login.js";
 import OperationsHandeling from "./Middlewares/OperationsHandeling.js";
 import GetUserDetails from "./Controllers/operations/GetUserDetails.js";
+import GetUserResumes from "./Controllers/operations/GetUserResumes.js";
 import GetAllJobsOPS from "./Controllers/operations/GetAllJobs.js";
 import ForgotPassword from "./Controllers/ForgotPassword.js";
 import ExtensionLogin from "./Controllers/Extensions/login.js";
@@ -109,6 +111,11 @@ app.post("/getJobById", getJobById);
 app.get("/getOptimizedResume/:jobId", getOptimizedResume);
 app.post("/getJobsWithOptimizedResumes",  getJobsWithOptimizedResumes);
 app.post("/getOptimizedResumesForDocuments", getOptimizedResumesForDocuments);
+
+// Migration routes - for Postman use (no authentication required but should be secured in production)
+app.post("/api/migrate-resume-data-to-r2", migrateResumeDataToR2);
+app.get("/api/migration-status", getMigrationStatus);
+
 // admin new dashboard routes
 app.post("/admin/setBaseResume", updateBaseResume);
 app.post("/admin/assignUserToOperations", assignUserToOperations);
@@ -124,6 +131,7 @@ app.post("/operations/login", OperationsLogin);
 app.post("/operations/register", OperationsRegister);
 app.post("/operations/verify-session-key", verifySessionKey);
 app.post("/operations/getUserDetails", OperationsHandeling, GetUserDetails); // login does this for normal users
+app.post("/operations/user-resumes", GetUserResumes);
 app.post('/operations/alljobs', GetAllJobsOPS);
 
 app.post("/operations/getalljobs", GetAllJobs);
