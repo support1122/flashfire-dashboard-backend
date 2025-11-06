@@ -23,6 +23,7 @@ import UpdateActionsVerifier from "./Middlewares/UpdateActionsVerifier.js";
 import VerifyJobIDAndChanges from "./Middlewares/VerifyJobIDAndChanges.js";
 import RefreshToken from "./Controllers/RefreshToken.js";
 import { getJobById, getJobDescription, getJobDescriptionByUrl, saveChangedSession, testJobController, getOptimizedResume, getJobsWithOptimizedResumes, getOptimizedResumesForDocuments } from "./Controllers/Optimizer/jobController.js";
+import { migrateResumeDataToR2, getMigrationStatus } from "./Controllers/Optimizer/migrateToR2.js";
 import GetJobDescription, { GetJobDescriptionByUrl } from "./Controllers/GetJobDescription.js";
 import { updateBaseResume } from "./Controllers/Admin/SetBaseResume.js";
 import { assignUserToOperations } from "./Controllers/Admin/AssignUserToOperatios.js";
@@ -91,7 +92,7 @@ app.post("/clear-cache", clearCache);
 
 
 // Job routes
-app.post("/addjob", LocalTokenValidator, CheckForDuplicateJobs, AddJob);
+app.post("/addjob",  CheckForDuplicateJobs, AddJob);
 app.get("/getalljobs", LocalTokenValidator, GetAllJobs);
 app.post("/getalljobs",  GetAllJobs);
 app.post("/storejobanduserdetails", StoreJobAndUserDetails);
@@ -110,6 +111,11 @@ app.post("/getJobById", getJobById);
 app.get("/getOptimizedResume/:jobId", getOptimizedResume);
 app.post("/getJobsWithOptimizedResumes",  getJobsWithOptimizedResumes);
 app.post("/getOptimizedResumesForDocuments", getOptimizedResumesForDocuments);
+
+// Migration routes - for Postman use (no authentication required but should be secured in production)
+app.post("/api/migrate-resume-data-to-r2", migrateResumeDataToR2);
+app.get("/api/migration-status", getMigrationStatus);
+
 // admin new dashboard routes
 app.post("/admin/setBaseResume", updateBaseResume);
 app.post("/admin/assignUserToOperations", assignUserToOperations);

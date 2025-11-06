@@ -16,7 +16,7 @@ export default async function GetAllJobsOPS(req,res) {
         let cursor = JobModel.find(query)
             .select(projection)
             .sort({ _id: -1 })
-            .hint({ userID: 1, _id: -1 })
+            // .hint({ userID: 1, _id: -1 })
             .lean({ virtuals: false, getters: false });
 
         if (limit > 0) {

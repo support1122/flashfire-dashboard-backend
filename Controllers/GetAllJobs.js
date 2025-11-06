@@ -18,11 +18,11 @@ export default async function GetAllJobs(req, res) {
         const query = { userID: userEmail };
         const projection = '-jobDescription -optimizedResume.resumeData';
 
-        // Use index with hint and sort by _id desc (recent first)
+        // Sort by _id desc (recent first) - removed hint as index may not exist
         let cursor = JobModel.find(query)
             .select(projection)
             .sort({ _id: -1 })
-            .hint({ userID: 1, _id: -1 })
+            // .hint({ userID: 1, _id: -1 })
             .lean({ virtuals: false, getters: false });
 
         if (limit > 0) {

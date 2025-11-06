@@ -82,10 +82,16 @@ export const JobSchema = new mongoose.Schema({
     default: null
   },
   optimizedResume: {
-    resumeData: {
-      type: mongoose.Schema.Types.Mixed,
+    // R2 storage key for resume data (replaces heavy resumeData field)
+    resumeDataKey: {
+      type: String,
       default: null
     },
+    // Legacy field - kept for backward compatibility with old records
+    // resumeData: {
+    //   type: mongoose.Schema.Types.Mixed,
+    //   default: null
+    // },
     hasResume: {
       type: Boolean,
       default: false
@@ -126,6 +132,12 @@ export const JobSchema = new mongoose.Schema({
     createdAt: {
       type: String,
       default: () => new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })
+    },
+    // Flag to indicate if data is stored in R2 or MongoDB
+    storageType: {
+      type: String,
+      enum: ['r2', 'mongodb', 'legacy'],
+      default: 'legacy'
     }
   }
 });
