@@ -9,7 +9,10 @@
     "build": "echo 'No build step required for Node.js'",
     "test": "echo \"Error: no test specified\" && exit 1",
     "lint": "echo 'Add linting script here'",
-    "health": "curl http://localhost:8001/health"
+    "health": "curl http://localhost:8001/health",
+    "migrate:r2": "node scripts/migrate-resume-data-to-r2.js --batch-size=50 --use-url-in-key",
+    "migrate:r2:dry": "node scripts/migrate-resume-data-to-r2.js --dry-run",
+    "migrate:r2:user": "node scripts/migrate-resume-data-to-r2.js --user=someone@example.com"
   },
   "keywords": [
     "flashfire",

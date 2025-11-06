@@ -150,6 +150,7 @@ import cors from "cors";
 import dotenv from "dotenv";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
+import mongoose from "mongoose";
 import connectDB from "./Utils/ConnectDB.js";
 import Routes from "./Routes.js";
 
@@ -301,6 +302,17 @@ if (NODE_ENV === "development") {
   });
 }
 
+// Protect routes until DB is connected to avoid Mongoose buffering timeouts
+app.use((req, res, next) => {
+  if (mongoose.connection.readyState !== 1) {
+    return res.status(503).json({
+      error: "Service Unavailable",
+      message: "Database not connected. Please try again in a moment.",
+    });
+  }
+  next();
+});
+
 // Routes
 app.use("/", Routes);
 
@@ -356,18 +368,21 @@ app.use((err, req, res, next) => {
   });
 });
 
-// Connect to database
-connectDB().then(() => {
-  console.log("✅ Database connected successfully");
-}).catch((error) => {
-  console.error("❌ Database connection failed:", error);
-  process.exit(1);
-});
+// Connect to database BEFORE starting the server
+(async () => {
+  try {
+    await connectDB();
+    console.log("✅ Database connected successfully");
 
-app.listen(PORT, () => {
-  console.log(`🚀 Server is running on port ${PORT} in ${NODE_ENV} mode`);
-  console.log(`📊 Health check available at http://localhost:${PORT}/health`);
-  console.log(`🌐 API available at http://localhost:${PORT}`);
-});
+    app.listen(PORT, () => {
+      console.log(`🚀 Server is running on port ${PORT} in ${NODE_ENV} mode`);
+      console.log(`📊 Health check available at http://localhost:${PORT}/health`);
+      console.log(`🌐 API available at http://localhost:${PORT}`);
+    });
+  } catch (error) {
+    console.error("❌ Database connection failed:", error);
+    process.exit(1);
+  }
+})();
 
 
