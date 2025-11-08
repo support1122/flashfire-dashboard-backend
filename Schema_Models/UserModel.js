@@ -32,6 +32,7 @@ export const userSchema = new mongoose.Schema(
     userType:  { type: String, default: "User" },
     dashboardManager: { type: String, required: false, default: "" },
     removedJobsCount: { type: Number, default: 0 },
+    assignedResumeId: { type: String, default: null },
   },
   { timestamps: true }
 );
