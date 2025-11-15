@@ -333,7 +333,9 @@ export default async function UpdateChanges(req, res) {
     // Use selective projection to reduce data transfer
     const updatedJobs = returnUpdatedJobs !== false 
       ? await JobModel.find({ userID: userEmail })
-          .select('jobID jobTitle companyName currentStatus createdAt updatedAt joblink')
+          .select(
+            'jobID jobTitle companyName jobDescription joblink currentStatus createdAt updatedAt dateAdded appliedDate attachments timeline operatorName operatorEmail userID changesMade'
+          )
           .sort({ createdAt: -1 })
           .lean()
       : [];
