@@ -28,6 +28,7 @@ import GetJobDescription, { GetJobDescriptionByUrl } from "./Controllers/GetJobD
 import { updateBaseResume } from "./Controllers/Admin/SetBaseResume.js";
 import { assignUserToOperations } from "./Controllers/Admin/AssignUserToOperatios.js";
 import { listOperations, removeManagedUser, removeOperationUser, listAllUsers, listAllOperations } from "./Controllers/Admin/ListOperations.js";
+import AssignResumeToUser from "./Controllers/Admin/AssignResumeToUser.js";
 import { OperationsLogin, OperationsRegister } from "./Controllers/operations/Login.js";
 import OperationsHandeling from "./Middlewares/OperationsHandeling.js";
 import GetUserDetails from "./Controllers/operations/GetUserDetails.js";
@@ -124,6 +125,7 @@ app.delete("/admin/operations/:opId/managedUsers/:userId", removeManagedUser);
 app.delete("/admin/operations/:opId", removeOperationUser);
 app.get("/admin/list/users", listAllUsers);
 app.get("/admin/list/operations", listAllOperations);
+app.post("/admin/assign-resume-to-user", AssignResumeToUser);
 
 // operations routes
 // app.post("/operations/getAllJobs", GetAllJobsOPS)
