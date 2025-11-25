@@ -1,8 +1,18 @@
 import { JobModel } from "../Schema_Models/JobModel.js";
 import { UserModel } from "../Schema_Models/UserModel.js";
+import mongoose from "mongoose";
 
 export default async function GetAllJobs(req, res) {
     try {
+        // Check MongoDB connection status before proceeding
+        if (mongoose.connection.readyState !== 1) {
+            console.error("GetAllJobs error: MongoDB not connected. State:", mongoose.connection.readyState);
+            return res.status(503).json({ 
+                message: "Database connection unavailable. Please try again in a moment.",
+                error: "Service temporarily unavailable"
+            });
+        }
+
         const userEmail = (req.body?.email || req.body?.userDetails?.email || req.email || '').toLowerCase();
 
         if (!userEmail) {
@@ -40,6 +50,26 @@ export default async function GetAllJobs(req, res) {
         });
     } catch (error) {
         console.error("GetAllJobs error:", error);
-        res.status(500).json({ message: "Failed to fetch jobs" });
+        
+        // Handle specific MongoDB errors
+        if (error.name === 'MongoNetworkTimeoutError' || error.name === 'MongoServerSelectionError') {
+            return res.status(503).json({ 
+                message: "Database connection timeout. Please try again in a moment.",
+                error: "Service temporarily unavailable"
+            });
+        }
+        
+        if (error.name === 'MongoNetworkError') {
+            return res.status(503).json({ 
+                message: "Database network error. Please try again in a moment.",
+                error: "Service temporarily unavailable"
+            });
+        }
+        
+        // Generic error response
+        res.status(500).json({ 
+            message: "Failed to fetch jobs",
+            error: process.env.NODE_ENV === 'development' ? error.message : undefined
+        });
     }
 }
