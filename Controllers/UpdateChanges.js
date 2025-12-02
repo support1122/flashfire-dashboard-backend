@@ -331,7 +331,6 @@ export default async function UpdateChanges(req, res) {
 
     // Only fetch updated jobs if requested (optional optimization)
     // Use selective projection to reduce data transfer
-    // Sort by updatedAt DESC so most recently moved jobs appear first
     const updatedJobs = returnUpdatedJobs !== false 
       ? await JobModel.find({ userID: userEmail })
           .select(
