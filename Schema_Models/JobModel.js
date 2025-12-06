@@ -148,8 +148,6 @@ JobSchema.index({ operatorEmail: 1, _id: -1 });
 JobSchema.index({ currentStatus: 1 });
 JobSchema.index({ jobID: 1 });
 JobSchema.index({ jobID: 1, userID: 1 });
-// Index for sorting by most recently updated (for job tracker)
-JobSchema.index({ userID: 1, updatedAt: -1 });
 
 export const JobModel = mongoose.model('JobDB', JobSchema)
 
