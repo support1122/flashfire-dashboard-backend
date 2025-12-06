@@ -13,10 +13,10 @@ export default async function GetAllJobsOPS(req,res) {
         const query = { userID: email };
         const projection = '-jobDescription -optimizedResume.resumeData';
 
+        // Sort by updatedAt desc (most recently updated first) so moved jobs stay at top
         let cursor = JobModel.find(query)
             .select(projection)
-            .sort({ _id: -1 })
-            // .hint({ userID: 1, _id: -1 })
+            .sort({ updatedAt: -1, _id: -1 })
             .lean({ virtuals: false, getters: false });
 
         if (limit > 0) {
