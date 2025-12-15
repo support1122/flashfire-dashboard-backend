@@ -4,7 +4,7 @@ import { UserModel } from "../../Schema_Models/UserModel.js";
 export async function listOperations(req, res) {
     try {
         const ops = await Operations.find({}, "name email managedUsers")
-            .populate({ path: "managedUsers", select: "firstName lastName email" });
+            .populate({ path: "managedUsers", select: "name email" });
 
         const payload = ops.map((op) => ({
             id: op._id,
@@ -12,7 +12,7 @@ export async function listOperations(req, res) {
             email: op.email,
             managedUsers: (op.managedUsers || []).map((u) => ({
                 id: u._id,
-                name: `${u.firstName || ""} ${u.lastName || ""}`.trim() || (u.email || ""),
+                name: u.name || u.email || "",
                 email: u.email || "",
             })),
         }));
@@ -74,10 +74,10 @@ export async function removeOperationUser(req, res) {
 
 export async function listAllUsers(req, res) {
     try {
-        const users = await UserModel.find({}, "firstName lastName email");
+        const users = await UserModel.find({}, "name email");
         const payload = users.map((u) => ({
             id: u._id,
-            name: `${u.firstName || ""} ${u.lastName || ""}`.trim() || (u.email || ""),
+            name: u.name || u.email || "",
             email: u.email || "",
         }));
         res.json({ users: payload });
