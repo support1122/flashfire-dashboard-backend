@@ -126,6 +126,7 @@ app.delete("/admin/operations/:opId", removeOperationUser);
 app.get("/admin/list/users", listAllUsers);
 app.get("/admin/list/operations", listAllOperations);
 import UnassignResume from "./Controllers/Admin/UnassignResume.js";
+import { resumeDownloaded } from "./Controllers/resumeController.js";
 
 
 app.post("/admin/assign-resume-to-user", AssignResumeToUser); // keep existing
@@ -167,9 +168,12 @@ app.get('/flash-fill', async (req, res) => {
     res.status(200).json(profiles);
   } catch (error) {
     console.log(error);
+    res.status(500).json({ message: "Internal server error" });
   }
 
 })
+
+app.post("/downloaded", resumeDownloaded);
 
 //AI optimizer routes
 // app.post("/saveChangedSession", saveChangedSession);
