@@ -74,11 +74,12 @@ export async function removeOperationUser(req, res) {
 
 export async function listAllUsers(req, res) {
     try {
-        const users = await UserModel.find({}, "name email");
+        const users = await UserModel.find({}, "name email assignedResumeId");
         const payload = users.map((u) => ({
             id: u._id,
             name: u.name || u.email || "",
             email: u.email || "",
+            assignedResumeId: u.assignedResumeId || null
         }));
         res.json({ users: payload });
     } catch (err) {
