@@ -43,8 +43,14 @@ const validateAttachmentUrls = (urls) => {
   }
 };
 
+const isRemovalStatus = (status) => {
+  if (!status) return false;
+  const s = String(status).toLowerCase().trim();
+  return s.startsWith('deleted') || s.startsWith('removed');
+};
+
 const checkRemovalLimit = async (userEmail, status, role) => {
-  if (status === "deleted" && !isOperationsUser(role)) {
+  if (isRemovalStatus(status) && !isOperationsUser(role)) {
     const user = await UserModel.findOne({ email: userEmail }).select('removedJobsCount').lean();
     if (user && user.removedJobsCount >= REMOVAL_LIMIT) {
       throw {
@@ -53,12 +59,14 @@ const checkRemovalLimit = async (userEmail, status, role) => {
         error: `You have reached the maximum limit of ${REMOVAL_LIMIT} job removals. Please contact support if you need to remove more jobs.`
       };
     }
+    return user;
   }
+  return null;
 };
 
 const buildOperatorFields = (role, body, userDetails) => {
   const fields = {};
-  
+
   if (isOperationsUser(role)) {
     fields.operatorName = body?.operationsName || userDetails?.name || 'operations';
     fields.operatorEmail = body?.operationsEmail || OPERATIONS_EMAIL_DOMAIN;
@@ -66,23 +74,24 @@ const buildOperatorFields = (role, body, userDetails) => {
     fields.operatorName = 'user';
     fields.operatorEmail = USER_EMAIL_DOMAIN;
   }
-  
+
   return fields;
 };
 
 const shouldSetAppliedDate = (currentStatus, newStatus) => {
-  return currentStatus === "saved" && 
-         (newStatus.includes("applied") || newStatus === "applied");
+  return currentStatus === "saved" &&
+    (newStatus.includes("applied") || newStatus === "applied");
 };
 
 const incrementRemovalCount = async (userEmail, status, role) => {
-  if (status === "deleted" && !isOperationsUser(role)) {
-    await UserModel.findOneAndUpdate(
+  if (isRemovalStatus(status) && !isOperationsUser(role)) {
+    return UserModel.findOneAndUpdate(
       { email: userEmail },
       { $inc: { removedJobsCount: 1 } },
       { new: true }
     ).lean();
   }
+  return Promise.resolve(null);
 };
 
 const buildDiscordMessage = (clientName, job, newStatus, oldStatus) => {
@@ -97,10 +106,10 @@ const buildDiscordMessage = (clientName, job, newStatus, oldStatus) => {
 const sendDiscordNotification = async (userDetails, job, newStatus, oldStatus, role, userEmail) => {
   try {
     // Don't send notification for deleted status
-    if (newStatus.toLowerCase().includes('deleted')) return;
+    if (isRemovalStatus(newStatus)) return;
 
     let clientName = userDetails.name;
-    
+
     // For operations users, fetch the actual client name (with timeout)
     if (isOperationsUser(role)) {
       try {
@@ -132,25 +141,12 @@ const handleUpdateStatus = async (req, res, jobID, userEmail, userDetails) => {
   const trimmedStatus = String(baseStatus).trim();
 
   // Parallelize validation and job fetch
-  const [removalCheckResult, currentJob] = await Promise.all([
-    // Only check removal limit if needed (non-blocking check)
-    trimmedStatus === "deleted" && !isOperationsUser(role) 
-      ? UserModel.findOne({ email: userEmail }).select('removedJobsCount').lean()
-      : Promise.resolve(null),
-    // Fetch current job
+  const [_, currentJob] = await Promise.all([
+    checkRemovalLimit(userEmail, trimmedStatus, role),
     JobModel.findOne({ jobID, userID: userEmail })
       .select('currentStatus companyName jobTitle')
       .lean()
   ]);
-
-  // Validate removal limit
-  if (removalCheckResult && removalCheckResult.removedJobsCount >= REMOVAL_LIMIT) {
-    throw {
-      status: 400,
-      message: "Removal limit exceeded",
-      error: `You have reached the maximum limit of ${REMOVAL_LIMIT} job removals. Please contact support if you need to remove more jobs.`
-    };
-  }
 
   if (!currentJob) {
     throw { status: 404, message: "Job not found for this user" };
@@ -181,13 +177,7 @@ const handleUpdateStatus = async (req, res, jobID, userEmail, userDetails) => {
     { new: true }
   ).lean();
 
-  const incrementPromise = trimmedStatus === "deleted" && !isOperationsUser(role)
-    ? UserModel.findOneAndUpdate(
-        { email: userEmail },
-        { $inc: { removedJobsCount: 1 } },
-        { new: true }
-      ).lean()
-    : Promise.resolve(null);
+  const incrementPromise = incrementRemovalCount(userEmail, trimmedStatus, role);
 
   await Promise.all([updatePromise, incrementPromise]);
 
@@ -210,33 +200,22 @@ const handleEdit = async (req, res, jobID, userEmail, userDetails) => {
   validateAttachmentUrls(attachmentUrls);
 
   // Parallelize removal check and job fetch
-  const [removalCheckResult, existingJob] = await Promise.all([
-    status === "deleted" && !isOperationsUser(role) 
-      ? UserModel.findOne({ email: userEmail }).select('removedJobsCount').lean()
-      : Promise.resolve(null),
+  const [_, existingJob] = await Promise.all([
+    checkRemovalLimit(userEmail, status, role),
     JobModel.findOne({ jobID, userID: userEmail })
       .select('currentStatus companyName jobTitle')
       .lean()
   ]);
-
-  // Validate removal limit
-  if (removalCheckResult && removalCheckResult.removedJobsCount >= REMOVAL_LIMIT) {
-    throw {
-      status: 400,
-      message: "Removal limit exceeded",
-      error: `You have reached the maximum limit of ${REMOVAL_LIMIT} job removals.`
-    };
-  }
 
   if (!existingJob) {
     throw { status: 404, message: "Job not found for this user" };
   }
 
   // Determine next status
-  const baseNextStatus = existingJob.currentStatus === "saved" 
-    ? "applied" 
+  const baseNextStatus = existingJob.currentStatus === "saved"
+    ? "applied"
     : existingJob.currentStatus;
-  
+
   const opsName = isOperationsUser(role) ? (userDetails?.name || null) : null;
   const nextStatus = opsName
     ? `${baseNextStatus} by ${opsName}`
@@ -259,21 +238,15 @@ const handleEdit = async (req, res, jobID, userEmail, userDetails) => {
     { jobID, userID: userEmail },
     {
       $set: updateFields,
-      $addToSet: { 
+      $addToSet: {
         attachments: { $each: attachmentUrls },
-        timeline: nextStatus 
+        timeline: nextStatus
       }
     },
     { new: true }
   ).lean();
 
-  const incrementPromise = status === "deleted" && !isOperationsUser(role)
-    ? UserModel.findOneAndUpdate(
-        { email: userEmail },
-        { $inc: { removedJobsCount: 1 } },
-        { new: true }
-      ).lean()
-    : Promise.resolve(null);
+  const incrementPromise = incrementRemovalCount(userEmail, status, role);
 
   const [updatedJob] = await Promise.all([updatePromise, incrementPromise]);
 
@@ -282,7 +255,7 @@ const handleEdit = async (req, res, jobID, userEmail, userDetails) => {
   }
 
   // Send Discord notification asynchronously (non-blocking)
-  const isImportantChange = IMPORTANT_STATUSES.some(s => 
+  const isImportantChange = IMPORTANT_STATUSES.some(s =>
     String(nextStatus).toLowerCase().includes(s)
   );
 
@@ -316,15 +289,15 @@ export default async function UpdateChanges(req, res) {
       case "UpdateStatus":
         await handleUpdateStatus(req, res, jobID, userEmail, userDetails);
         break;
-      
+
       case "edit":
         await handleEdit(req, res, jobID, userEmail, userDetails);
         break;
-      
+
       case "delete":
         await handleDelete(req, res, jobID, userEmail);
         break;
-      
+
       default:
         throw { status: 400, message: "Invalid action specified" };
     }
@@ -332,27 +305,27 @@ export default async function UpdateChanges(req, res) {
     // Only fetch updated jobs if requested (optional optimization)
     // Use selective projection to reduce data transfer
     // Sort by updatedAt DESC so most recently moved jobs appear first
-    const updatedJobs = returnUpdatedJobs !== false 
+    const updatedJobs = returnUpdatedJobs !== false
       ? await JobModel.find({ userID: userEmail })
-          .select('jobID jobTitle companyName currentStatus createdAt updatedAt joblink dateAdded appliedDate')
-          .sort({ updatedAt: -1 })
-          .lean()
+        .select('jobID jobTitle companyName currentStatus createdAt updatedAt joblink dateAdded appliedDate')
+        .sort({ updatedAt: -1 })
+        .lean()
       : [];
 
-    return res.status(200).json({ 
-      message: "Jobs updated successfully", 
-      updatedJobs 
+    return res.status(200).json({
+      message: "Jobs updated successfully",
+      updatedJobs
     });
 
   } catch (error) {
     console.error("UpdateChanges error:", error);
-    
+
     const status = error.status || 500;
     const message = error.message || "Server error";
     const errorDetail = error.error || String(error);
 
-    return res.status(status).json({ 
-      message, 
+    return res.status(status).json({
+      message,
       ...(error.error && { error: errorDetail })
     });
   }

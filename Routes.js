@@ -56,30 +56,68 @@ app.post("/api/clients/register", RegisterVerify, Register);
 app.get("/api/clients/all", getAllClients);
 app.get("/api/dashboard-managers", getDashboardManagers);
 app.post("/refresh-token", RefreshToken);
-app.post('/get-updated-user', async(req, res)=>{
+app.post('/get-updated-user', async (req, res) => {
   try {
-      const existanceOfUser = await UserModel.findOne({email : req.body.email});
-      res.status(200).json( { 
-                    name: existanceOfUser?.name, 
-                    email: existanceOfUser?.email, 
-                    planType: existanceOfUser?.planType, 
-                    userType: existanceOfUser?.userType, 
-                    planLimit: existanceOfUser?.planLimit, 
-                    resumeLink: existanceOfUser?.resumeLink, 
-                    coverLetters: existanceOfUser?.coverLetters, 
-                    optimizedResumes: existanceOfUser?.optimizedResumes ,
-                    transcript : existanceOfUser?.transcript,
-                    dashboardManager: existanceOfUser?.dashboardManager
-                })
+    const existanceOfUser = await UserModel.findOne({ email: req.body.email });
+    res.status(200).json({
+      name: existanceOfUser?.name,
+      email: existanceOfUser?.email,
+      planType: existanceOfUser?.planType,
+      userType: existanceOfUser?.userType,
+      planLimit: existanceOfUser?.planLimit,
+      resumeLink: existanceOfUser?.resumeLink,
+      coverLetters: existanceOfUser?.coverLetters,
+      optimizedResumes: existanceOfUser?.optimizedResumes,
+      transcript: existanceOfUser?.transcript,
+      dashboardManager: existanceOfUser?.dashboardManager
+    })
   } catch (error) {
     console.log(error)
   }
 })
 
+// Return how many jobs a user has removed (UserModel.removedJobsCount)
+app.post('/get-removed-jobs-count', async (req, res) => {
+  try {
+    const { email } = req.body || {};
+
+    if (!email) {
+      return res.status(400).json({
+        success: false,
+        error: "Email is required",
+        message: "Please provide a user email to fetch removed jobs count"
+      });
+    }
+
+    const user = await UserModel.findOne({ email }).select('name email removedJobsCount');
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        error: "User not found",
+        message: "No user found with the provided email"
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      name: user.name,
+      email: user.email,
+      removedJobsCount: user.removedJobsCount ?? 0
+    });
+  } catch (error) {
+    console.log(error);
+    return res.status(500).json({
+      success: false,
+      error: "Server error",
+      message: "Failed to fetch removed jobs count"
+    });
+  }
+});
+
 // Profile routes
 app.post("/check-profile", CheckProfile);
 app.post("/setprofile", ProfileCheck, Add_Update_Profile);
-app.post("/upload-profile-file", upload.single('file'),  uploadProfileFile);
+app.post("/upload-profile-file", upload.single('file'), uploadProfileFile);
 
 // Generic file upload routes (supports both Cloudinary and R2)
 // No authentication required - trusted users only
@@ -95,9 +133,9 @@ app.post("/clear-cache", clearCache);
 // Job routes
 app.post("/addjob", CheckForDuplicateJobs, AddJob);
 app.get("/getalljobs", LocalTokenValidator, GetAllJobs);
-app.post("/getalljobs",  GetAllJobs);
+app.post("/getalljobs", GetAllJobs);
 app.post("/storejobanduserdetails", StoreJobAndUserDetails);
-app.put("/updatechanges",  VerifyJobIDAndChanges, UpdateChanges);
+app.put("/updatechanges", VerifyJobIDAndChanges, UpdateChanges);
 
 // Plan routes
 app.post('/api/plans/select', PlanSelect);
@@ -110,7 +148,7 @@ app.get("/testJobController/:id", testJobController);
 app.post("/saveChangedSession", saveChangedSession);
 app.post("/getJobById", getJobById);
 app.get("/getOptimizedResume/:jobId", getOptimizedResume);
-app.post("/getJobsWithOptimizedResumes",  getJobsWithOptimizedResumes);
+app.post("/getJobsWithOptimizedResumes", getJobsWithOptimizedResumes);
 app.post("/getOptimizedResumesForDocuments", getOptimizedResumesForDocuments);
 
 // Migration routes - for Postman use (no authentication required but should be secured in production)
@@ -125,7 +163,12 @@ app.delete("/admin/operations/:opId/managedUsers/:userId", removeManagedUser);
 app.delete("/admin/operations/:opId", removeOperationUser);
 app.get("/admin/list/users", listAllUsers);
 app.get("/admin/list/operations", listAllOperations);
-app.post("/admin/assign-resume-to-user", AssignResumeToUser);
+import UnassignResume from "./Controllers/Admin/UnassignResume.js";
+import { resumeDownloaded } from "./Controllers/resumeController.js";
+
+
+app.post("/admin/assign-resume-to-user", AssignResumeToUser); // keep existing
+app.post("/admin/unassign-resume", UnassignResume); // add new
 
 // operations routes
 // app.post("/operations/getAllJobs", GetAllJobsOPS)
@@ -158,14 +201,17 @@ app.post('/api/sessions/revoke-user-sessions', revokeUserSessions);
 app.get('/dashboard-managers', getDashboardManagers);
 app.get('/dashboard-managers/:name', getDashboardManagerByName);
 app.get('/flash-fill', async (req, res) => {
-    try {
-      let profiles =await  ProfileModel.find().lean();
-      res.status(200).json(profiles);
-    } catch (error) {
-      console.log(error);
-    }
-    
-  })
+  try {
+    let profiles = await ProfileModel.find().lean();
+    res.status(200).json(profiles);
+  } catch (error) {
+    console.log(error);
+    res.status(500).json({ message: "Internal server error" });
+  }
+
+})
+
+app.post("/downloaded", resumeDownloaded);
 
 //AI optimizer routes
 // app.post("/saveChangedSession", saveChangedSession);

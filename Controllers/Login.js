@@ -39,7 +39,7 @@ export default async function Login(req, res) {
                          dashboardManager: existanceOfUser.dashboardManager
                     },
                     token: jwt.sign({ email }, process.env.JWT_SECRET_KEY || process.env.JWT_SECRET || 'FLASHFIRE', { expiresIn: '7d' }),
-                    userProfile: hasProfile ? profileLookUp : null,
+                    userProfile: hasProfile ? { ...profileLookUp.toObject(), removedJobsCount: existanceOfUser.removedJobsCount || 0 } : null,
                     hasProfile: hasProfile
                });
 

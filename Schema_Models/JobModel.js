@@ -60,11 +60,16 @@ export const JobSchema = new mongoose.Schema({
   attachments: {
     type: [String],
     required: true,
-    default: []
+    default: [],
+    attachedAt : () => new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })
   },
   changesMade: {
     type: mongoose.Schema.Types.Mixed,
     default: {},
+  },
+  downloaded:{
+    type: Boolean,
+    default: false
   },
   operatorName: {
     type: String,
