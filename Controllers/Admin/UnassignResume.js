@@ -14,17 +14,31 @@ export default async function UnassignResume(req, res) {
             return res.status(404).json({ error: "User not found" });
         }
 
-        // Remove the assignment
+        const previousResumeId = user.assignedResumeId || null;
+
         user.assignedResumeId = null;
         await user.save();
 
-        // Note: Ideally we should also call the Resume API to clear the userEmail from the resume document
-        // similar to how AssignResumeToUser does it. However, since the primary view for management 
-        // is the dashboard which relies on UserModel, this is sufficient for the immediate requirement.
+        if (previousResumeId) {
+            const resumeApiUrl = process.env.RESUME_API_URL || "http://localhost:5000";
+            try {
+                const updateRes = await fetch(`${resumeApiUrl}/api/update-resume-user-email`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ resumeId: previousResumeId, userEmail: null })
+                });
+                if (!updateRes.ok) {
+                    console.error("Failed to clear ResumeIndex userEmail during unassign");
+                }
+            } catch (err) {
+                console.error("Error clearing ResumeIndex userEmail during unassign:", err);
+            }
+        }
 
         res.json({
             success: true,
-            message: "Resume unassigned successfully"
+            message: "Resume unassigned successfully",
+            previousResumeId
         });
 
     } catch (error) {
