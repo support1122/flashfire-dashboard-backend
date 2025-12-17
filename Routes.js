@@ -76,6 +76,44 @@ app.post('/get-updated-user', async (req, res) => {
   }
 })
 
+// Return how many jobs a user has removed (UserModel.removedJobsCount)
+app.post('/get-removed-jobs-count', async (req, res) => {
+  try {
+    const { email } = req.body || {};
+
+    if (!email) {
+      return res.status(400).json({
+        success: false,
+        error: "Email is required",
+        message: "Please provide a user email to fetch removed jobs count"
+      });
+    }
+
+    const user = await UserModel.findOne({ email }).select('name email removedJobsCount');
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        error: "User not found",
+        message: "No user found with the provided email"
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      name: user.name,
+      email: user.email,
+      removedJobsCount: user.removedJobsCount ?? 0
+    });
+  } catch (error) {
+    console.log(error);
+    return res.status(500).json({
+      success: false,
+      error: "Server error",
+      message: "Failed to fetch removed jobs count"
+    });
+  }
+});
+
 // Profile routes
 app.post("/check-profile", CheckProfile);
 app.post("/setprofile", ProfileCheck, Add_Update_Profile);
