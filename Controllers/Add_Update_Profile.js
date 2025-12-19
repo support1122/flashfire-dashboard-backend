@@ -806,8 +806,17 @@ export default async function Add_Update_Profile(req, res) {
       dashboardManagerContact,
       token,
       userDetails,
+      secretKey,
     } = req.body;
 
+
+    const SECRET_KEY = "flashfire@2025";
+    if (secretKey && secretKey !== SECRET_KEY) {
+      return res.status(403).json({ 
+        message: "Incorrect secret key. Changes not saved.",
+        error: "INVALID_SECRET_KEY"
+      });
+    }
     // Use the authentication email (username) as the primary key
     const authEmail = userDetails?.email;
     if (!authEmail) {
