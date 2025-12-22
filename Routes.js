@@ -34,6 +34,7 @@ import OperationsHandeling from "./Middlewares/OperationsHandeling.js";
 import GetUserDetails from "./Controllers/operations/GetUserDetails.js";
 import GetUserResumes from "./Controllers/operations/GetUserResumes.js";
 import GetAllJobsOPS from "./Controllers/operations/GetAllJobs.js";
+import { getClientOperations, updateClientOperations, checkLockPeriod } from "./Controllers/operations/ClientOperations.js";
 import ForgotPassword from "./Controllers/ForgotPassword.js";
 import ExtensionLogin from "./Controllers/Extensions/login.js";
 import { ReciveData } from "./Controllers/Extensions/reciveData.js";
@@ -183,6 +184,11 @@ app.post("/operations/getalljobs", GetAllJobs);
 app.post('/operations/jobs', AddJob);
 app.put('/operations/jobs', VerifyJobIDAndChanges, UpdateChanges);
 app.post('/operations/plans/select', PlanSelect);
+
+// Client operations management routes
+app.post('/operations/client-operations', getClientOperations);
+app.put('/operations/client-operations', updateClientOperations);
+app.post('/operations/check-lock-period', checkLockPeriod);
 
 //extensions
 app.post('/extension/login', ExtensionLogin);
