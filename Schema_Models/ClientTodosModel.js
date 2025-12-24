@@ -1,13 +1,12 @@
 import mongoose from "mongoose";
 
-const ClientOperationsSchema = new mongoose.Schema({
+const ClientTodosSchema = new mongoose.Schema({
   clientEmail: {
     type: String,
     required: true,
     unique: true,
     lowercase: true,
-    trim: true,
-    index: true
+    trim: true
   },
   todos: [{
     id: {
@@ -75,8 +74,5 @@ const ClientOperationsSchema = new mongoose.Schema({
   timestamps: false
 });
 
-// Index for faster lookups
-ClientOperationsSchema.index({ clientEmail: 1 });
-
-export const ClientOperationsModel = mongoose.model('ClientOperations', ClientOperationsSchema);
+export const ClientTodosModel = mongoose.models.ClientTodos || mongoose.model('ClientTodos', ClientTodosSchema);
 
