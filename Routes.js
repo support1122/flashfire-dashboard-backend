@@ -38,6 +38,7 @@ import { getClientOperations, updateClientOperations, checkLockPeriod } from "./
 import ForgotPassword from "./Controllers/ForgotPassword.js";
 import ExtensionLogin from "./Controllers/Extensions/login.js";
 import { ReciveData } from "./Controllers/Extensions/reciveData.js";
+import { extractJobData } from "./Controllers/Extensions/extractJobData.js";
 import ClientLogin from "./Controllers/Extensions/clientLogin.js";
 import { ProfileModel } from "./Schema_Models/ProfileModel.js";
 import { UserModel } from "./Schema_Models/UserModel.js";
@@ -193,6 +194,7 @@ app.post('/operations/check-lock-period', checkLockPeriod);
 //extensions
 app.post('/extension/login', ExtensionLogin);
 app.post('/extension/sendData', ReciveData);
+app.post('/extension/extractJobData', extractJobData);
 app.post('/extension/saveToDashboard', saveToDashboard);
 app.post('/extension/clientLogin', ClientLogin);
 
