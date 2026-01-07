@@ -137,7 +137,7 @@ const sendDiscordNotification = async (userDetails, job, newStatus, oldStatus, r
 
 // Action Handlers
 const handleUpdateStatus = async (req, res, jobID, userEmail, userDetails) => {
-  const { status: baseStatus = '', role } = req.body;
+  const { status: baseStatus = '', role, removalReason } = req.body;
   const trimmedStatus = String(baseStatus).trim();
 
   // Parallelize validation and job fetch
@@ -165,6 +165,12 @@ const handleUpdateStatus = async (req, res, jobID, userEmail, userDetails) => {
   // Set appliedDate if transitioning from saved to applied
   if (shouldSetAppliedDate(currentJob.currentStatus, statusToSet)) {
     updateFields.appliedDate = getCurrentISTTime();
+  }
+
+  // Save removal reason if job is being moved to deleted
+  if (isRemovalStatus(trimmedStatus) && removalReason) {
+    updateFields.removalReason = removalReason;
+    updateFields.removalDate = getCurrentISTTime();
   }
 
   // Update job and increment removal count in parallel (if needed)

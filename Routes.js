@@ -9,6 +9,7 @@ import AddJob from "./Controllers/AddJob.js";
 import GetAllJobs from "./Controllers/GetAllJobs.js";
 import StoreJobAndUserDetails, { saveToDashboard } from "./Controllers/StoreJobAndUserDetails.js";
 import UpdateChanges from "./Controllers/UpdateChanges.js";
+import GetRemovalReason from "./Controllers/GetRemovalReason.js";
 import PlanSelect from "./Controllers/PlanSelect.js";
 import { uploadProfileFile, upload } from "./Controllers/UploadProfileFile.js";
 import { uploadSingleFile, uploadBase64File, upload as uploadMiddleware } from "./Controllers/UploadFile.js";
@@ -38,6 +39,7 @@ import { getClientOperations, updateClientOperations, checkLockPeriod } from "./
 import ForgotPassword from "./Controllers/ForgotPassword.js";
 import ExtensionLogin from "./Controllers/Extensions/login.js";
 import { ReciveData } from "./Controllers/Extensions/reciveData.js";
+import { extractJobData } from "./Controllers/Extensions/extractJobData.js";
 import ClientLogin from "./Controllers/Extensions/clientLogin.js";
 import { ProfileModel } from "./Schema_Models/ProfileModel.js";
 import { UserModel } from "./Schema_Models/UserModel.js";
@@ -137,6 +139,7 @@ app.get("/getalljobs", LocalTokenValidator, GetAllJobs);
 app.post("/getalljobs", GetAllJobs);
 app.post("/storejobanduserdetails", StoreJobAndUserDetails);
 app.put("/updatechanges", VerifyJobIDAndChanges, UpdateChanges);
+app.post("/get-removal-reason", GetRemovalReason);
 
 // Plan routes
 app.post('/api/plans/select', PlanSelect);
@@ -193,6 +196,7 @@ app.post('/operations/check-lock-period', checkLockPeriod);
 //extensions
 app.post('/extension/login', ExtensionLogin);
 app.post('/extension/sendData', ReciveData);
+app.post('/extension/extractJobData', extractJobData);
 app.post('/extension/saveToDashboard', saveToDashboard);
 app.post('/extension/clientLogin', ClientLogin);
 

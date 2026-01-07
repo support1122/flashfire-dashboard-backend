@@ -69,3 +69,4 @@ build/
 .env
 env.example
 *.example
+.env
