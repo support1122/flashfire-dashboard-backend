@@ -86,6 +86,16 @@ export const JobSchema = new mongoose.Schema({
     required: false,
     default: null
   },
+  removalReason: {
+    type: String,
+    required: false,
+    default: null
+  },
+  removalDate: {
+    type: String,
+    required: false,
+    default: null
+  },
   optimizedResume: {
     // R2 storage key for resume data (replaces heavy resumeData field)
     resumeDataKey: {

@@ -9,6 +9,7 @@ import AddJob from "./Controllers/AddJob.js";
 import GetAllJobs from "./Controllers/GetAllJobs.js";
 import StoreJobAndUserDetails, { saveToDashboard } from "./Controllers/StoreJobAndUserDetails.js";
 import UpdateChanges from "./Controllers/UpdateChanges.js";
+import GetRemovalReason from "./Controllers/GetRemovalReason.js";
 import PlanSelect from "./Controllers/PlanSelect.js";
 import { uploadProfileFile, upload } from "./Controllers/UploadProfileFile.js";
 import { uploadSingleFile, uploadBase64File, upload as uploadMiddleware } from "./Controllers/UploadFile.js";
@@ -138,6 +139,7 @@ app.get("/getalljobs", LocalTokenValidator, GetAllJobs);
 app.post("/getalljobs", GetAllJobs);
 app.post("/storejobanduserdetails", StoreJobAndUserDetails);
 app.put("/updatechanges", VerifyJobIDAndChanges, UpdateChanges);
+app.post("/get-removal-reason", GetRemovalReason);
 
 // Plan routes
 app.post('/api/plans/select', PlanSelect);
