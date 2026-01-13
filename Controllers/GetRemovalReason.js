@@ -12,7 +12,7 @@ export default async function GetRemovalReason(req, res) {
     }
 
     const job = await JobModel.findOne({ jobID, userID: userEmail })
-      .select('removalReason removalDate jobTitle companyName')
+      .select('removalReason removalDate removedBy jobTitle companyName')
       .lean();
 
     if (!job) {
@@ -33,6 +33,7 @@ export default async function GetRemovalReason(req, res) {
       success: true,
       removalReason: job.removalReason,
       removalDate: job.removalDate,
+      removedBy: job.removedBy,
       jobTitle: job.jobTitle,
       companyName: job.companyName
     });
