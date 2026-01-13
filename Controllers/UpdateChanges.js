@@ -22,8 +22,11 @@ const formatStatusWithAttribution = (baseStatus, actorName) => {
   return `${baseStatus} by ${actorName}`;
 };
 
-const getActorName = (role, userDetails) => {
-  return isOperationsUser(role) ? (userDetails?.name || 'operations') : 'user';
+const getActorName = (role, userDetails, body) => {
+  if (isOperationsUser(role)) {
+    return body?.operationsName || userDetails?.name || 'operations';
+  }
+  return 'user';
 };
 
 const normalizeAttachmentUrls = (body) => {
@@ -152,7 +155,7 @@ const handleUpdateStatus = async (req, res, jobID, userEmail, userDetails) => {
     throw { status: 404, message: "Job not found for this user" };
   }
 
-  const actorName = getActorName(role, userDetails);
+  const actorName = getActorName(role, userDetails, req.body);
   const statusToSet = formatStatusWithAttribution(trimmedStatus, actorName);
 
   // Build update fields
@@ -169,8 +172,12 @@ const handleUpdateStatus = async (req, res, jobID, userEmail, userDetails) => {
 
   // Save removal reason if job is being moved to deleted
   if (isRemovalStatus(trimmedStatus) && removalReason) {
+    const removedByName = isOperationsUser(role) 
+      ? (req.body?.operationsName  || 'operations')
+      : 'user';
     updateFields.removalReason = removalReason;
     updateFields.removalDate = getCurrentISTTime();
+    updateFields.removedBy = removedByName;
   }
 
   // Update job and increment removal count in parallel (if needed)
@@ -222,7 +229,7 @@ const handleEdit = async (req, res, jobID, userEmail, userDetails) => {
     ? "applied"
     : existingJob.currentStatus;
 
-  const opsName = isOperationsUser(role) ? (userDetails?.name || null) : null;
+  const opsName = isOperationsUser(role) ? (req.body?.operationsName || userDetails?.name || null) : null;
   const nextStatus = opsName
     ? `${baseNextStatus} by ${opsName}`
     : (existingJob.currentStatus === "saved" ? "applied by user" : baseNextStatus);
