@@ -224,15 +224,15 @@ const handleEdit = async (req, res, jobID, userEmail, userDetails) => {
     throw { status: 404, message: "Job not found for this user" };
   }
 
-  // Determine next status
-  const baseNextStatus = existingJob.currentStatus === "saved"
-    ? "applied"
-    : existingJob.currentStatus;
-
-  const opsName = isOperationsUser(role) ? (req.body?.operationsName || userDetails?.name || null) : null;
-  const nextStatus = opsName
-    ? `${baseNextStatus} by ${opsName}`
-    : (existingJob.currentStatus === "saved" ? "applied by user" : baseNextStatus);
+  let nextStatus;
+  
+  if (status && status.trim() !== '') {
+    const trimmedStatus = String(status).trim();
+    const actorName = getActorName(role, userDetails, req.body);
+    nextStatus = formatStatusWithAttribution(trimmedStatus, actorName);
+  } else {
+    nextStatus = existingJob.currentStatus;
+  }
 
   // Build update fields
   const updateFields = {
@@ -320,7 +320,7 @@ export default async function UpdateChanges(req, res) {
     // Sort by updatedAt DESC so most recently moved jobs appear first
     const updatedJobs = returnUpdatedJobs !== false
       ? await JobModel.find({ userID: userEmail })
-        .select('jobID jobTitle companyName currentStatus createdAt updatedAt joblink dateAdded appliedDate')
+        .select('jobID jobTitle companyName currentStatus createdAt updatedAt joblink dateAdded appliedDate attachments')
         .sort({ updatedAt: -1 })
         .lean()
       : [];
