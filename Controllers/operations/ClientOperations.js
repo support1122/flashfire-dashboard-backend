@@ -7,7 +7,8 @@ const getCurrentISTTime = () => new Date().toLocaleString('en-IN', { timeZone: '
 const ClientSchema = new mongoose.Schema({
   email: { type: String, required: true, unique: true, lowercase: true, trim: true },
   name: { type: String, required: true, trim: true },
-  status: { type: String, enum: ["active", "inactive", "lock"], required: true, default: "active" }
+  status: { type: String, enum: ["active", "inactive"], required: true, default: "active" },
+  isPaused: { type: Boolean, default: false }
 }, { collection: 'dashboardtrackings', timestamps: false });
 
 const ClientModel = mongoose.models.DashboardTracking || mongoose.model('DashboardTracking', ClientSchema, 'dashboardtrackings');
@@ -294,8 +295,8 @@ export const isClientLocked = async (clientEmail) => {
   try {
     const emailLower = clientEmail.toLowerCase();
     
-    const client = await ClientModel.findOne({ email: emailLower }).select('status').lean();
-    if (client && client.status === 'lock') {
+    const client = await ClientModel.findOne({ email: emailLower }).select('status isPaused').lean();
+    if (client && client.isPaused) {
       return {
         isLocked: true,
         message: "Client is in lock period"
@@ -343,7 +344,7 @@ export const checkLockPeriod = async (req, res) => {
     }
 
     const lockCheck = await isClientLocked(clientEmail);
-    
+
     if (lockCheck.isLocked) {
       return res.status(200).json({
         success: true,
