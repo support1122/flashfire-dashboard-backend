@@ -1,7 +1,16 @@
 import { ClientOperationsModel } from "../../Schema_Models/ClientOperationsModel.js";
 import { ClientTodosModel } from "../../Schema_Models/ClientTodosModel.js";
+import mongoose from "mongoose";
 
 const getCurrentISTTime = () => new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
+
+const ClientSchema = new mongoose.Schema({
+  email: { type: String, required: true, unique: true, lowercase: true, trim: true },
+  name: { type: String, required: true, trim: true },
+  status: { type: String, enum: ["active", "inactive", "lock"], required: true, default: "active" }
+}, { collection: 'dashboardtrackings', timestamps: false });
+
+const ClientModel = mongoose.models.DashboardTracking || mongoose.model('DashboardTracking', ClientSchema, 'dashboardtrackings');
 
 // Helper function to merge TODOs from both models, keeping the most recent version
 const mergeTodos = (todos1, todos2) => {
@@ -281,7 +290,47 @@ export const updateClientOperations = async (req, res) => {
   }
 };
 
-// Check if current date is within any lock period
+export const isClientLocked = async (clientEmail) => {
+  try {
+    const emailLower = clientEmail.toLowerCase();
+    
+    const client = await ClientModel.findOne({ email: emailLower }).select('status').lean();
+    if (client && client.status === 'lock') {
+      return {
+        isLocked: true,
+        message: "Client is in lock period"
+      };
+    }
+    
+    const clientOps = await ClientOperationsModel.findOne({ clientEmail: emailLower });
+    if (!clientOps || !clientOps.lockPeriods || clientOps.lockPeriods.length === 0) {
+      return { isLocked: false, message: null };
+    }
+    
+    const now = new Date();
+    now.setHours(0, 0, 0, 0);
+    
+    for (const period of clientOps.lockPeriods) {
+      const startDate = new Date(period.startDate);
+      const endDate = new Date(period.endDate);
+      startDate.setHours(0, 0, 0, 0);
+      endDate.setHours(23, 59, 59, 999);
+      
+      if (now >= startDate && now <= endDate) {
+        return {
+          isLocked: true,
+          message: period.reason || "Client is in lock period"
+        };
+      }
+    }
+    
+    return { isLocked: false, message: null };
+  } catch (error) {
+    console.error("Error checking if client is locked:", error);
+    return { isLocked: false, message: null };
+  }
+};
+
 export const checkLockPeriod = async (req, res) => {
   try {
     const { clientEmail } = req.body;
@@ -293,40 +342,14 @@ export const checkLockPeriod = async (req, res) => {
       });
     }
 
-    const clientOps = await ClientOperationsModel.findOne({ clientEmail: clientEmail.toLowerCase() });
-
-    if (!clientOps || !clientOps.lockPeriods || clientOps.lockPeriods.length === 0) {
+    const lockCheck = await isClientLocked(clientEmail);
+    
+    if (lockCheck.isLocked) {
       return res.status(200).json({
         success: true,
-        isLocked: false,
-        message: null
+        isLocked: true,
+        message: lockCheck.message || "Client is in lock period"
       });
-    }
-
-    const now = new Date();
-    // Set time to start of day for accurate date comparison
-    now.setHours(0, 0, 0, 0);
-
-    for (const period of clientOps.lockPeriods) {
-      const startDate = new Date(period.startDate);
-      const endDate = new Date(period.endDate);
-      
-      // Set time to start of day for accurate date comparison
-      startDate.setHours(0, 0, 0, 0);
-      endDate.setHours(23, 59, 59, 999); // End of day
-
-      if (now >= startDate && now <= endDate) {
-        return res.status(200).json({
-          success: true,
-          isLocked: true,
-          message: period.reason || "Job card movement is locked during this period. Please try again after the lock period ends.",
-          lockPeriod: {
-            startDate: period.startDate,
-            endDate: period.endDate,
-            reason: period.reason
-          }
-        });
-      }
     }
 
     return res.status(200).json({
