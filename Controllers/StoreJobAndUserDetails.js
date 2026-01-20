@@ -1,5 +1,6 @@
 // controllers/StoreJobAndUserDetails.js
 import { JobModel } from "../Schema_Models/JobModel.js";
+import { isClientLocked } from "./operations/ClientOperations.js";
 
 export default async function StoreJobAndUserDetails(req, res) {
     console.log(req.body);
@@ -182,8 +183,17 @@ export async function saveToDashboard(req, res) {
         for (const email of selectedEmails) {
             const userEmail = email.trim();
             try {
-                // **MODIFIED: Proactively check for duplicates using a more specific query.**
-                // A job is a duplicate only if URL, Title, AND Company all match for the user.
+                const lockCheck = await isClientLocked(userEmail);
+                if (lockCheck.isLocked) {
+                    summary.failedWithError++;
+                    summary.details.push({
+                        user: userEmail,
+                        status: 'failed',
+                        reason: lockCheck.message || "Client is in lock period"
+                    });
+                    continue;
+                }
+                
                 const existingJob = await JobModel.findOne({
                     userID: userEmail,
                     joblink: url,
@@ -192,16 +202,14 @@ export async function saveToDashboard(req, res) {
                 });
 
                 if (existingJob) {
-                    // If a specific duplicate is found, log it and update the summary.
                     console.log(`⏩ Duplicate job found for user ${userEmail} (Same URL, Title, and Company). Skipping.`);
                     summary.skippedAsDuplicate++;
                     summary.details.push({
                         user: userEmail,
                         status: 'skipped_duplicate',
-                        // **MODIFIED: More descriptive reason message.**
                         reason: 'An identical job (same URL, title, and company) already exists for this user.'
                     });
-                    continue; // Skip to the next email
+                    continue;
                 }
 
                 // If no duplicate is found, create and save the job.

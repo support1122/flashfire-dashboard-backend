@@ -1,17 +1,27 @@
 import mongoose from 'mongoose'
 import { JobModel } from '../Schema_Models/JobModel.js';
+import { isClientLocked } from './operations/ClientOperations.js';
 
 export default async function AddJob(req, res) {
-    let {jobDetails, userDetails} = req.body;
+    let {jobDetails, userDetails, role, operationsEmail} = req.body;
     
     try {
-        // Create the job and get the created document
+        const isOperations = role === 'operations' || (operationsEmail && operationsEmail.endsWith('@flashfirehq'));
+        
+        if (isOperations && jobDetails?.userID) {
+            const lockCheck = await isClientLocked(jobDetails.userID);
+            if (lockCheck.isLocked) {
+                return res.status(403).json({
+                    success: false,
+                    message: lockCheck.message || "Client is in lock period"
+                });
+            }
+        }
+        
         const createdJob = await JobModel.create(jobDetails);
         
-        // Get all jobs for the user with _id as string
         let NewJobList = await JobModel.find({userID : jobDetails?.userID}).lean();
         
-        // Convert _id to string for all jobs
         NewJobList = NewJobList.map(job => ({
             ...job,
             _id: job._id.toString()
@@ -22,7 +32,7 @@ export default async function AddJob(req, res) {
         return res.status(200).json({
             message: 'job added succesfully',
             NewJobList,
-            createdJobId: createdJob._id.toString() // Return the created job's _id
+            createdJobId: createdJob._id.toString()
         });
     } catch (error) {
         console.log(error);
