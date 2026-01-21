@@ -45,6 +45,7 @@ import { ProfileModel } from "./Schema_Models/ProfileModel.js";
 import { UserModel } from "./Schema_Models/UserModel.js";
 import CheckProfile from "./Controllers/CheckProfile.js";
 import { generateSessionKey, listSessionKeys, revokeSession, revokeUserSessions, listActiveSessions, verifySessionKey } from "./Controllers/operations/SessionKeys.js";
+import gmailRouter from "./Controllers/GmailRouter.js";
 
 
 
@@ -206,6 +207,8 @@ app.get('/api/sessions/session-keys', listSessionKeys);
 app.get('/api/sessions/active-sessions', listActiveSessions);
 app.post('/api/sessions/revoke-session', revokeSession);
 app.post('/api/sessions/revoke-user-sessions', revokeUserSessions);
+
+app.use("/gmail", gmailRouter);
 
 // Dashboard Manager routes
 app.get('/dashboard-managers', getDashboardManagers);
