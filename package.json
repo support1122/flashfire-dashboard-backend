@@ -42,7 +42,8 @@
     "jsonwebtoken": "^9.0.2",
     "mongoose": "^8.16.1",
     "multer": "^2.0.2",
-    "googleapis": "^148.0.0"
+    "googleapis": "^148.0.0",
+    "axios": "^1.7.9"
   },
   "devDependencies": {
     "nodemon": "^3.1.10"

@@ -46,6 +46,7 @@ import { UserModel } from "./Schema_Models/UserModel.js";
 import CheckProfile from "./Controllers/CheckProfile.js";
 import { generateSessionKey, listSessionKeys, revokeSession, revokeUserSessions, listActiveSessions, verifySessionKey } from "./Controllers/operations/SessionKeys.js";
 import gmailRouter from "./Controllers/GmailRouter.js";
+import { getWhatsAppGroups, linkUserToGroup, getUserGroupMapping, sendCustomNotification } from "./Controllers/whatsapp/WhatsAppController.js";
 
 
 
@@ -209,6 +210,11 @@ app.post('/api/sessions/revoke-session', revokeSession);
 app.post('/api/sessions/revoke-user-sessions', revokeUserSessions);
 
 app.use("/gmail", gmailRouter);
+
+app.get("/api/whatsapp/groups", getWhatsAppGroups);
+app.post("/api/whatsapp/link-user", linkUserToGroup);
+app.post("/api/whatsapp/user-mapping", getUserGroupMapping);
+app.post("/api/whatsapp/send-notification", sendCustomNotification);
 
 // Dashboard Manager routes
 app.get('/dashboard-managers', getDashboardManagers);
