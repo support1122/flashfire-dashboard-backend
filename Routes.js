@@ -119,6 +119,62 @@ app.post('/get-removed-jobs-count', async (req, res) => {
   }
 });
 
+// Get referral stats for a user
+app.post('/get-referral-stats', async (req, res) => {
+  try {
+    const { email } = req.body || {};
+
+    if (!email) {
+      return res.status(400).json({
+        success: false,
+        error: "Email is required",
+        message: "Please provide a user email to fetch referral stats"
+      });
+    }
+
+    // Use case-insensitive email search
+    const emailLower = email.toLowerCase().trim();
+    const user = await UserModel.findOne({ 
+      email: { $regex: new RegExp(`^${emailLower}$`, 'i') }
+    }).select('email referralStatus');
+    
+    if (!user) {
+      console.log(`User not found for email: ${emailLower}`);
+      return res.status(404).json({
+        success: false,
+        error: "User not found",
+        message: "No user found with the provided email"
+      });
+    }
+
+    console.log(`Found user: ${user.email}, referralStatus: ${user.referralStatus}`);
+
+    // Calculate referral applications based on referral status
+    let referralApplicationsAdded = 0;
+    if (user.referralStatus === 'Professional') {
+      referralApplicationsAdded = 200;
+    } else if (user.referralStatus === 'Executive') {
+      referralApplicationsAdded = 300;
+    }
+
+    console.log(`Calculated referralApplicationsAdded: ${referralApplicationsAdded} for status: ${user.referralStatus}`);
+
+    return res.status(200).json({
+      success: true,
+      email: user.email,
+      referralStatus: user.referralStatus || null,
+      referralApplicationsAdded
+    });
+  } catch (error) {
+    console.error('Error fetching referral stats:', error);
+    return res.status(500).json({
+      success: false,
+      error: "Server error",
+      message: "Failed to fetch referral stats"
+    });
+  }
+});
+
 // Profile routes
 app.post("/check-profile", CheckProfile);
 app.post("/setprofile", ProfileCheck, Add_Update_Profile);
