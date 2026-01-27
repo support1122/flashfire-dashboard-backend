@@ -33,6 +33,15 @@ export const userSchema = new mongoose.Schema(
     dashboardManager: { type: String, required: false, default: "" },
     removedJobsCount: { type: Number, default: 0 },
     assignedResumeId: { type: String, default: null },
+    referralStatus: {
+      type: String,
+      enum: ["Professional", "Executive", null],
+      default: null
+    },
+    notes: {
+      type: String,
+      default: ""
+    },
   },
   { timestamps: true }
 );
