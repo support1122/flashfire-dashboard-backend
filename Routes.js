@@ -13,6 +13,7 @@ import GetRemovalReason from "./Controllers/GetRemovalReason.js";
 import PlanSelect from "./Controllers/PlanSelect.js";
 import { uploadProfileFile, upload } from "./Controllers/UploadProfileFile.js";
 import { uploadSingleFile, uploadBase64File, upload as uploadMiddleware } from "./Controllers/UploadFile.js";
+import { uploadClientDocument, getClientDocuments, updateClientOptimizationStatus, upload as internalUpload } from "./Controllers/InternalClientUpload.js";
 import { serveCachedImage, getCacheStats, clearCache } from "./Controllers/ImageProxy.js";
 import LocalTokenValidator from "./Middlewares/LocalTokenValidator.js";
 import RegisterVerify from "./Middlewares/RegisterVerify.js";
@@ -128,6 +129,12 @@ app.post("/upload-profile-file", upload.single('file'), uploadProfileFile);
 // No authentication required - trusted users only
 app.post("/upload-file", uploadMiddleware.single('file'), uploadSingleFile);
 app.post("/upload-base64", uploadBase64File);
+
+// Internal client upload routes (for clients-tracking service)
+// These endpoints upload files and sync with ProfileModel/UserModel
+app.post("/api/internal/upload-client-document", internalUpload.single('file'), uploadClientDocument);
+app.get("/api/internal/client-documents/:email", getClientDocuments);
+app.put("/api/internal/client-optimization/:email", updateClientOptimizationStatus);
 
 // Image caching and proxy routes
 app.get("/image-proxy", serveCachedImage);
