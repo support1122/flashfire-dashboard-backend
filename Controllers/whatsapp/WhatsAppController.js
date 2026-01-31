@@ -142,7 +142,7 @@ export const sendJobCardNotification = async (userEmail, jobCount = 1) => {
     const userName = profile ? `${profile.firstName || ''} ${profile.lastName || ''}`.trim() : 'User';
     const displayName = userName || 'User';
 
-    const message = `We have added the job cards, Could you please check them once and let me know.\n\nCheck your Job Tracker to review the details.\n\n🔗 Access your dashboard: https://portal.flashfirejobs.com/?tab=jobtracker\n\n✨ We're here to support your career journey!\n\nThank you!`;
+    const message = `We have added the job cards. Could you please check them once.\n\nCheck your Job Tracker to review the details.\n\n🔗 Access your dashboard: https://portal.flashfirejobs.com/?tab=jobtracker\n\n✨ We're here to support your career journey!\n\nThank you!`;
 
     const response = await whapiClient.post('/messages/text', {
       to: mapping.groupId,
