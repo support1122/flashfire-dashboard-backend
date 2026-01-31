@@ -240,9 +240,19 @@ export const profileSchema = new mongoose.Schema({
     type: String,
     required: true,
   },
+  bachelorsStartDate: {
+    type: String,
+    required: false,
+    default: "",
+  },
   bachelorsGradMonthYear: {
     type: String,
     required: true,
+  },
+  bachelorsEndDate: {
+    type: String,
+    required: false,
+    default: "",
   },
   bachelorsGPA: {
     type: String,
@@ -254,7 +264,17 @@ export const profileSchema = new mongoose.Schema({
     required: false,
     default: "",
   },
+  mastersStartDate: {
+    type: String,
+    required: false,
+    default: "",
+  },
   mastersGradMonthYear: {
+    type: String,
+    required: false,
+    default: "",
+  },
+  mastersEndDate: {
     type: String,
     required: false,
     default: "",
