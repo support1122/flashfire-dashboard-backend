@@ -39,7 +39,6 @@ export async function OperationsLogin(req, res) {
      }
 }
 
-
 export async function OperationsRegister(req, res) {
      try {
           const { email, password } = req.body;
@@ -57,11 +56,16 @@ export async function OperationsRegister(req, res) {
           // hash password
           const hashed = await bcrypt.hash(password, 10);
 
+          const normalizedOtpEmail = req.body.otpEmail
+               ? String(req.body.otpEmail).trim().toLowerCase()
+               : null;
+
           const opUser = new Operations({
-               name: email.split("@")[0], // simple default name
+               name: email.split("@")[0],
                email,
                password: hashed,
-               role: 'operations', // Hard-code the role to 'operations'
+               role: "operations",
+               otpEmail: normalizedOtpEmail || undefined,
           });
 
           await opUser.save();

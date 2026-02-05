@@ -3,13 +3,14 @@ import { UserModel } from "../../Schema_Models/UserModel.js";
 
 export async function listOperations(req, res) {
     try {
-        const ops = await Operations.find({}, "name email managedUsers")
+        const ops = await Operations.find({}, "name email otpEmail managedUsers")
             .populate({ path: "managedUsers", select: "name email" });
 
         const payload = ops.map((op) => ({
             id: op._id,
             name: op.name,
             email: op.email,
+            otpEmail: op.otpEmail || null,
             managedUsers: (op.managedUsers || []).map((u) => ({
                 id: u._id,
                 name: u.name || u.email || "",
@@ -90,11 +91,56 @@ export async function listAllUsers(req, res) {
 
 export async function listAllOperations(req, res) {
     try {
-        const ops = await Operations.find({}, "name email");
-        const payload = ops.map((o) => ({ id: o._id, name: o.name, email: o.email }));
+        const ops = await Operations.find({}, "name email otpEmail");
+        const payload = ops.map((o) => ({
+            id: o._id,
+            name: o.name,
+            email: o.email,
+            otpEmail: o.otpEmail || null,
+        }));
         res.json({ operations: payload });
     } catch (err) {
         console.error("listAllOperations error:", err);
+        res.status(500).json({ error: "Server error" });
+    }
+}
+
+export async function updateOperation(req, res) {
+    try {
+        const { opId } = req.params;
+        const { name, otpEmail } = req.body;
+
+        if (!opId) {
+            return res.status(400).json({ error: "Operation ID is required" });
+        }
+
+        const op = await Operations.findById(opId);
+        if (!op) {
+            return res.status(404).json({ error: "Operation user not found" });
+        }
+
+        if (name !== undefined) {
+            op.name = String(name).trim();
+        }
+        if (otpEmail !== undefined) {
+            op.otpEmail = otpEmail
+                ? String(otpEmail).trim().toLowerCase()
+                : null;
+        }
+
+        await op.save();
+
+        return res.json({
+            message: "Operation updated successfully",
+            operation: {
+                id: op._id,
+                name: op.name,
+                email: op.email,
+                otpEmail: op.otpEmail || null,
+            },
+        });
+    } catch (err) {
+        console.error("updateOperation error:", err);
         res.status(500).json({ error: "Server error" });
     }
 }
