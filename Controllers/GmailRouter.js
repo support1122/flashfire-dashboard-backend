@@ -164,16 +164,33 @@ router.post("/send", upload.single("attachment"), handleMulterError, async (req,
       return res.status(404).json({ error: "No connected Gmail accounts for this user" });
     }
 
-    const toHeader = rawRecipients.join(", ");
     const results = [];
 
+    // Send a separate email to each recipient so that
+    // every recruiter only sees their own address in the "To" field.
     for (const u of users) {
-      try {
-        await sendGmail(u, { to: toHeader, subject, text, attachment });
+      const perUserErrors = [];
+
+      for (const recipient of rawRecipients) {
+        try {
+          await sendGmail(u, { to: recipient, subject, text, attachment });
+        } catch (e) {
+          const message = e?.message || "Unknown error";
+          console.error(`Error sending from ${u.email} to ${recipient}:`, message);
+          perUserErrors.push({ recipient, error: message });
+        }
+      }
+
+      if (perUserErrors.length === 0) {
         results.push({ email: u.email, status: "sent" });
-      } catch (e) {
-        console.error(`Error sending from ${u.email}:`, e.message);
-        results.push({ email: u.email, status: "error", error: e.message });
+      } else {
+        results.push({
+          email: u.email,
+          status: "error",
+          error: `Failed for ${perUserErrors.length} recipient(s): ${perUserErrors
+            .map((e) => `${e.recipient} (${e.error})`)
+            .join("; ")}`
+        });
       }
     }
 
