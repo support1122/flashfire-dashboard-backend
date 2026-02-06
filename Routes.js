@@ -29,9 +29,10 @@ import { migrateResumeDataToR2, getMigrationStatus } from "./Controllers/Optimiz
 import GetJobDescription, { GetJobDescriptionByUrl } from "./Controllers/GetJobDescription.js";
 import { updateBaseResume } from "./Controllers/Admin/SetBaseResume.js";
 import { assignUserToOperations } from "./Controllers/Admin/AssignUserToOperatios.js";
-import { listOperations, removeManagedUser, removeOperationUser, listAllUsers, listAllOperations } from "./Controllers/Admin/ListOperations.js";
+import { listOperations, removeManagedUser, removeOperationUser, listAllUsers, listAllOperations, updateOperation } from "./Controllers/Admin/ListOperations.js";
 import AssignResumeToUser from "./Controllers/Admin/AssignResumeToUser.js";
 import { OperationsLogin, OperationsRegister } from "./Controllers/operations/Login.js";
+import { requestDashboardOtp, verifyDashboardOtp, validateOtpTrust } from "./Controllers/operations/OtpController.js";
 import OperationsHandeling from "./Middlewares/OperationsHandeling.js";
 import GetUserDetails from "./Controllers/operations/GetUserDetails.js";
 import GetUserResumes from "./Controllers/operations/GetUserResumes.js";
@@ -137,7 +138,7 @@ app.post('/get-referral-stats', async (req, res) => {
     const emailLower = email.toLowerCase().trim();
     const user = await UserModel.findOne({ 
       email: { $regex: new RegExp(`^${emailLower}$`, 'i') }
-    }).select('email referralStatus');
+    }).select('email referralStatus referrals');
     
     if (!user) {
       console.log(`User not found for email: ${emailLower}`);
@@ -150,12 +151,24 @@ app.post('/get-referral-stats', async (req, res) => {
 
     console.log(`Found user: ${user.email}, referralStatus: ${user.referralStatus}`);
 
-    // Calculate referral applications based on referral status
+    // Calculate referral applications based on referrals or legacy referralStatus
     let referralApplicationsAdded = 0;
-    if (user.referralStatus === 'Professional') {
-      referralApplicationsAdded = 200;
-    } else if (user.referralStatus === 'Executive') {
-      referralApplicationsAdded = 300;
+    const referralsArray = Array.isArray(user.referrals) ? user.referrals : [];
+
+    if (referralsArray.length > 0) {
+      referralsArray.forEach((ref) => {
+        if (ref?.plan === 'Professional') {
+          referralApplicationsAdded += 200;
+        } else if (ref?.plan === 'Executive') {
+          referralApplicationsAdded += 300;
+        }
+      });
+    } else {
+      if (user.referralStatus === 'Professional') {
+        referralApplicationsAdded = 200;
+      } else if (user.referralStatus === 'Executive') {
+        referralApplicationsAdded = 300;
+      }
     }
 
     console.log(`Calculated referralApplicationsAdded: ${referralApplicationsAdded} for status: ${user.referralStatus}`);
@@ -164,6 +177,7 @@ app.post('/get-referral-stats', async (req, res) => {
       success: true,
       email: user.email,
       referralStatus: user.referralStatus || null,
+      referrals: referralsArray,
       referralApplicationsAdded
     });
   } catch (error) {
@@ -228,6 +242,7 @@ app.get("/api/migration-status", getMigrationStatus);
 app.post("/admin/setBaseResume", updateBaseResume);
 app.post("/admin/assignUserToOperations", assignUserToOperations);
 app.get("/admin/operations", listOperations);
+app.patch("/admin/operations/:opId", updateOperation);
 app.delete("/admin/operations/:opId/managedUsers/:userId", removeManagedUser);
 app.delete("/admin/operations/:opId", removeOperationUser);
 app.get("/admin/list/users", listAllUsers);
@@ -243,6 +258,9 @@ app.post("/admin/unassign-resume", UnassignResume); // add new
 // app.post("/operations/getAllJobs", GetAllJobsOPS)
 app.post("/operations/login", OperationsLogin);
 app.post("/operations/register", OperationsRegister);
+app.post("/operations/request-otp", requestDashboardOtp);
+app.post("/operations/verify-otp", verifyDashboardOtp);
+app.post("/operations/validate-otp-trust", validateOtpTrust);
 app.post("/operations/verify-session-key", verifySessionKey);
 app.post("/operations/getUserDetails", OperationsHandeling, GetUserDetails); // login does this for normal users
 app.post("/operations/user-resumes", GetUserResumes);

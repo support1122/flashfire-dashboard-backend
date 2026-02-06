@@ -24,6 +24,12 @@ const OperationsSchema = new Schema({
           required: [true, 'Role is required'],
           enum: ['operations', 'admin'],
      },
+     otpEmail: {
+          type: String,
+          trim: true,
+          lowercase: true,
+          default: null,
+     },
      managedUsers: [{
           type: Types.ObjectId,
           ref: 'users', 

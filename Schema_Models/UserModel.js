@@ -38,6 +38,18 @@ export const userSchema = new mongoose.Schema(
       enum: ["Professional", "Executive", null],
       default: null
     },
+    referrals: [
+      {
+        name: { type: String, required: true },
+        plan: {
+          type: String,
+          enum: ["Professional", "Executive"],
+          required: true,
+        },
+        notes: { type: String, default: "" },
+        createdAt: { type: Date, default: Date.now },
+      },
+    ],
     notes: {
       type: String,
       default: ""

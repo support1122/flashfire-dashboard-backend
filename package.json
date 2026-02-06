@@ -31,6 +31,8 @@
   "dependencies": {
     "@aws-sdk/client-s3": "^3.911.0",
     "@aws-sdk/s3-request-presigner": "^3.911.0",
+    "@sendgrid/mail": "^8.1.6",
+    "axios": "^1.7.9",
     "bcrypt": "^6.0.0",
     "cloudinary": "^2.7.0",
     "cors": "^2.8.5",
@@ -38,12 +40,11 @@
     "express": "^4.18.2",
     "express-rate-limit": "^7.5.1",
     "google-auth-library": "^10.1.0",
+    "googleapis": "^148.0.0",
     "helmet": "^7.2.0",
     "jsonwebtoken": "^9.0.2",
     "mongoose": "^8.16.1",
-    "multer": "^2.0.2",
-    "googleapis": "^148.0.0",
-    "axios": "^1.7.9"
+    "multer": "^2.0.2"
   },
   "devDependencies": {
     "nodemon": "^3.1.10"
