@@ -48,6 +48,7 @@ import { UserModel } from "./Schema_Models/UserModel.js";
 import CheckProfile from "./Controllers/CheckProfile.js";
 import { generateSessionKey, listSessionKeys, revokeSession, revokeUserSessions, listActiveSessions, verifySessionKey } from "./Controllers/operations/SessionKeys.js";
 import gmailRouter from "./Controllers/GmailRouter.js";
+import { listGroups, createGroup, getGroup, updateGroup } from "./Controllers/RecruiterAutomation.js";
 import { getWhatsAppGroups, linkUserToGroup, getUserGroupMapping, sendCustomNotification, checkNotificationCooldown } from "./Controllers/whatsapp/WhatsAppController.js";
 
 
@@ -289,6 +290,11 @@ app.get('/api/sessions/session-keys', listSessionKeys);
 app.get('/api/sessions/active-sessions', listActiveSessions);
 app.post('/api/sessions/revoke-session', revokeSession);
 app.post('/api/sessions/revoke-user-sessions', revokeUserSessions);
+
+app.get("/admin/recruiter-groups", listGroups);
+app.post("/admin/recruiter-groups", createGroup);
+app.get("/admin/recruiter-groups/:id", getGroup);
+app.put("/admin/recruiter-groups/:id", updateGroup);
 
 app.use("/gmail", gmailRouter);
 

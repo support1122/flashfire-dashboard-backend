@@ -2,8 +2,28 @@ import express from "express";
 import multer from "multer";
 import { google } from "googleapis";
 import { GmailUser } from "../Schema_Models/GmailUser.js";
+import { RecruiterEmailGroup } from "../Schema_Models/RecruiterEmailGroup.js";
+import { RecruiterEmailTemplate } from "../Schema_Models/RecruiterEmailTemplate.js";
+import { RecruiterEmailAutomation } from "../Schema_Models/RecruiterEmailAutomation.js";
+import { GmailSendLog } from "../Schema_Models/GmailSendLog.js";
 
 const router = express.Router();
+
+async function createSendLog({ ownerEmail, fromEmail, toEmail, subject, status, errorMessage = null, source = "manual" }) {
+  try {
+    await GmailSendLog.create({
+      ownerEmail: ownerEmail.toLowerCase(),
+      fromEmail,
+      toEmail,
+      subject,
+      status,
+      errorMessage,
+      source
+    });
+  } catch (e) {
+    console.error("Failed to write GmailSendLog:", e?.message);
+  }
+}
 
 const oauth2Client = new google.auth.OAuth2(
   process.env.GOOGLE_CLIENT_ID,
@@ -166,18 +186,33 @@ router.post("/send", upload.single("attachment"), handleMulterError, async (req,
 
     const results = [];
 
-    // Send a separate email to each recipient so that
-    // every recruiter only sees their own address in the "To" field.
     for (const u of users) {
       const perUserErrors = [];
 
       for (const recipient of rawRecipients) {
         try {
           await sendGmail(u, { to: recipient, subject, text, attachment });
+          await createSendLog({
+            ownerEmail,
+            fromEmail: u.email,
+            toEmail: recipient,
+            subject,
+            status: "success",
+            source: "manual"
+          });
         } catch (e) {
           const message = e?.message || "Unknown error";
           console.error(`Error sending from ${u.email} to ${recipient}:`, message);
           perUserErrors.push({ recipient, error: message });
+          await createSendLog({
+            ownerEmail,
+            fromEmail: u.email,
+            toEmail: recipient,
+            subject,
+            status: "failed",
+            errorMessage: message,
+            source: "manual"
+          });
         }
       }
 
@@ -203,6 +238,220 @@ router.post("/send", upload.single("attachment"), handleMulterError, async (req,
   } catch (error) {
     console.error("Send email error:", error);
     return res.status(500).json({ error: error.message || "Failed to send emails" });
+  }
+});
+
+router.post("/logs", async (req, res) => {
+  try {
+    const { ownerEmail } = req.body || {};
+    if (!ownerEmail || !String(ownerEmail).trim()) {
+      return res.status(400).json({ error: "ownerEmail is required" });
+    }
+    const page = Math.max(1, parseInt(req.body.page, 10) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(req.body.limit, 10) || 20));
+    const skip = (page - 1) * limit;
+    const total = await GmailSendLog.countDocuments({ ownerEmail: ownerEmail.toLowerCase().trim() });
+    const logs = await GmailSendLog.find({ ownerEmail: ownerEmail.toLowerCase().trim() })
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit)
+      .lean();
+    const totalPages = Math.ceil(total / limit) || 1;
+    res.json({
+      logs: logs.map((l) => ({
+        id: String(l._id),
+        fromEmail: l.fromEmail,
+        toEmail: l.toEmail,
+        subject: l.subject,
+        status: l.status,
+        errorMessage: l.errorMessage || null,
+        source: l.source,
+        sentAt: l.createdAt
+      })),
+      total,
+      page,
+      limit,
+      totalPages
+    });
+  } catch (error) {
+    console.error("Gmail logs error:", error);
+    res.status(500).json({ error: "Failed to load logs" });
+  }
+});
+
+router.get("/templates", async (req, res) => {
+  try {
+    const templates = await RecruiterEmailTemplate.find({})
+      .sort({ createdAt: -1 })
+      .select("name subject createdAt updatedAt")
+      .lean();
+    const result = templates.map((t) => ({
+      id: String(t._id),
+      name: t.name,
+      subject: t.subject,
+      createdAt: t.createdAt,
+      updatedAt: t.updatedAt
+    }));
+    res.json({ templates: result });
+  } catch (error) {
+    res.status(500).json({ error: "Failed to load templates" });
+  }
+});
+
+router.get("/templates/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const template = await RecruiterEmailTemplate.findById(id).lean();
+    if (!template) {
+      return res.status(404).json({ error: "Template not found" });
+    }
+    res.json({
+      id: String(template._id),
+      name: template.name,
+      subject: template.subject,
+      text: template.text,
+      attachmentFilename: template.attachment?.filename || null
+    });
+  } catch (error) {
+    res.status(500).json({ error: "Failed to load template" });
+  }
+});
+
+router.post("/templates", upload.single("attachment"), handleMulterError, async (req, res) => {
+  try {
+    const { name, subject, text, ownerEmail } = req.body || {};
+    if (!name || !name.trim() || !subject || !subject.trim() || !text || !text.trim()) {
+      return res.status(400).json({ error: "Name, subject and text are required" });
+    }
+    let attachment = null;
+    if (req.file) {
+      attachment = {
+        filename: req.file.originalname,
+        mimetype: req.file.mimetype,
+        content: req.file.buffer
+      };
+    }
+    const template = await RecruiterEmailTemplate.create({
+      name: name.trim(),
+      subject: subject.trim(),
+      text: text.trim(),
+      attachment,
+      createdBy: ownerEmail || ""
+    });
+    res.status(201).json({
+      id: String(template._id),
+      name: template.name,
+      subject: template.subject
+    });
+  } catch (error) {
+    res.status(500).json({ error: "Failed to create template" });
+  }
+});
+
+router.put("/templates/:id", upload.single("attachment"), handleMulterError, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name, subject, text } = req.body || {};
+    const template = await RecruiterEmailTemplate.findById(id);
+    if (!template) {
+      return res.status(404).json({ error: "Template not found" });
+    }
+    if (name && name.trim()) template.name = name.trim();
+    if (subject && subject.trim()) template.subject = subject.trim();
+    if (text !== undefined) template.text = String(text).trim();
+    if (req.file) {
+      template.attachment = {
+        filename: req.file.originalname,
+        mimetype: req.file.mimetype,
+        content: req.file.buffer
+      };
+    }
+    await template.save();
+    res.json({
+      id: String(template._id),
+      name: template.name,
+      subject: template.subject
+    });
+  } catch (error) {
+    res.status(500).json({ error: "Failed to update template" });
+  }
+});
+
+router.post("/automation/config/get", async (req, res) => {
+  try {
+    const { ownerEmail } = req.body || {};
+    if (!ownerEmail || !ownerEmail.trim()) {
+      return res.status(400).json({ error: "ownerEmail is required" });
+    }
+    const doc = await RecruiterEmailAutomation.findOne({
+      ownerEmail: ownerEmail.toLowerCase().trim()
+    })
+      .populate("group")
+      .populate("template");
+    if (!doc) {
+      return res.json({ config: null });
+    }
+    res.json({
+      config: {
+        id: String(doc._id),
+        ownerEmail: doc.ownerEmail,
+        groupId: doc.group ? String(doc.group._id) : null,
+        groupName: doc.group ? doc.group.name : null,
+        templateId: doc.template ? String(doc.template._id) : null,
+        templateName: doc.template ? doc.template.name : null,
+        dailyLimit: doc.dailyLimit,
+        enabled: doc.enabled
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ error: "Failed to load automation config" });
+  }
+});
+
+router.post("/automation/config", async (req, res) => {
+  try {
+    const { ownerEmail, groupId, templateId, dailyLimit, enabled } = req.body || {};
+    if (!ownerEmail || !ownerEmail.trim()) {
+      return res.status(400).json({ error: "ownerEmail is required" });
+    }
+    if (!groupId || !templateId) {
+      return res.status(400).json({ error: "groupId and templateId are required" });
+    }
+    const limitNumber = Number(dailyLimit || 0);
+    if (!Number.isFinite(limitNumber) || limitNumber <= 0) {
+      return res.status(400).json({ error: "dailyLimit must be greater than zero" });
+    }
+    const groupExists = await RecruiterEmailGroup.exists({ _id: groupId });
+    if (!groupExists) {
+      return res.status(400).json({ error: "Invalid groupId" });
+    }
+    const templateExists = await RecruiterEmailTemplate.exists({ _id: templateId });
+    if (!templateExists) {
+      return res.status(400).json({ error: "Invalid templateId" });
+    }
+    const doc = await RecruiterEmailAutomation.findOneAndUpdate(
+      { ownerEmail: ownerEmail.toLowerCase().trim() },
+      {
+        ownerEmail: ownerEmail.toLowerCase().trim(),
+        group: groupId,
+        template: templateId,
+        dailyLimit: limitNumber,
+        enabled: !!enabled
+      },
+      { new: true, upsert: true, setDefaultsOnInsert: true }
+    );
+    res.json({
+      config: {
+        id: String(doc._id),
+        ownerEmail: doc.ownerEmail,
+        groupId: String(doc.group),
+        templateId: String(doc.template),
+        dailyLimit: doc.dailyLimit,
+        enabled: doc.enabled
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ error: "Failed to save automation config" });
   }
 });
 
@@ -285,6 +534,112 @@ async function sendGmail(user, { to, subject, text, attachment = null }) {
     userId: "me",
     requestBody: { raw }
   });
+}
+
+export async function runRecruiterAutomationDailyJob() {
+  const automations = await RecruiterEmailAutomation.find({
+    enabled: true,
+    dailyLimit: { $gt: 0 }
+  })
+    .populate("group")
+    .populate("template");
+
+  for (const automation of automations) {
+    if (!automation.group || !automation.template) {
+      continue;
+    }
+    const allEmails = Array.isArray(automation.group.emails) ? automation.group.emails : [];
+    if (!allEmails.length) {
+      continue;
+    }
+    const normalizedAll = Array.from(
+      new Set(
+        allEmails
+          .map((v) => v && v.toString().trim().toLowerCase())
+          .filter((v) => v)
+      )
+    );
+    if (!normalizedAll.length) {
+      continue;
+    }
+    const alreadySentSet = new Set(
+      (automation.sentTo || [])
+        .map((v) => v && v.toString().trim().toLowerCase())
+        .filter((v) => v)
+    );
+    let pool = normalizedAll.filter((email) => !alreadySentSet.has(email));
+    let resetHistory = false;
+    if (pool.length < automation.dailyLimit) {
+      pool = normalizedAll;
+      resetHistory = true;
+    }
+    const limit = Math.min(automation.dailyLimit, pool.length);
+    const selected = [];
+    const poolCopy = [...pool];
+    while (selected.length < limit && poolCopy.length > 0) {
+      const index = Math.floor(Math.random() * poolCopy.length);
+      selected.push(poolCopy[index]);
+      poolCopy.splice(index, 1);
+    }
+    if (!selected.length) {
+      continue;
+    }
+    const gmailUsers = await GmailUser.find({
+      ownerEmail: automation.ownerEmail.toLowerCase()
+    });
+    if (!gmailUsers.length) {
+      continue;
+    }
+    let attachment = null;
+    if (automation.template.attachment && automation.template.attachment.content) {
+      const bufferContent = Buffer.isBuffer(automation.template.attachment.content)
+        ? automation.template.attachment.content
+        : Buffer.from(
+            automation.template.attachment.content.buffer || automation.template.attachment.content
+          );
+      attachment = {
+        filename: automation.template.attachment.filename,
+        mimetype: automation.template.attachment.mimetype,
+        content: bufferContent
+      };
+    }
+    for (const user of gmailUsers) {
+      for (const recipient of selected) {
+        try {
+          await sendGmail(user, {
+            to: recipient,
+            subject: automation.template.subject,
+            text: automation.template.text,
+            attachment
+          });
+          await createSendLog({
+            ownerEmail: automation.ownerEmail,
+            fromEmail: user.email,
+            toEmail: recipient,
+            subject: automation.template.subject,
+            status: "success",
+            source: "automation"
+          });
+        } catch (error) {
+          const message = error && error.message ? error.message : "Unknown error";
+          console.error(`Automation email error from ${user.email} to ${recipient}: ${message}`);
+          await createSendLog({
+            ownerEmail: automation.ownerEmail,
+            fromEmail: user.email,
+            toEmail: recipient,
+            subject: automation.template.subject,
+            status: "failed",
+            errorMessage: message,
+            source: "automation"
+          });
+        }
+      }
+    }
+    const newHistory = resetHistory ? selected : Array.from(new Set([...alreadySentSet, ...selected]));
+    automation.sentTo = newHistory;
+    automation.lastRunAt = new Date();
+    await automation.save();
+  }
 }
 
 export default router;
