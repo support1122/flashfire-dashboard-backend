@@ -151,8 +151,10 @@ import dotenv from "dotenv";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
 import mongoose from "mongoose";
+import cron from "node-cron";
 import connectDB from "./Utils/ConnectDB.js";
 import Routes from "./Routes.js";
+import { runRecruiterAutomationDailyJob } from "./Controllers/GmailRouter.js";
 
 dotenv.config();
 
@@ -373,6 +375,20 @@ app.use((err, req, res, next) => {
   try {
     await connectDB();
     console.log("✅ Database connected successfully");
+
+    cron.schedule(
+      "0 23 * * *",
+      async () => {
+        try {
+          await runRecruiterAutomationDailyJob();
+        } catch (error) {
+          console.error("Recruiter automation job failed", error);
+        }
+      },
+      {
+        timezone: "Asia/Kolkata"
+      }
+    );
 
     app.listen(PORT, () => {
       console.log(`🚀 Server is running on port ${PORT} in ${NODE_ENV} mode`);
