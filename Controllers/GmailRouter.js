@@ -9,6 +9,19 @@ import { GmailSendLog } from "../Schema_Models/GmailSendLog.js";
 
 const router = express.Router();
 
+function normalizeEmailSubject(subject) {
+  if (typeof subject !== "string") return "";
+  let s = subject.trim();
+  if (!s) return "";
+  if (/Ã/.test(s)) {
+    try {
+      const decoded = Buffer.from(s, "latin1").toString("utf8");
+      if (!/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/.test(decoded)) s = decoded;
+    } catch (_) {}
+  }
+  return s.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "").trim();
+}
+
 async function createSendLog({ ownerEmail, fromEmail, toEmail, subject, status, errorMessage = null, source = "manual" }) {
   try {
     await GmailSendLog.create({
@@ -141,6 +154,8 @@ router.post("/send", upload.single("attachment"), handleMulterError, async (req,
       return res.status(400).json({ error: "ownerEmail, to, subject, text required" });
     }
 
+    const normalizedSubject = normalizeEmailSubject(subject);
+
     const rawRecipients = String(to)
       .split(",")
       .map((v) => v.trim())
@@ -191,12 +206,12 @@ router.post("/send", upload.single("attachment"), handleMulterError, async (req,
 
       for (const recipient of rawRecipients) {
         try {
-          await sendGmail(u, { to: recipient, subject, text, attachment });
+          await sendGmail(u, { to: recipient, subject: normalizedSubject, text, attachment });
           await createSendLog({
             ownerEmail,
             fromEmail: u.email,
             toEmail: recipient,
-            subject,
+            subject: normalizedSubject,
             status: "success",
             source: "manual"
           });
@@ -208,7 +223,7 @@ router.post("/send", upload.single("attachment"), handleMulterError, async (req,
             ownerEmail,
             fromEmail: u.email,
             toEmail: recipient,
-            subject,
+            subject: normalizedSubject,
             status: "failed",
             errorMessage: message,
             source: "manual"
@@ -603,12 +618,13 @@ export async function runRecruiterAutomationDailyJob() {
         content: bufferContent
       };
     }
+    const automationSubject = normalizeEmailSubject(automation.template.subject);
     for (const user of gmailUsers) {
       for (const recipient of selected) {
         try {
           await sendGmail(user, {
             to: recipient,
-            subject: automation.template.subject,
+            subject: automationSubject,
             text: automation.template.text,
             attachment
           });
@@ -616,7 +632,7 @@ export async function runRecruiterAutomationDailyJob() {
             ownerEmail: automation.ownerEmail,
             fromEmail: user.email,
             toEmail: recipient,
-            subject: automation.template.subject,
+            subject: automationSubject,
             status: "success",
             source: "automation"
           });
@@ -627,7 +643,7 @@ export async function runRecruiterAutomationDailyJob() {
             ownerEmail: automation.ownerEmail,
             fromEmail: user.email,
             toEmail: recipient,
-            subject: automation.template.subject,
+            subject: automationSubject,
             status: "failed",
             errorMessage: message,
             source: "automation"

@@ -166,6 +166,37 @@ export const uploadBase64File = async (req, res) => {
   }
 };
 
-// Export the multer middleware for use in routes
+export const uploadOnboardingAttachment = async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ success: false, message: "No file uploaded" });
+    }
+    const uploadResult = await uploadFile(req.file.buffer, {
+      folder: 'onboarding-attachments',
+      filename: req.file.originalname,
+      contentType: req.file.mimetype,
+      fileType: 'attachments',
+    });
+    if (!uploadResult.success) {
+      return res.status(500).json({
+        success: false,
+        message: "Failed to upload file",
+        error: uploadResult.error,
+      });
+    }
+    res.status(200).json({
+      success: true,
+      url: uploadResult.url,
+      filename: req.file.originalname,
+    });
+  } catch (error) {
+    console.error("Onboarding attachment upload error:", error);
+    res.status(500).json({
+      success: false,
+      message: error.message || "Failed to upload",
+    });
+  }
+};
+
 export { upload };
 
