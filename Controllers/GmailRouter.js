@@ -423,6 +423,31 @@ router.post("/automation/config/get", async (req, res) => {
   }
 });
 
+router.patch("/automation/config", async (req, res) => {
+  try {
+    const { ownerEmail, enabled } = req.body || {};
+    if (!ownerEmail || !ownerEmail.trim()) {
+      return res.status(400).json({ error: "ownerEmail is required" });
+    }
+    const doc = await RecruiterEmailAutomation.findOneAndUpdate(
+      { ownerEmail: ownerEmail.toLowerCase().trim() },
+      { $set: { enabled: !!enabled } },
+      { new: true }
+    );
+    if (!doc) {
+      return res.status(404).json({ error: "No automation config found. Save group, template and limit first." });
+    }
+    res.json({
+      config: {
+        id: String(doc._id),
+        enabled: doc.enabled
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ error: "Failed to update automation status" });
+  }
+});
+
 router.post("/automation/config", async (req, res) => {
   try {
     const { ownerEmail, groupId, templateId, dailyLimit, enabled } = req.body || {};
