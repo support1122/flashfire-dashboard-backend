@@ -46,6 +46,7 @@ import ClientLogin from "./Controllers/Extensions/clientLogin.js";
 import { ProfileModel } from "./Schema_Models/ProfileModel.js";
 import { UserModel } from "./Schema_Models/UserModel.js";
 import CheckProfile from "./Controllers/CheckProfile.js";
+import GetProfile from "./Controllers/GetProfile.js";
 import { generateSessionKey, listSessionKeys, revokeSession, revokeUserSessions, listActiveSessions, verifySessionKey } from "./Controllers/operations/SessionKeys.js";
 import gmailRouter from "./Controllers/GmailRouter.js";
 import { listGroups, createGroup, getGroup, updateGroup } from "./Controllers/RecruiterAutomation.js";
@@ -192,6 +193,7 @@ app.post('/get-referral-stats', async (req, res) => {
 });
 
 // Profile routes
+app.get("/get-profile", GetProfile);
 app.post("/check-profile", CheckProfile);
 app.post("/setprofile", ProfileCheck, Add_Update_Profile);
 app.post("/upload-profile-file", upload.single('file'), uploadProfileFile);

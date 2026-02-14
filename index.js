@@ -229,7 +229,7 @@ console.log(`🌐 Server will run on port: ${PORT}`);
 // CORS configuration
 const corsOptions = {
   origin: function (origin, callback) {
-    const allowedOrigins = NODE_ENV === "production" 
+    const allowedOrigins = NODE_ENV === "production"
       ? [
           "https://portal.flashfirejobs.com",
           "http://localhost:3000",
@@ -237,12 +237,15 @@ const corsOptions = {
           "https://flashfire-dashboard-frontend.vercel.app",
           "chrome://extensions/?id=feekbkgobkhnfchgngipimimiiglgpnj",
           "https://flashfire-dashboard.vercel.app",
-          // "https://clients-tracking.vercel.app",
-          // "https://dashboardtracking.vercel.app",
-          // "https://utm-track-frontend.vercel.app",
+          // Clients-tracking / applications-monitor (onboarding attachment uploads)
+          "https://clients-tracking.vercel.app",
+          "https://applications-monitor.flashfirejobs.com",
+          "https://www.applications-monitor.flashfirejobs.com",
+          "https://dashboardtracking.vercel.app",
+          "https://utm-track-frontend.vercel.app",
           ...(process.env.ALLOWED_ORIGINS?.split(",") || [])
         ]
-        : ["http://localhost:3000"];
+        : ["http://localhost:3000", "http://localhost:5173", "http://localhost:5000"];
     
     // Allow requests with no origin (like mobile apps or curl requests)
     if (!origin) return callback(null, true);
