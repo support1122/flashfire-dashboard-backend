@@ -18,15 +18,17 @@ export const extractJobData = async (req, res) => {
             });
         }
 
-        const openaiModel = process.env.OPENAI_MODEL || 'gpt-4o-mini';
+        // Prefer faster model for simple extraction (gpt-3.5-turbo is faster; override with OPENAI_MODEL if needed)
+        const openaiModel = process.env.OPENAI_MODEL || 'gpt-3.5-turbo';
         const openaiUrl = 'https://api.openai.com/v1/chat/completions';
 
-        const prompt = `Extract the following information from this job posting text. Return ONLY a valid JSON object with these exact fields: {"company": "company name", "position": "job title/role", "description": "full job description"}. 
+        // Keep input small for speed: ~6k chars is enough for one job posting
+        const maxContentLen = 6000;
+        const trimmedContent = content.length > maxContentLen
+            ? content.substring(0, maxContentLen) + '\n[...truncated]'
+            : content;
 
-If any information is missing, use "Unknown" for company/position and empty string "" for description.
-
-Job posting text:
-${content.substring(0, 15000)}`;
+        const prompt = `From the job posting below output ONLY this JSON (no markdown, no explanation): {"company":"...","position":"...","description":"..."}. Use "Unknown" if company/position missing; "" for description if missing.\n\n${trimmedContent}`;
 
         const response = await fetch(openaiUrl, {
             method: 'POST',
@@ -37,17 +39,11 @@ ${content.substring(0, 15000)}`;
             body: JSON.stringify({
                 model: openaiModel,
                 messages: [
-                    {
-                        role: 'system',
-                        content: 'You are a job data extraction assistant. Extract company name, job position, and job description from job posting text. Always return valid JSON only.'
-                    },
-                    {
-                        role: 'user',
-                        content: prompt
-                    }
+                    { role: 'system', content: 'Output only valid JSON. No other text.' },
+                    { role: 'user', content: prompt }
                 ],
-                temperature: 0.3,
-                max_tokens: 2000
+                temperature: 0.1,
+                max_tokens: 1024
             })
         });
 

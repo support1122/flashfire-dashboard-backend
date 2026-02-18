@@ -22,6 +22,25 @@ function normalizeEmailSubject(subject) {
   return s.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "").trim();
 }
 
+/**
+ * Encode a header value for MIME (RFC 2047) so non-ASCII characters (e.g. em dash "—")
+ * display correctly instead of mojibake like "Ã¢Â€Â"".
+ * Uses =?UTF-8?B?base64?= and splits into chunks of max 75 chars per encoded-word.
+ */
+function encodeRfc2047Header(value) {
+  if (typeof value !== "string" || value.length === 0) return value;
+  const isAscii = /^[\x00-\x7F]*$/.test(value);
+  if (isAscii) return value;
+  const utf8 = Buffer.from(value, "utf8");
+  const maxBytesPerWord = 57;
+  const parts = [];
+  for (let i = 0; i < utf8.length; i += maxBytesPerWord) {
+    const chunk = utf8.subarray(i, i + maxBytesPerWord);
+    parts.push(`=?UTF-8?B?${chunk.toString("base64")}?=`);
+  }
+  return parts.join("\r\n ");
+}
+
 async function createSendLog({ ownerEmail, fromEmail, toEmail, subject, status, errorMessage = null, source = "manual" }) {
   try {
     await GmailSendLog.create({
@@ -515,11 +534,12 @@ function encodeFilename(filename) {
 
 function createMimeMessage(from, to, subject, text, attachment = null) {
   const boundary = `----=_Part_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  const encodedSubject = encodeRfc2047Header(subject);
 
   const lines = [
     `To: ${to}`,
     `From: ${from}`,
-    `Subject: ${subject}`,
+    `Subject: ${encodedSubject}`,
     `MIME-Version: 1.0`
   ];
 
