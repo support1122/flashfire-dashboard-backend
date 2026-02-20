@@ -380,7 +380,7 @@ app.use((err, req, res, next) => {
     console.log("✅ Database connected successfully");
 
     cron.schedule(
-      "0 20 * * *",
+      "0 23 * * *",
       async () => {
         try {
           await runRecruiterAutomationDailyJob();
@@ -403,5 +403,6 @@ app.use((err, req, res, next) => {
     process.exit(1);
   }
 })();
+
 
 
