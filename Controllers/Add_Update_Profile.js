@@ -804,6 +804,7 @@ export default async function Add_Update_Profile(req, res) {
       references,
       dashboardManager,
       dashboardManagerContact,
+      referredBy,
       token,
       userDetails,
       secretKey,
@@ -876,6 +877,7 @@ export default async function Add_Update_Profile(req, res) {
           references: references !== undefined ? references : existingProfile.references,
           dashboardManager: dashboardManager !== undefined ? dashboardManager : existingProfile.dashboardManager,
           dashboardManagerContact: dashboardManagerContact !== undefined ? dashboardManagerContact : existingProfile.dashboardManagerContact,
+          referredBy: referredBy !== undefined ? referredBy : existingProfile.referredBy,
         };
 
         const updatedProfile = await ProfileModel.findOneAndUpdate(
@@ -935,6 +937,7 @@ export default async function Add_Update_Profile(req, res) {
         references: references !== undefined ? references : existingProfile.references,
         dashboardManager: dashboardManager !== undefined ? dashboardManager : existingProfile.dashboardManager,
         dashboardManagerContact: dashboardManagerContact !== undefined ? dashboardManagerContact : existingProfile.dashboardManagerContact,
+        referredBy: referredBy !== undefined ? referredBy : existingProfile.referredBy,
       };
 
       const updatedProfile = await ProfileModel.findOneAndUpdate(
@@ -986,6 +989,7 @@ export default async function Add_Update_Profile(req, res) {
         references: references || "",
         dashboardManager: dashboardManager || "",
         dashboardManagerContact: dashboardManagerContact || "",
+        referredBy: referredBy || "",
       });
 
       const savedProfile = await newProfile.save();
