@@ -172,12 +172,13 @@ export async function saveToDashboard(req, res) {
                 message: "Missing required job details: 'position', 'company', and 'url' are required."
             });
         }
-        if (url && String(url).toLowerCase().includes('jobright.ai')) {
-            return res.status(400).json({
-                success: false,
-                message: "Jobs from Jobright are not allowed. Please use a different job source."
-            });
-        }
+        // Jobright.ai block commented out - allow jobs from jobright.ai
+        // if (url && String(url).toLowerCase().includes('jobright.ai')) {
+        //     return res.status(400).json({
+        //         success: false,
+        //         message: "Jobs from Jobright are not allowed. Please use a different job source."
+        //     });
+        // }
 
         const summary = {
             saved: 0,

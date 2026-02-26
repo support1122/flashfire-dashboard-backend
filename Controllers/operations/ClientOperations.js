@@ -8,7 +8,9 @@ const ClientSchema = new mongoose.Schema({
   email: { type: String, required: true, unique: true, lowercase: true, trim: true },
   name: { type: String, required: true, trim: true },
   status: { type: String, enum: ["active", "inactive"], required: true, default: "active" },
-  isPaused: { type: Boolean, default: false }
+  isPaused: { type: Boolean, default: false },
+  /** True when client is "new" (onboarding). We allow adding job cards for new; only block when paused and not new. */
+  onboardingPhase: { type: Boolean, default: false }
 }, { collection: 'dashboardtrackings', timestamps: false });
 
 const ClientModel = mongoose.models.DashboardTracking || mongoose.model('DashboardTracking', ClientSchema, 'dashboardtrackings');
@@ -295,8 +297,9 @@ export const isClientLocked = async (clientEmail) => {
   try {
     const emailLower = clientEmail.toLowerCase();
     
-    const client = await ClientModel.findOne({ email: emailLower }).select('status isPaused').lean();
-    if (client && client.isPaused) {
+    const client = await ClientModel.findOne({ email: emailLower }).select('status isPaused onboardingPhase').lean();
+    // Block add job only when paused and NOT in onboarding ("new"). New status clients can add job cards.
+    if (client && client.isPaused && !client.onboardingPhase) {
       return {
         isLocked: true,
         message: "Client is in lock period"
