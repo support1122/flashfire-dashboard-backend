@@ -2,6 +2,19 @@
 import { JobModel } from "../Schema_Models/JobModel.js";
 import { isClientLocked } from "./operations/ClientOperations.js";
 
+/**
+ * Normalize job title/company for duplicate check: trim and collapse multiple spaces.
+ */
+function normalizeString(s) {
+    if (!s || typeof s !== 'string') return '';
+    return s.trim().replace(/\s+/g, ' ');
+}
+
+/** Escape special regex characters for safe use in RegExp. */
+function escapeRegex(s) {
+    return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 export default async function StoreJobAndUserDetails(req, res) {
     console.log(req.body);
     try {
@@ -201,15 +214,19 @@ export async function saveToDashboard(req, res) {
                     continue;
                 }
                 
+                const normTitle = normalizeString(position);
+                const normCompany = normalizeString(company);
+
+                // Duplicate check: same user + same job title + same company (case-insensitive).
+                // Uses title+company because URL can vary (e.g. ?utm_source=linkedin, "Unknown URL").
                 const existingJob = await JobModel.findOne({
                     userID: userEmail,
-                    joblink: url,
-                    jobTitle: position,
-                    companyName: company
+                    jobTitle: { $regex: new RegExp('^' + escapeRegex(normTitle) + '$', 'i') },
+                    companyName: { $regex: new RegExp('^' + escapeRegex(normCompany) + '$', 'i') }
                 });
 
                 if (existingJob) {
-                    console.log(`⏩ Duplicate job found for user ${userEmail} (Same URL, Title, and Company). Skipping.`);
+                    console.log(`⏩ Duplicate job found for user ${userEmail} (Same title and company). Skipping.`);
                     summary.skippedAsDuplicate++;
                     summary.details.push({
                         user: userEmail,
