@@ -85,7 +85,8 @@ ${content.substring(0, 15000)}`;
             data: {
                 company: extractedData.company || 'Unknown',
                 position: extractedData.position || 'Unknown',
-                description: extractedData.description || ''
+                description: extractedData.description || '',
+                url: (websiteUrl && typeof websiteUrl === 'string') ? websiteUrl.trim() : ''
             }
         });
 
