@@ -103,9 +103,11 @@ export default async function GetAllJobs(req, res) {
             return 0;
         };
         
+        // Sort by updatedAt (most recently acted-upon first = stack behavior)
+        // Fall back to dateAdded/createdAt for jobs that haven't been moved yet
         const allJobsSorted = allJobsRaw.sort((a, b) => {
-            const timeA = parseDateAdded(a.dateAdded || a.createdAt);
-            const timeB = parseDateAdded(b.dateAdded || b.createdAt);
+            const timeA = parseDateAdded(a.updatedAt || a.dateAdded || a.createdAt);
+            const timeB = parseDateAdded(b.updatedAt || b.dateAdded || b.createdAt);
             if (timeB !== timeA) return timeB - timeA;
             return b._id.toString().localeCompare(a._id.toString());
         });

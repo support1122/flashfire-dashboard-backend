@@ -159,6 +159,22 @@ export const JobSchema = new mongoose.Schema({
       enum: ['r2', 'mongodb', 'legacy'],
       default: 'legacy'
     }
+  },
+  // Whether the optimized resume has been viewed by operations
+  optimizedResumeSeen: { type: Boolean, default: false },
+  // Auto-optimization tracking (background worker)
+  autoOptimization: {
+    status: {
+      type: String,
+      enum: ['pending', 'processing', 'completed', 'failed', 'skipped'],
+      default: null
+    },
+    attempts: { type: Number, default: 0 },
+    startedAt: { type: Date, default: null },
+    completedAt: { type: Date, default: null },
+    lastFailedAt: { type: Date, default: null },
+    retryAfter: { type: Date, default: null },
+    error: { type: String, default: null }
   }
 });
 
@@ -171,6 +187,8 @@ JobSchema.index({ jobID: 1, userID: 1 });
 // Index for sorting by most recently updated (for job tracker) - kept for backward compatibility
 JobSchema.index({ userID: 1, updatedAt: -1 });
 JobSchema.index({ userID: 1, dateAdded: -1 });
+// Index for auto-optimization worker polling
+JobSchema.index({ 'autoOptimization.status': 1, 'autoOptimization.retryAfter': 1, _id: 1 });
 
 export const JobModel = mongoose.model('JobDB', JobSchema)
 

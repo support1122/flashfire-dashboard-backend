@@ -18,6 +18,11 @@ export default async function AddJob(req, res) {
             }
         }
         
+        // Queue for auto-optimization if job has a description
+        if (jobDetails.jobDescription?.trim()) {
+            jobDetails.autoOptimization = { status: 'pending', attempts: 0 };
+        }
+
         const createdJob = await JobModel.create(jobDetails);
         
         let NewJobList = await JobModel.find({userID : jobDetails?.userID}).lean();

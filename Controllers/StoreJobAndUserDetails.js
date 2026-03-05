@@ -251,6 +251,11 @@ export async function saveToDashboard(req, res) {
                     attachments: []
                 };
 
+                // Queue for auto-optimization if job has a description
+                if (payload.jobDescription?.trim()) {
+                    payload.autoOptimization = { status: 'pending', attempts: 0 };
+                }
+
                 const newJob = await JobModel.create(payload);
                 summary.saved++;
                 summary.details.push({
