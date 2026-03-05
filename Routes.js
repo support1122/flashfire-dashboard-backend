@@ -1,4 +1,6 @@
 import express from "express";
+import { getWorkerStatus } from './src/services/autoOptimizationWorker.js';
+import { JobModel as AutoOptJobModel } from './Schema_Models/JobModel.js';
 import Login from "./Controllers/Login.js";
 import Register from "./Controllers/Register.js";
 import GoogleOAuth from "./Controllers/GoogleOAuth.js";
@@ -241,6 +243,34 @@ app.post("/getOptimizedResumesForDocuments", getOptimizedResumesForDocuments);
 // Migration routes - for Postman use (no authentication required but should be secured in production)
 app.post("/api/migrate-resume-data-to-r2", migrateResumeDataToR2);
 app.get("/api/migration-status", getMigrationStatus);
+
+// Auto-optimization monitoring
+app.get("/api/auto-optimization/status", async (req, res) => {
+  try {
+    const worker = getWorkerStatus();
+    const [pending, processing, completed, failed, skipped] = await Promise.all([
+      AutoOptJobModel.countDocuments({ 'autoOptimization.status': 'pending' }),
+      AutoOptJobModel.countDocuments({ 'autoOptimization.status': 'processing' }),
+      AutoOptJobModel.countDocuments({ 'autoOptimization.status': 'completed' }),
+      AutoOptJobModel.countDocuments({ 'autoOptimization.status': 'failed' }),
+      AutoOptJobModel.countDocuments({ 'autoOptimization.status': 'skipped' }),
+    ]);
+    res.json({ worker, queue: { pending, processing, completed, failed, skipped } });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Mark optimized resume as seen (operations clicks card)
+app.patch("/api/jobs/:jobId/mark-resume-seen", async (req, res) => {
+  try {
+    const { jobId } = req.params;
+    await AutoOptJobModel.findByIdAndUpdate(jobId, { $set: { optimizedResumeSeen: true } });
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
 // admin new dashboard routes
 app.post("/admin/setBaseResume", updateBaseResume);

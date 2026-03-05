@@ -13,7 +13,7 @@ export default async function GetAllJobsOPS(req,res) {
         const query = { userID: email };
         const projection = '-jobDescription -optimizedResume.resumeData';
 
-        // Fetch all jobs first (we'll sort by dateAdded in JavaScript since it's stored as string)
+        // Fetch all jobs first (we'll sort by updatedAt in JavaScript since it's stored as string)
         let cursor = JobModel.find(query)
             .select(projection)
             .lean({ virtuals: false, getters: false });
@@ -87,12 +87,12 @@ export default async function GetAllJobsOPS(req,res) {
             return 0;
         };
         
+        // Sort by updatedAt (most recently acted-upon first = stack behavior)
+        // Fall back to dateAdded/createdAt for jobs that haven't been moved yet
         const allJobsSorted = allJobsRaw.sort((a, b) => {
-            const timeA = parseDateAdded(a.dateAdded || a.createdAt);
-            const timeB = parseDateAdded(b.dateAdded || b.createdAt);
-            // Newest first (larger timestamp comes first)
+            const timeA = parseDateAdded(a.updatedAt || a.dateAdded || a.createdAt);
+            const timeB = parseDateAdded(b.updatedAt || b.dateAdded || b.createdAt);
             if (timeB !== timeA) return timeB - timeA;
-            // If dates are equal, sort by _id as tiebreaker
             return b._id.toString().localeCompare(a._id.toString());
         });
         

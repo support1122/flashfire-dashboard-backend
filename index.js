@@ -155,6 +155,7 @@ import cron from "node-cron";
 import connectDB from "./Utils/ConnectDB.js";
 import Routes from "./Routes.js";
 import { runRecruiterAutomationDailyJob } from "./Controllers/GmailRouter.js";
+import { startAutoOptimizationWorker } from "./src/services/autoOptimizationWorker.js";
 
 dotenv.config();
 
@@ -378,6 +379,14 @@ app.use((err, req, res, next) => {
   try {
     await connectDB();
     console.log("✅ Database connected successfully");
+
+    // Start auto-optimization worker on first PM2 cluster instance only
+    const instanceId = process.env.NODE_APP_INSTANCE || '0';
+    if (instanceId === '0') {
+      startAutoOptimizationWorker();
+    } else {
+      console.log(`[AutoOptWorker] Skipping on cluster instance ${instanceId}`);
+    }
 
     cron.schedule(
       "0 23 * * *",

@@ -320,7 +320,7 @@ export default async function UpdateChanges(req, res) {
     // Sort by updatedAt DESC so most recently moved jobs appear first
     const updatedJobs = returnUpdatedJobs !== false
       ? await JobModel.find({ userID: userEmail })
-        .select('jobID jobTitle companyName currentStatus createdAt updatedAt joblink dateAdded appliedDate attachments')
+        .select('jobID jobTitle companyName currentStatus createdAt updatedAt joblink dateAdded appliedDate attachments optimizedResume.hasResume optimizedResumeSeen autoOptimization')
         .sort({ updatedAt: -1 })
         .lean()
       : [];
