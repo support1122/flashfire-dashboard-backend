@@ -1,6 +1,7 @@
 import axios from 'axios';
 import { JobModel } from '../../Schema_Models/JobModel.js';
 import { uploadJSONToR2 } from '../../Utils/r2Storage.js';
+import { DiscordConnect } from '../../Utils/DiscordConnect.js';
 
 // ─── Configuration ───────────────────────────────────────────────────
 const RESUME_API_URL = process.env.RESUME_API_URL || 'http://localhost:5000';
@@ -10,6 +11,7 @@ const MAX_ATTEMPTS = parseInt(process.env.AUTO_OPT_MAX_ATTEMPTS) || 3;
 const REQUEST_TIMEOUT_MS = parseInt(process.env.AUTO_OPT_REQUEST_TIMEOUT_MS) || 120000;
 const WORKER_ENABLED = process.env.AUTO_OPT_ENABLED !== 'false';
 const STALE_THRESHOLD_MS = 5 * 60 * 1000; // 5 minutes
+const DISCORD_ERROR_URL = process.env.DISCORD_OPTIMIZATION_ERROR_URL;
 
 const OPTIMIZATION_PROMPT =
   'if you recieve any HTML tages please ignore it and optimize the resume according to the given JD. ' +
@@ -22,6 +24,42 @@ const OPTIMIZATION_PROMPT =
 let isProcessing = false;
 let workerRunning = false;
 let pollTimer = null;
+
+// ─── Discord Error Notification ─────────────────────────────────────
+async function sendOptimizationError({ job, stage, error, attempts, isPermanent }) {
+  if (!DISCORD_ERROR_URL) return;
+  try {
+    const status = isPermanent ? '🔴 PERMANENTLY FAILED' : `🟡 RETRY (attempt ${attempts}/${MAX_ATTEMPTS})`;
+    const geminiInfo = error?.response?.data
+      ? `\nGemini Response: ${JSON.stringify(error.response.data).slice(0, 300)}`
+      : '';
+    const statusCode = error?.response?.status ? `\nHTTP Status: ${error.response.status}` : '';
+
+    const message =
+      `\n━━━ Optimization Error ━━━` +
+      `\n${status}` +
+      `\n\n📋 Job Card Details:` +
+      `\n• Job ID: ${job._id}` +
+      `\n• Job Title: ${job.jobTitle || 'N/A'}` +
+      `\n• Company: ${job.companyName || 'N/A'}` +
+      `\n• Client (userID): ${job.userID || 'N/A'}` +
+      `\n• Job ID (external): ${job.jobID || 'N/A'}` +
+      `\n\n⚠️ Error Details:` +
+      `\n• Stage: ${stage}` +
+      `\n• Error: ${(error?.message || String(error)).slice(0, 400)}` +
+      statusCode +
+      geminiInfo +
+      `\n\n🕐 Time: ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}` +
+      `\n━━━━━━━━━━━━━━━━━━━━━━━━`;
+
+    await Promise.race([
+      DiscordConnect(DISCORD_ERROR_URL, message),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('Discord timeout')), 3000))
+    ]);
+  } catch (discordErr) {
+    console.error('[AutoOptWorker] Failed to send Discord error notification:', discordErr.message);
+  }
+}
 
 // ─── Stale Job Recovery ──────────────────────────────────────────────
 async function recoverStaleJobs() {
@@ -120,7 +158,8 @@ async function processJob(job) {
       console.log(`${tag} Skipped: no resume assigned`);
       return;
     }
-    throw new Error(`Failed to fetch resume: ${err.response?.status || ''} ${err.message}`);
+    err._stage = 'Resume Fetch (Gemini microservice)';
+    throw err;
   }
 
   if (!resumeData || !resumeData.personalInfo) {
@@ -140,18 +179,25 @@ async function processJob(job) {
   };
 
   // Step 3: Call optimize-with-gemini
-  const optimizeRes = await axios.post(
-    `${RESUME_API_URL}/api/optimize-with-gemini`,
-    {
-      resume_data: filteredResume,
-      job_description: OPTIMIZATION_PROMPT + job.jobDescription
-    },
-    { timeout: REQUEST_TIMEOUT_MS }
-  );
+  try {
+    var optimizeRes = await axios.post(
+      `${RESUME_API_URL}/api/optimize-with-gemini`,
+      {
+        resume_data: filteredResume,
+        job_description: OPTIMIZATION_PROMPT + job.jobDescription
+      },
+      { timeout: REQUEST_TIMEOUT_MS }
+    );
+  } catch (err) {
+    err._stage = 'Gemini Optimization API';
+    throw err;
+  }
 
   const optimizedData = optimizeRes.data;
   if (!optimizedData || (!optimizedData.summary && !optimizedData.workExperience)) {
-    throw new Error('Optimization returned empty/invalid data');
+    const err = new Error('Optimization returned empty/invalid data');
+    err._stage = 'Gemini Optimization Response Validation';
+    throw err;
   }
 
   // Step 4: Upload optimized resume to R2
@@ -162,7 +208,9 @@ async function processJob(job) {
   });
 
   if (!r2Result.success) {
-    throw new Error(`R2 upload failed: ${r2Result.error || 'unknown'}`);
+    const err = new Error(`R2 upload failed: ${r2Result.error || 'unknown'}`);
+    err._stage = 'R2 Storage Upload';
+    throw err;
   }
 
   // Step 5: Update job in MongoDB with optimized resume + metadata
@@ -216,7 +264,15 @@ async function pollLoop() {
         await processJob(job);
       } catch (err) {
         const attempts = job.autoOptimization?.attempts || 1;
+        const isPermanent = attempts >= MAX_ATTEMPTS;
         await markFailed(job._id, err.message, attempts);
+        await sendOptimizationError({
+          job,
+          stage: err._stage || 'Unknown Stage',
+          error: err,
+          attempts,
+          isPermanent
+        });
       }
       isProcessing = false;
       // Short delay between consecutive jobs to avoid overloading Gemini
