@@ -248,22 +248,28 @@ const corsOptions = {
         ]
         : ["http://localhost:3000", "http://localhost:5173", "http://localhost:5000"];
     
+    console.log(`[CORS] Request from origin: ${origin || 'no origin'}, NODE_ENV: ${NODE_ENV}`);
+    
     // Allow requests with no origin (like mobile apps or curl requests)
-    if (!origin) return callback(null, true);
+    if (!origin) {
+      console.log(`[CORS] Allowing request with no origin`);
+      return callback(null, true);
+    }
     
     if (allowedOrigins.indexOf(origin) !== -1) {
+      console.log(`[CORS] Allowing origin: ${origin}`);
       callback(null, true);
     } else {
-      console.log(`CORS blocked origin: ${origin}`);
-      console.log(`Allowed origins: ${allowedOrigins.join(', ')}`);
+      console.log(`[CORS] Blocked origin: ${origin}`);
+      console.log(`[CORS] Allowed origins: ${allowedOrigins.join(', ')}`);
       callback(new Error('Not allowed by CORS'));
     }
   },
   credentials: true,
   optionsSuccessStatus: 200,
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With", "Origin", "Accept"],
-     exposedHeaders: ["Content-Length", "X-Requested-With"],
+  allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With", "Origin", "Accept", "X-Access-Token", "Access-Control-Allow-Headers", "Access-Control-Request-Method", "Access-Control-Request-Headers"],
+  exposedHeaders: ["Content-Length", "X-Requested-With"],
   preflightContinue: false,
   maxAge: 86400 // 24 hours
 };
@@ -271,6 +277,8 @@ const corsOptions = {
 app.use(cors(corsOptions));
 
 app.use(helmet({
+  crossOriginResourcePolicy: { policy: "cross-origin" },
+  crossOriginEmbedderPolicy: false,
   contentSecurityPolicy: {
     directives: {
       defaultSrc: ["'self'"],
