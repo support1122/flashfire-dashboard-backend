@@ -300,6 +300,28 @@ if (NODE_ENV === "development") {
   });
 }
 
+// Health check endpoint (before DB check so it's always accessible)
+app.get("/health", (req, res) => {
+  res.json({ 
+    status: "OK", 
+    message: "Server is running",
+    environment: NODE_ENV,
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime(),
+    port: PORT
+  });
+});
+
+// CORS test endpoint (before DB check so it's always accessible)
+app.get("/cors-test", (req, res) => {
+  res.json({ 
+    message: "CORS test successful",
+    origin: req.headers.origin,
+    cors: "working",
+    timestamp: new Date().toISOString()
+  });
+});
+
 // Protect routes until DB is connected to avoid Mongoose buffering timeouts
 app.use((req, res, next) => {
   if (mongoose.connection.readyState !== 1) {
@@ -313,28 +335,6 @@ app.use((req, res, next) => {
 
 // Routes
 app.use("/", Routes);
-
-// Health check endpoint
-app.get("/health", (req, res) => {
-  res.json({ 
-    status: "OK", 
-    message: "Server is running",
-    environment: NODE_ENV,
-    timestamp: new Date().toISOString(),
-    uptime: process.uptime(),
-    port: PORT
-  });
-});
-
-// CORS test endpoint
-app.get("/cors-test", (req, res) => {
-  res.json({ 
-    message: "CORS test successful",
-    origin: req.headers.origin,
-    cors: "working",
-    timestamp: new Date().toISOString()
-  });
-});
 
 // Root endpoint for Render health checks
 app.get("/", (req, res) => {
