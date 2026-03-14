@@ -228,39 +228,32 @@ console.log(`🌐 Server will run on port: ${PORT}`);
 // }));
 
 // CORS configuration
-const allowedOrigins = NODE_ENV === "production"
-  ? [
-      "https://portal.flashfirejobs.com",
-      "https://www.portal.flashfirejobs.com",
-      "https://flashfire-dashboard-frontend.vercel.app",
-      "https://flashfire-dashboard.vercel.app",
-      "https://applications-monitor.flashfirejobs.com",
-      "https://www.applications-monitor.flashfirejobs.com",
-      "https://clients-tracking.vercel.app",
-      "https://dashboardtracking.vercel.app",
-      "https://utm-track-frontend.vercel.app",
-      "chrome://extensions/?id=feekbkgobkhnfchgngipimimiiglgpnj",
-      ...(process.env.ALLOWED_ORIGINS?.split(",") || [])
-    ]
-  : ["http://localhost:3000", "http://localhost:5173", "http://localhost:5000"];
+const allowedOrigins = [
+  "https://portal.flashfirejobs.com",
+  "https://www.portal.flashfirejobs.com",
+  "https://flashfire-dashboard-frontend.vercel.app",
+  "https://flashfire-dashboard.vercel.app",
+  "https://applications-monitor.flashfirejobs.com",
+  "https://www.applications-monitor.flashfirejobs.com",
+  "https://clients-tracking.vercel.app",
+  "https://dashboardtracking.vercel.app",
+  "https://utm-track-frontend.vercel.app"
+];
 
 app.use(cors({
   origin: function(origin, callback) {
-    // Allow requests with no origin (e.g. mobile apps, curl, Postman)
     if (!origin) return callback(null, true);
-    
-    // Allow if origin is in allowedOrigins
+
     if (allowedOrigins.includes(origin)) {
       return callback(null, true);
     }
-    
-    // Log blocked origins for debugging
+
     console.log("Blocked by CORS:", origin);
-    return callback(null, false); // Block if not allowed
+    return callback(new Error("Not allowed by CORS"));
   },
-  credentials: true, // Allow sending cookies/authorization headers
-  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"], // Allowed HTTP methods
-  allowedHeaders: ["Content-Type", "Authorization"], // Allowed request headers
+  credentials: true,
+  methods: ["GET","POST","PUT","PATCH","DELETE","OPTIONS"],
+  allowedHeaders: ["Content-Type","Authorization"],
 }));
 
 // Important: Handle preflight OPTIONS requests for all routes
