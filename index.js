@@ -244,6 +244,11 @@ app.use(cors({
   origin: function(origin, callback) {
     if (!origin) return callback(null, true);
 
+    // Allow Chrome extension origins
+    if (origin?.startsWith("chrome-extension://")) {
+      return callback(null, true);
+    }
+
     if (allowedOrigins.includes(origin)) {
       return callback(null, true);
     }
