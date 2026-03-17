@@ -53,6 +53,7 @@ import { generateSessionKey, listSessionKeys, revokeSession, revokeUserSessions,
 import gmailRouter from "./Controllers/GmailRouter.js";
 import { listGroups, createGroup, getGroup, updateGroup } from "./Controllers/RecruiterAutomation.js";
 import { getWhatsAppGroups, linkUserToGroup, getUserGroupMapping, sendCustomNotification, checkNotificationCooldown } from "./Controllers/whatsapp/WhatsAppController.js";
+import { generateExtensionCode, verifyExtensionCode, listExtensionCodes } from "./Controllers/operations/ExtensionCodes.js";
 
 
 
@@ -323,6 +324,11 @@ app.get('/api/sessions/session-keys', listSessionKeys);
 app.get('/api/sessions/active-sessions', listActiveSessions);
 app.post('/api/sessions/revoke-session', revokeSession);
 app.post('/api/sessions/revoke-user-sessions', revokeUserSessions);
+
+// Extension code routes (operator tracking)
+app.post('/api/extension-codes/generate', generateExtensionCode);
+app.post('/api/extension-codes/verify', verifyExtensionCode);
+app.get('/api/extension-codes', listExtensionCodes);
 
 app.get("/admin/recruiter-groups", listGroups);
 app.post("/admin/recruiter-groups", createGroup);
