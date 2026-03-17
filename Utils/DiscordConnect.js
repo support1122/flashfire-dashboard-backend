@@ -23,6 +23,7 @@ export const DiscordConnect = async (webhookURL,message) => {
     console.log('✅ Message sent to Discord!',message);
   } catch (error) {
     console.error('❌ Error sending message:', error);
+    throw error;
   }
 };
 

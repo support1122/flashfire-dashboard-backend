@@ -120,6 +120,18 @@ export const uploadClientDocument = async (req, res) => {
       );
     }
 
+    // Fire-and-forget: sync to client-tracking if 2+ days since dashboard creation
+    const baseUrl = process.env.CLIENT_TRACKING_API_BASE_URL;
+    const apiKey = process.env.CLIENT_TRACKING_INTERNAL_KEY;
+    if (baseUrl && apiKey) {
+      fetch(`${baseUrl}/api/internal/sync-document-upload`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-API-Key': apiKey },
+        body: JSON.stringify({ email: email.toLowerCase(), documentType, url: fileUrl, fileName }),
+        signal: AbortSignal.timeout(5000),
+      }).catch((err) => console.warn('[sync-document-upload]', err.message));
+    }
+
     res.json({
       success: true,
       url: fileUrl,

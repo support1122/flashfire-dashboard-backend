@@ -1,5 +1,6 @@
 // controllers/StoreJobAndUserDetails.js
 import { JobModel } from "../Schema_Models/JobModel.js";
+import ExtensionCode from "../Schema_Models/ExtensionCode.js";
 import { isClientLocked } from "./operations/ClientOperations.js";
 
 /**
@@ -169,7 +170,10 @@ export async function saveToDashboard(req, res) {
             position,
             selectedEmails,
             logo,
-            url
+            url,
+            extensionCode,
+            operatorEmail,
+            operatorName,
         } = req.body;
 
         // --- Input Validation (no changes here) ---
@@ -199,6 +203,17 @@ export async function saveToDashboard(req, res) {
             failedWithError: 0,
             details: []
         };
+
+        // Resolve operator name from extension code or request body
+        let resolvedOperatorName = operatorName || null;
+        if (extensionCode && !resolvedOperatorName) {
+            try {
+                const codeDoc = await ExtensionCode.findOne({ code: String(extensionCode).trim(), isActive: true }).lean();
+                if (codeDoc) resolvedOperatorName = codeDoc.name;
+            } catch (e) {
+                console.warn('[saveToDashboard] Extension code lookup failed:', e.message);
+            }
+        }
 
         for (const email of selectedEmails) {
             const userEmail = email.trim();
@@ -248,7 +263,10 @@ export async function saveToDashboard(req, res) {
                     currentStatus: "saved",
                     jobDescription: description || "",
                     timeline: ["Added"],
-                    attachments: []
+                    attachments: [],
+                    operatorName: resolvedOperatorName || 'user',
+                    operatorEmail: operatorEmail || 'user@flashfirehq',
+                    extensionCode: extensionCode || null,
                 };
 
                 // Queue for auto-optimization if job has a description

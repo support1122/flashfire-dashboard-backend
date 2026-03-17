@@ -161,6 +161,28 @@ export default async function PlanSelect(req, res) {
 
     if (!user) return res.status(404).json({ message: "User not found" });
 
+    // Fire-and-forget: sync to client-tracking if 2+ days since dashboard creation
+    const baseUrl = process.env.CLIENT_TRACKING_API_BASE_URL;
+    const apiKey = process.env.CLIENT_TRACKING_INTERNAL_KEY;
+    if (baseUrl && apiKey) {
+      const syncDoc = (documentType, url, fileName) => {
+        fetch(`${baseUrl}/api/internal/sync-document-upload`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-API-Key': apiKey },
+          body: JSON.stringify({ email: userDetails.email?.toLowerCase(), documentType, url, fileName }),
+          signal: AbortSignal.timeout(5000),
+        }).catch((err) => console.warn('[sync-document-upload]', err.message));
+      };
+      if (pushOps.resumeLink) {
+        const url = typeof resumeLink === 'object' && resumeLink?.link ? resumeLink.link : (typeof resumeLink === 'string' ? resumeLink : '');
+        const fileName = (typeof resumeLink === 'object' && resumeLink?.name) ? resumeLink.name : (url ? url.split('/').pop() : 'resume.pdf') || 'resume.pdf';
+        if (url) syncDoc('resume', url, fileName);
+      }
+      if (pushOps.coverLetters && normCover?.url) {
+        syncDoc('coverLetter', normCover.url, normCover.name || 'cover letter');
+      }
+    }
+
     return res.status(200).json({
       message: "Updated successfully",
       userDetails: {
