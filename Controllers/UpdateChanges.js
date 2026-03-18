@@ -159,10 +159,14 @@ const handleUpdateStatus = async (req, res, jobID, userEmail, userDetails) => {
   const statusToSet = formatStatusWithAttribution(trimmedStatus, actorName);
 
   // Build update fields
+  // NOTE: Do NOT overwrite operatorName/operatorEmail here — those fields
+  // record who originally added the job (via extension). The per-action
+  // attribution is already captured in the timeline entry itself
+  // (e.g. "applied by Shubhangi"), so overwriting would incorrectly
+  // replace the original adder's name.
   const updateFields = {
     currentStatus: statusToSet,
     updatedAt: getCurrentISTTime(),
-    ...buildOperatorFields(role, req.body, userDetails)
   };
 
   // Set appliedDate if transitioning from saved to applied
@@ -235,10 +239,11 @@ const handleEdit = async (req, res, jobID, userEmail, userDetails) => {
   }
 
   // Build update fields
+  // NOTE: Do NOT overwrite operatorName/operatorEmail — preserve the
+  // original adder. Per-action attribution is in the timeline entry.
   const updateFields = {
     updatedAt: getCurrentISTTime(),
     currentStatus: nextStatus,
-    ...buildOperatorFields(role, req.body, userDetails)
   };
 
   // Set appliedDate if transitioning from saved to applied
