@@ -169,9 +169,17 @@ const handleUpdateStatus = async (req, res, jobID, userEmail, userDetails) => {
     updatedAt: getCurrentISTTime(),
   };
 
-  // Set appliedDate if transitioning from saved to applied
+  // Set appliedDate + appliedBy fields if transitioning from saved to applied
   if (shouldSetAppliedDate(currentJob.currentStatus, statusToSet)) {
     updateFields.appliedDate = getCurrentISTTime();
+    // Track WHO applied (separate from who added)
+    if (isOperationsUser(role)) {
+      updateFields.appliedByEmail = req.body?.operationsEmail || OPERATIONS_EMAIL_DOMAIN;
+      updateFields.appliedByName = req.body?.operationsName || userDetails?.name || 'operations';
+    } else {
+      updateFields.appliedByEmail = USER_EMAIL_DOMAIN;
+      updateFields.appliedByName = 'user';
+    }
   }
 
   // Save removal reason if job is being moved to deleted
@@ -246,9 +254,16 @@ const handleEdit = async (req, res, jobID, userEmail, userDetails) => {
     currentStatus: nextStatus,
   };
 
-  // Set appliedDate if transitioning from saved to applied
+  // Set appliedDate + appliedBy fields if transitioning from saved to applied
   if (shouldSetAppliedDate(existingJob.currentStatus, nextStatus)) {
     updateFields.appliedDate = getCurrentISTTime();
+    if (isOperationsUser(role)) {
+      updateFields.appliedByEmail = req.body?.operationsEmail || OPERATIONS_EMAIL_DOMAIN;
+      updateFields.appliedByName = req.body?.operationsName || userDetails?.name || 'operations';
+    } else {
+      updateFields.appliedByEmail = USER_EMAIL_DOMAIN;
+      updateFields.appliedByName = 'user';
+    }
   }
 
   // Update job and increment removal count in parallel (if needed)
