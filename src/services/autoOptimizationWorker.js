@@ -224,7 +224,7 @@ async function processJob(job) {
       changesMade: {
         startingContent: { summary: resumeData.summary || '' },
         finalChanges: { summary: optimizedData.summary || '' },
-        timestamp: new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }),
+        timestamp: new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }),
         changedSections: ['summary'],
         source: 'auto-optimization'
       },
@@ -244,7 +244,7 @@ async function processJob(job) {
       'autoOptimization.status': 'completed',
       'autoOptimization.completedAt': new Date(),
       'autoOptimization.error': null,
-      updatedAt: new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })
+      updatedAt: new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' })
     }
   });
 
