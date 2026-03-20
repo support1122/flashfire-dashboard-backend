@@ -112,9 +112,9 @@ export default async function GetAllJobs(req, res) {
             return b._id.toString().localeCompare(a._id.toString());
         });
         
+        // Strip extensionCode only (secret). Keep addedBy for timeline ("Added by …") in the app.
         const allJobs = allJobsSorted.map((job) => {
             const j = { ...job, _id: job._id.toString() };
-            delete j.addedBy;
             delete j.extensionCode;
             return j;
         });

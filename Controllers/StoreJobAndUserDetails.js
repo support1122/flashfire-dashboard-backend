@@ -294,6 +294,9 @@ export async function saveToDashboard(req, res) {
                     status: 'saved',
                     jobId: newJob._id
                 });
+                console.log(
+                    `✅ Job saved — user: ${userEmail} | addedBy: "${addedByFromCode}" | code: ${rawExtensionCode} | ${position} @ ${company}`
+                );
 
             } catch (error) {
                 summary.failedWithError++;
@@ -306,7 +309,10 @@ export async function saveToDashboard(req, res) {
             }
         }
 
-        console.log(`✅ Job saving process complete. Saved: ${summary.saved}, Skipped: ${summary.skippedAsDuplicate}, Failed: ${summary.failedWithError}`);
+        console.log(
+            `✅ Job saving process complete. Saved: ${summary.saved}, Skipped: ${summary.skippedAsDuplicate}, Failed: ${summary.failedWithError}` +
+                (summary.saved > 0 ? ` | session addedBy: "${addedByFromCode}"` : '')
+        );
 
         return res.status(200).json({
             success: true,
