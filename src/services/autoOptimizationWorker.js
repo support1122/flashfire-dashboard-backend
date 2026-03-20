@@ -25,6 +25,123 @@ let isProcessing = false;
 let workerRunning = false;
 let pollTimer = null;
 
+/**
+ * Build changesMade the same way as JobModal.tsx getChangedFieldsOnly()
+ * so the dashboard "Changes Made" tab shows all diffs (not just summary).
+ */
+function buildOptimizationChangesMade(resumeData, optimizedData) {
+  const startingContent = {};
+  const finalChanges = {};
+
+  if (!resumeData || !optimizedData) {
+    return {
+      startingContent: { summary: resumeData?.summary || '' },
+      finalChanges: { summary: optimizedData?.summary || '' },
+      timestamp: new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }),
+      changedSections: ['summary'],
+      source: 'auto-optimization'
+    };
+  }
+
+  const origPI = resumeData.personalInfo || {};
+  const optPI = optimizedData.personalInfo || {};
+  const personalInfoChanged = Object.keys(origPI).filter(
+    (key) => origPI[key] !== optPI[key]
+  );
+  if (personalInfoChanged.length > 0) {
+    startingContent.personalInfo = {};
+    finalChanges.personalInfo = {};
+    personalInfoChanged.forEach((key) => {
+      startingContent.personalInfo[key] = origPI[key];
+      finalChanges.personalInfo[key] = optPI[key];
+    });
+  }
+
+  if ((resumeData.summary || '') !== (optimizedData.summary || '')) {
+    startingContent.summary = resumeData.summary || '';
+    finalChanges.summary = optimizedData.summary || '';
+  }
+
+  const origWE = Array.isArray(resumeData.workExperience) ? resumeData.workExperience : [];
+  const optWE = Array.isArray(optimizedData.workExperience) ? optimizedData.workExperience : [];
+  const changedWorkExp = origWE
+    .map((orig, idx) => {
+      const opt = optWE[idx];
+      if (!opt) return null;
+      const changes = {};
+      const originals = {};
+      let hasChanges = false;
+      ['position', 'company', 'duration', 'location', 'roleType'].forEach((field) => {
+        if (orig[field] !== opt[field]) {
+          originals[field] = orig[field];
+          changes[field] = opt[field];
+          hasChanges = true;
+        }
+      });
+      if (JSON.stringify(orig.responsibilities) !== JSON.stringify(opt.responsibilities)) {
+        originals.responsibilities = [...(orig.responsibilities || [])];
+        changes.responsibilities = [...(opt.responsibilities || [])];
+        hasChanges = true;
+      }
+      return hasChanges ? { id: orig.id, original: originals, optimized: changes } : null;
+    })
+    .filter(Boolean);
+
+  if (changedWorkExp.length > 0) {
+    startingContent.workExperience = changedWorkExp.map((item) => ({
+      id: item.id,
+      ...item.original
+    }));
+    finalChanges.workExperience = changedWorkExp.map((item) => ({
+      id: item.id,
+      ...item.optimized
+    }));
+  }
+
+  const origSkills = Array.isArray(resumeData.skills) ? resumeData.skills : [];
+  const optSkills = Array.isArray(optimizedData.skills) ? optimizedData.skills : [];
+  const changedSkills = origSkills
+    .map((orig, idx) => {
+      const opt = optSkills[idx];
+      if (!opt) return null;
+      if (orig.category !== opt.category || orig.skills !== opt.skills) {
+        return {
+          id: orig.id,
+          original: { category: orig.category, skills: orig.skills },
+          optimized: { category: opt.category, skills: opt.skills }
+        };
+      }
+      return null;
+    })
+    .filter(Boolean);
+
+  if (changedSkills.length > 0) {
+    startingContent.skills = changedSkills.map((item) => ({
+      id: item.id,
+      ...item.original
+    }));
+    finalChanges.skills = changedSkills.map((item) => ({
+      id: item.id,
+      ...item.optimized
+    }));
+  }
+
+  let changedSections = Object.keys(startingContent);
+  if (changedSections.length === 0) {
+    startingContent.summary = resumeData.summary || '';
+    finalChanges.summary = optimizedData.summary || '';
+    changedSections = ['summary'];
+  }
+
+  return {
+    startingContent,
+    finalChanges,
+    timestamp: new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }),
+    changedSections,
+    source: 'auto-optimization'
+  };
+}
+
 // ─── Discord Error Notification ─────────────────────────────────────
 async function sendOptimizationError({ job, stage, error, attempts, isPermanent }) {
   if (!DISCORD_ERROR_URL) return;
@@ -219,15 +336,11 @@ async function processJob(job) {
     'leadership', 'skills', 'education', 'publications'
   ];
 
+  const changesMade = buildOptimizationChangesMade(resumeData, optimizedData);
+
   await JobModel.findByIdAndUpdate(job._id, {
     $set: {
-      changesMade: {
-        startingContent: { summary: resumeData.summary || '' },
-        finalChanges: { summary: optimizedData.summary || '' },
-        timestamp: new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }),
-        changedSections: ['summary'],
-        source: 'auto-optimization'
-      },
+      changesMade,
       optimizedResume: {
         resumeDataKey: r2Result.key,
         hasResume: true,
