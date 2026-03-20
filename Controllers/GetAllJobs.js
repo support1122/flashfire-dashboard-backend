@@ -112,7 +112,12 @@ export default async function GetAllJobs(req, res) {
             return b._id.toString().localeCompare(a._id.toString());
         });
         
-        const allJobs = allJobsSorted.map(job => ({ ...job, _id: job._id.toString() }));
+        const allJobs = allJobsSorted.map((job) => {
+            const j = { ...job, _id: job._id.toString() };
+            delete j.addedBy;
+            delete j.extensionCode;
+            return j;
+        });
 
         res.status(200).json({
             message: 'All Jobs List',

@@ -1,7 +1,7 @@
 // controllers/StoreJobAndUserDetails.js
 import { JobModel } from "../Schema_Models/JobModel.js";
-import ExtensionCode from "../Schema_Models/ExtensionCode.js";
 import { isClientLocked } from "./operations/ClientOperations.js";
+import { resolveAddedByFromExtensionCode } from "../Utils/resolveAddedByFromExtensionCode.js";
 
 /**
  * Normalize job title/company for duplicate check: trim and collapse multiple spaces.
@@ -173,7 +173,6 @@ export async function saveToDashboard(req, res) {
             url,
             extensionCode,
             operatorEmail,
-            operatorName,
         } = req.body;
 
         // --- Input Validation (no changes here) ---
@@ -189,6 +188,30 @@ export async function saveToDashboard(req, res) {
                 message: "Missing required job details: 'position', 'company', and 'url' are required."
             });
         }
+
+        const rawExtensionCode =
+            extensionCode !== undefined && extensionCode !== null
+                ? String(extensionCode).trim()
+                : "";
+        if (!rawExtensionCode || !/^\d{5}$/.test(rawExtensionCode)) {
+            return res.status(400).json({
+                success: false,
+                error: "EXTENSION_CODE_REQUIRED",
+                message:
+                    "A valid 5-digit operator code is required. Open the extension and enter your code, then try again."
+            });
+        }
+
+        const addedByFromCode = await resolveAddedByFromExtensionCode(rawExtensionCode);
+        if (!addedByFromCode) {
+            return res.status(400).json({
+                success: false,
+                error: "INVALID_EXTENSION_CODE",
+                message:
+                    "This code is invalid or no longer active. Re-enter your operator code in the extension."
+            });
+        }
+
         // Jobright.ai block commented out - allow jobs from jobright.ai
         // if (url && String(url).toLowerCase().includes('jobright.ai')) {
         //     return res.status(400).json({
@@ -203,17 +226,6 @@ export async function saveToDashboard(req, res) {
             failedWithError: 0,
             details: []
         };
-
-        // Resolve operator name from extension code or request body
-        let resolvedOperatorName = operatorName || null;
-        if (extensionCode && !resolvedOperatorName) {
-            try {
-                const codeDoc = await ExtensionCode.findOne({ code: String(extensionCode).trim(), isActive: true }).lean();
-                if (codeDoc) resolvedOperatorName = codeDoc.name;
-            } catch (e) {
-                console.warn('[saveToDashboard] Extension code lookup failed:', e.message);
-            }
-        }
 
         for (const email of selectedEmails) {
             const userEmail = email.trim();
@@ -264,9 +276,10 @@ export async function saveToDashboard(req, res) {
                     jobDescription: description || "",
                     timeline: ["Added"],
                     attachments: [],
-                    operatorName: resolvedOperatorName || 'user',
+                    operatorName: addedByFromCode,
                     operatorEmail: operatorEmail || 'user@flashfirehq',
-                    extensionCode: extensionCode || null,
+                    extensionCode: rawExtensionCode,
+                    addedBy: addedByFromCode,
                 };
 
                 // Queue for auto-optimization if job has a description

@@ -86,6 +86,11 @@ export const JobSchema = new mongoose.Schema({
     required: false,
     default: null
   },
+  addedBy: {
+    type: String,
+    required: false,
+    default: null
+  },
   appliedDate: {
     type: String,
     required: false,
