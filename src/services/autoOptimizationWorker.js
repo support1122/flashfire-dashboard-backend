@@ -257,7 +257,9 @@ async function markSkipped(jobId, reason) {
 // ─── Process a Single Job ────────────────────────────────────────────
 async function processJob(job) {
   const tag = `[AutoOptWorker] [${job.userID}] [${job._id}]`;
-  console.log(`${tag} Starting optimization for "${job.jobTitle}" at ${job.companyName}`);
+  console.log(
+    `${tag} Starting optimization for "${job.jobTitle}" at ${job.companyName} (addedBy: ${job.addedBy || '—'})`
+  );
   const startMs = Date.now();
 
   // Step 1: Fetch user's resume from gemini microservice

@@ -67,14 +67,16 @@ const checkRemovalLimit = async (userEmail, status, role) => {
   return null;
 };
 
+/**
+ * Only touch operatorEmail on status updates — do not overwrite operatorName.
+ * operatorName + addedBy are set at job creation (e.g. extension code name) and must stay stable.
+ */
 const buildOperatorFields = (role, body, userDetails) => {
   const fields = {};
 
   if (isOperationsUser(role)) {
-    fields.operatorName = body?.operationsName || userDetails?.name || 'operations';
     fields.operatorEmail = body?.operationsEmail || OPERATIONS_EMAIL_DOMAIN;
   } else {
-    fields.operatorName = 'user';
     fields.operatorEmail = USER_EMAIL_DOMAIN;
   }
 
@@ -320,7 +322,9 @@ export default async function UpdateChanges(req, res) {
     // Sort by updatedAt DESC so most recently moved jobs appear first
     const updatedJobs = returnUpdatedJobs !== false
       ? await JobModel.find({ userID: userEmail })
-        .select('jobID jobTitle companyName currentStatus createdAt updatedAt joblink dateAdded appliedDate attachments optimizedResume.hasResume optimizedResumeSeen autoOptimization')
+        .select(
+          'jobID jobTitle companyName currentStatus createdAt updatedAt joblink dateAdded appliedDate attachments optimizedResume.hasResume optimizedResumeSeen autoOptimization timeline addedBy operatorName operatorEmail'
+        )
         .sort({ updatedAt: -1 })
         .lean()
       : [];
