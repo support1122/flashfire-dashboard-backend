@@ -1,5 +1,34 @@
 import { UserModel } from "../Schema_Models/UserModel.js";
 
+function normalizePortfolioUrl(raw) {
+  let url = (raw || "").trim();
+  if (!url) return "";
+  if (!/^https?:\/\//i.test(url)) url = `https://${url}`;
+  try {
+    // eslint-disable-next-line no-new
+    new URL(url);
+  } catch {
+    return null;
+  }
+  return url;
+}
+
+function planSelectUserDetailsPayload(user) {
+  if (!user) return null;
+  return {
+    email: user.email,
+    name: user.name,
+    planLimit: user.planLimit,
+    planType: user.planType,
+    resumeLink: user.resumeLink,
+    coverLetters: user.coverLetters,
+    optimizedResumes: user.optimizedResumes,
+    transcript: user.transcript,
+    portfolioLinks: user.portfolioLinks || [],
+    userType: user.userType,
+  };
+}
+
 export default async function PlanSelect(req, res) {
   console.log(req.body)
   try {
@@ -14,11 +43,26 @@ export default async function PlanSelect(req, res) {
       deleteBaseResume,
       deleteOptimizedResume,
       deleteCoverLetter,
-      deleteTranscript   // ✅ new
+      deleteTranscript,   // ✅ new
+      portfolioLinkEntry,
+      deletePortfolioLink,
+      portfolioLinkUpdate,
     } = req.body;
 
     if (!userDetails?.email) {
       return res.status(400).json({ message: "Missing user email" });
+    }
+
+    const isOperationsPlanRoute =
+      typeof req.originalUrl === "string" && req.originalUrl.includes("/operations/plans/select");
+
+    const hasPortfolioMutation =
+      portfolioLinkEntry ||
+      deletePortfolioLink ||
+      (portfolioLinkUpdate && (portfolioLinkUpdate.originalUrl || portfolioLinkUpdate.filterUrl));
+
+    if (hasPortfolioMutation && !isOperationsPlanRoute) {
+      return res.status(403).json({ message: "Portfolio links can only be updated from the operations dashboard" });
     }
 
     // --- Defensive: normalize legacy resumeLink type (string -> array of objects) ---
@@ -145,10 +189,68 @@ export default async function PlanSelect(req, res) {
       }
     }
 
+    // ✅ Portfolio links (operations route only — enforced above)
+    if (portfolioLinkEntry && isOperationsPlanRoute) {
+      const u = normalizePortfolioUrl(portfolioLinkEntry.url || portfolioLinkEntry.link);
+      if (!u) {
+        return res.status(400).json({ message: "Invalid portfolio URL" });
+      }
+      pushOps.portfolioLinks = {
+        $each: [
+          {
+            name: (portfolioLinkEntry.name || "Portfolio link").trim() || "Portfolio link",
+            url: u,
+            createdAt: new Date(),
+          },
+        ],
+      };
+    }
+
+    if (deletePortfolioLink && isOperationsPlanRoute) {
+      if (deletePortfolioLink.url) {
+        pullOps.portfolioLinks = { url: deletePortfolioLink.url };
+      } else if (deletePortfolioLink.name) {
+        pullOps.portfolioLinks = { name: deletePortfolioLink.name };
+      }
+    }
+
     if (Object.keys(pushOps).length) updateOps.$push = pushOps;
     if (Object.keys(pullOps).length) updateOps.$pull = pullOps;
 
+    let appliedPortfolioInPlace = false;
+    if (isOperationsPlanRoute && portfolioLinkUpdate) {
+      const origUrl = portfolioLinkUpdate.originalUrl || portfolioLinkUpdate.filterUrl;
+      if (origUrl) {
+        const before = await UserModel.findOne({ email: userDetails.email });
+        if (!before) return res.status(404).json({ message: "User not found" });
+        const links = [...(before.portfolioLinks || [])];
+        const idx = links.findIndex((l) => l.url === origUrl);
+        if (idx === -1) return res.status(404).json({ message: "Portfolio link not found" });
+        if (portfolioLinkUpdate.url != null && String(portfolioLinkUpdate.url).trim() !== "") {
+          const nu = normalizePortfolioUrl(portfolioLinkUpdate.url);
+          if (!nu) return res.status(400).json({ message: "Invalid portfolio URL" });
+          links[idx].url = nu;
+        }
+        if (typeof portfolioLinkUpdate.name === "string" && portfolioLinkUpdate.name.trim() !== "") {
+          links[idx].name = portfolioLinkUpdate.name.trim();
+        }
+        await UserModel.updateOne(
+          { email: userDetails.email },
+          { $set: { portfolioLinks: links } }
+        );
+        appliedPortfolioInPlace = true;
+      }
+    }
+
     if (!Object.keys(updateOps).length) {
+      if (appliedPortfolioInPlace) {
+        const refreshed = await UserModel.findOne({ email: userDetails.email });
+        if (!refreshed) return res.status(404).json({ message: "User not found" });
+        return res.status(200).json({
+          message: "Updated successfully",
+          userDetails: planSelectUserDetailsPayload(refreshed),
+        });
+      }
       return res.status(400).json({ message: "Nothing to update" });
     }
 
@@ -185,17 +287,7 @@ export default async function PlanSelect(req, res) {
 
     return res.status(200).json({
       message: "Updated successfully",
-      userDetails: {
-        email: user.email,
-        name: user.name,
-        planLimit: user.planLimit,
-        planType: user.planType,
-        resumeLink: user.resumeLink,
-        coverLetters: user.coverLetters,
-        optimizedResumes: user.optimizedResumes,
-        transcript: user.transcript,  // ✅ return transcript array too
-        userType: user.userType,
-      },
+      userDetails: planSelectUserDetailsPayload(user),
     });
   } catch (err) {
     console.error("selectPlanAndUploads error:", err);

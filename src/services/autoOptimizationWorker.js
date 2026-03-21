@@ -25,29 +25,97 @@ let isProcessing = false;
 let workerRunning = false;
 let pollTimer = null;
 
+function hasStableId(entry) {
+  return entry && entry.id !== undefined && entry.id !== null && entry.id !== '';
+}
+
+/** Pair workExperience or skills rows: match by id first, then zip remaining in order. */
+function pairRowsByIdThenIndex(origArr, optArr) {
+  const orig = Array.isArray(origArr) ? origArr : [];
+  const opt = Array.isArray(optArr) ? optArr : [];
+  const pairedOrigIdx = new Set();
+  const pairedOptIdx = new Set();
+  const pairs = [];
+
+  orig.forEach((o, oi) => {
+    if (!hasStableId(o)) return;
+    const idStr = String(o.id);
+    const j = opt.findIndex(
+      (p, idx) => !pairedOptIdx.has(idx) && hasStableId(p) && String(p.id) === idStr
+    );
+    if (j >= 0) {
+      pairs.push({ orig: o, opt: opt[j] });
+      pairedOrigIdx.add(oi);
+      pairedOptIdx.add(j);
+    }
+  });
+
+  const unpairedOrig = orig.filter((_, i) => !pairedOrigIdx.has(i));
+  const unpairedOpt = opt.filter((_, i) => !pairedOptIdx.has(i));
+  const len = Math.max(unpairedOrig.length, unpairedOpt.length);
+  for (let k = 0; k < len; k++) {
+    pairs.push({ orig: unpairedOrig[k], opt: unpairedOpt[k] });
+  }
+
+  return pairs;
+}
+
+function diffWorkExperienceEntry(orig, opt) {
+  const originals = {};
+  const changes = {};
+  let hasChanges = false;
+  if (!orig || !opt) {
+    return { hasChanges: false, originals, changes, id: orig?.id ?? opt?.id };
+  }
+  ['position', 'company', 'duration', 'location', 'roleType'].forEach((field) => {
+    if (orig[field] !== opt[field]) {
+      originals[field] = orig[field];
+      changes[field] = opt[field];
+      hasChanges = true;
+    }
+  });
+  if (JSON.stringify(orig.responsibilities) !== JSON.stringify(opt.responsibilities)) {
+    originals.responsibilities = [...(orig.responsibilities || [])];
+    changes.responsibilities = [...(opt.responsibilities || [])];
+    hasChanges = true;
+  }
+  return { hasChanges, originals, changes, id: orig.id };
+}
+
+function deepCloneDiff(val) {
+  if (val === undefined) return val;
+  try {
+    return JSON.parse(JSON.stringify(val));
+  } catch {
+    return val;
+  }
+}
+
+/** Sections compared as full before/after (same idea as Optimizer granular diff, but always merged). */
+const EXTRA_CHANGE_SECTION_KEYS = ['projects', 'leadership', 'education', 'publications'];
+
 /**
- * Build changesMade the same way as JobModal.tsx getChangedFieldsOnly()
- * so the dashboard "Changes Made" tab shows all diffs (not just summary).
+ * Build changesMade aligned with JobModal getChangedFieldsOnly() (same shapes for UI).
+ * @param {object} baselineForDiff — Same fields as sent to optimize API (e.g. summary from filtered resume).
+ * @param {object} optimizedData — Parsed optimize-with-gemini response.
  */
-function buildOptimizationChangesMade(resumeData, optimizedData) {
+function buildOptimizationChangesMade(baselineForDiff, optimizedData) {
   const startingContent = {};
   const finalChanges = {};
 
-  if (!resumeData || !optimizedData) {
+  if (!baselineForDiff || !optimizedData) {
     return {
-      startingContent: { summary: resumeData?.summary || '' },
-      finalChanges: { summary: optimizedData?.summary || '' },
+      startingContent: { summary: baselineForDiff?.summary ?? '' },
+      finalChanges: { summary: optimizedData?.summary ?? '' },
       timestamp: new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }),
       changedSections: ['summary'],
       source: 'auto-optimization'
     };
   }
 
-  const origPI = resumeData.personalInfo || {};
+  const origPI = baselineForDiff.personalInfo || {};
   const optPI = optimizedData.personalInfo || {};
-  const personalInfoChanged = Object.keys(origPI).filter(
-    (key) => origPI[key] !== optPI[key]
-  );
+  const personalInfoChanged = Object.keys(origPI).filter((key) => origPI[key] !== optPI[key]);
   if (personalInfoChanged.length > 0) {
     startingContent.personalInfo = {};
     finalChanges.personalInfo = {};
@@ -57,35 +125,45 @@ function buildOptimizationChangesMade(resumeData, optimizedData) {
     });
   }
 
-  if ((resumeData.summary || '') !== (optimizedData.summary || '')) {
-    startingContent.summary = resumeData.summary || '';
+  if ((baselineForDiff.summary || '') !== (optimizedData.summary || '')) {
+    startingContent.summary = baselineForDiff.summary || '';
     finalChanges.summary = optimizedData.summary || '';
   }
 
-  const origWE = Array.isArray(resumeData.workExperience) ? resumeData.workExperience : [];
-  const optWE = Array.isArray(optimizedData.workExperience) ? optimizedData.workExperience : [];
-  const changedWorkExp = origWE
-    .map((orig, idx) => {
-      const opt = optWE[idx];
-      if (!opt) return null;
-      const changes = {};
-      const originals = {};
-      let hasChanges = false;
-      ['position', 'company', 'duration', 'location', 'roleType'].forEach((field) => {
-        if (orig[field] !== opt[field]) {
-          originals[field] = orig[field];
-          changes[field] = opt[field];
-          hasChanges = true;
+  const changedWorkExp = [];
+  for (const { orig, opt } of pairRowsByIdThenIndex(
+    baselineForDiff.workExperience,
+    optimizedData.workExperience
+  )) {
+    const { hasChanges, originals, changes, id } = diffWorkExperienceEntry(orig, opt);
+    if (hasChanges && orig && opt) {
+      changedWorkExp.push({ id, original: originals, optimized: changes });
+    } else if (orig && !opt) {
+      changedWorkExp.push({
+        id: orig.id,
+        original: {
+          ...['position', 'company', 'duration', 'location', 'roleType'].reduce((acc, f) => {
+            acc[f] = orig[f];
+            return acc;
+          }, {}),
+          responsibilities: [...(orig.responsibilities || [])]
+        },
+        optimized: {}
+      });
+    } else if (!orig && opt) {
+      changedWorkExp.push({
+        id: opt.id,
+        original: {},
+        optimized: {
+          ...['position', 'company', 'duration', 'location', 'roleType'].reduce((acc, f) => {
+            acc[f] = opt[f];
+            return acc;
+          }, {}),
+          responsibilities: [...(opt.responsibilities || [])]
         }
       });
-      if (JSON.stringify(orig.responsibilities) !== JSON.stringify(opt.responsibilities)) {
-        originals.responsibilities = [...(orig.responsibilities || [])];
-        changes.responsibilities = [...(opt.responsibilities || [])];
-        hasChanges = true;
-      }
-      return hasChanges ? { id: orig.id, original: originals, optimized: changes } : null;
-    })
-    .filter(Boolean);
+    }
+  }
 
   if (changedWorkExp.length > 0) {
     startingContent.workExperience = changedWorkExp.map((item) => ({
@@ -98,22 +176,28 @@ function buildOptimizationChangesMade(resumeData, optimizedData) {
     }));
   }
 
-  const origSkills = Array.isArray(resumeData.skills) ? resumeData.skills : [];
-  const optSkills = Array.isArray(optimizedData.skills) ? optimizedData.skills : [];
-  const changedSkills = origSkills
-    .map((orig, idx) => {
-      const opt = optSkills[idx];
-      if (!opt) return null;
-      if (orig.category !== opt.category || orig.skills !== opt.skills) {
-        return {
-          id: orig.id,
-          original: { category: orig.category, skills: orig.skills },
-          optimized: { category: opt.category, skills: opt.skills }
-        };
-      }
-      return null;
-    })
-    .filter(Boolean);
+  const changedSkills = [];
+  for (const { orig, opt } of pairRowsByIdThenIndex(baselineForDiff.skills, optimizedData.skills)) {
+    if (orig && opt && (orig.category !== opt.category || orig.skills !== opt.skills)) {
+      changedSkills.push({
+        id: orig.id,
+        original: { category: orig.category, skills: orig.skills },
+        optimized: { category: opt.category, skills: opt.skills }
+      });
+    } else if (orig && !opt) {
+      changedSkills.push({
+        id: orig.id,
+        original: { category: orig.category, skills: orig.skills },
+        optimized: { category: '', skills: '' }
+      });
+    } else if (!orig && opt) {
+      changedSkills.push({
+        id: opt.id,
+        original: { category: '', skills: '' },
+        optimized: { category: opt.category, skills: opt.skills }
+      });
+    }
+  }
 
   if (changedSkills.length > 0) {
     startingContent.skills = changedSkills.map((item) => ({
@@ -126,12 +210,54 @@ function buildOptimizationChangesMade(resumeData, optimizedData) {
     }));
   }
 
-  let changedSections = Object.keys(startingContent);
-  if (changedSections.length === 0) {
-    startingContent.summary = resumeData.summary || '';
-    finalChanges.summary = optimizedData.summary || '';
-    changedSections = ['summary'];
+  // Always surface projects / leadership / education / publications when JSON differs
+  // (granular pass above only covers summary, WE, skills, PI — not these sections).
+  for (const key of EXTRA_CHANGE_SECTION_KEYS) {
+    const a = baselineForDiff[key];
+    const b = optimizedData[key];
+    if (JSON.stringify(a) !== JSON.stringify(b)) {
+      startingContent[key] = deepCloneDiff(a);
+      finalChanges[key] = deepCloneDiff(b);
+    }
   }
+
+  // Safety net: if row-level diff missed WE/skills/summary, store full section (reorder, edge cases).
+  if (
+    !startingContent.workExperience &&
+    JSON.stringify(baselineForDiff.workExperience) !== JSON.stringify(optimizedData.workExperience)
+  ) {
+    startingContent.workExperience = deepCloneDiff(baselineForDiff.workExperience);
+    finalChanges.workExperience = deepCloneDiff(optimizedData.workExperience);
+  }
+  if (
+    !startingContent.skills &&
+    JSON.stringify(baselineForDiff.skills) !== JSON.stringify(optimizedData.skills)
+  ) {
+    startingContent.skills = deepCloneDiff(baselineForDiff.skills);
+    finalChanges.skills = deepCloneDiff(optimizedData.skills);
+  }
+  if (
+    !startingContent.summary &&
+    JSON.stringify(baselineForDiff.summary ?? '') !== JSON.stringify(optimizedData.summary ?? '')
+  ) {
+    startingContent.summary = baselineForDiff.summary ?? '';
+    finalChanges.summary = optimizedData.summary ?? '';
+  }
+
+  // Last resort: nothing detected at all — compare core keys as full snapshots.
+  if (Object.keys(startingContent).length === 0) {
+    const structuralKeys = ['personalInfo', 'summary', 'workExperience', 'skills'];
+    for (const key of structuralKeys) {
+      const a = baselineForDiff[key];
+      const b = optimizedData[key];
+      if (JSON.stringify(a) !== JSON.stringify(b)) {
+        startingContent[key] = deepCloneDiff(a);
+        finalChanges[key] = deepCloneDiff(b);
+      }
+    }
+  }
+
+  const changedSections = Object.keys(startingContent);
 
   return {
     startingContent,
@@ -338,7 +464,15 @@ async function processJob(job) {
     'leadership', 'skills', 'education', 'publications'
   ];
 
-  const changesMade = buildOptimizationChangesMade(resumeData, optimizedData);
+  // Baseline must match the exact JSON sent to optimize-with-gemini (not full stored resume).
+  const baselineForDiff = {
+    ...resumeData,
+    summary: filteredResume.summary,
+    projects: filteredResume.projects,
+    leadership: filteredResume.leadership,
+    publications: filteredResume.publications
+  };
+  const changesMade = buildOptimizationChangesMade(baselineForDiff, optimizedData);
 
   await JobModel.findByIdAndUpdate(job._id, {
     $set: {

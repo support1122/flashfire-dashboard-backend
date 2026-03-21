@@ -26,10 +26,18 @@ const transcript = {
   createdAt: { type: Date,   default: Date.now },
 }
 
+/** External portfolio links (operations-only in API). */
+const portfolioLink = {
+  name:      { type: String, required: true, default: "Portfolio link" },
+  url:       { type: String, required: true },
+  createdAt: { type: Date, default: Date.now },
+};
+
 export const optimizedResumeSchema = new mongoose.Schema(baseEntry, { _id: false });
 export const coverLetterSchema     = new mongoose.Schema(baseEntry, { _id: false });
 export const baseResumeSchema      = new mongoose.Schema(baseResume, { _id: false });
 export const transcriptSchema = new mongoose.Schema(transcript, {_id: false});
+export const portfolioLinkSchema = new mongoose.Schema(portfolioLink, { _id: false });
 
 // Normalize legacy -> url
 function ensureUrl(next) {
