@@ -1,6 +1,6 @@
 // UserModel.js
 import mongoose from "mongoose";
-import { baseResumeSchema, coverLetterSchema, optimizedResumeSchema, transcriptSchema } from "./Opt.Resumes_Cover_Schemas.js";
+import { baseResumeSchema, coverLetterSchema, optimizedResumeSchema, transcriptSchema, portfolioLinkSchema } from "./Opt.Resumes_Cover_Schemas.js";
 
 export const userSchema = new mongoose.Schema(
   {
@@ -16,6 +16,7 @@ export const userSchema = new mongoose.Schema(
     coverLetters:     { type: [coverLetterSchema],     default: [] },
     optimizedResumes: { type: [optimizedResumeSchema], default: [] },
     transcript : {type : [transcriptSchema], default : []},
+    portfolioLinks: { type: [portfolioLinkSchema], default: [] },
     planType:  { 
       type: String, 
       required: true, 

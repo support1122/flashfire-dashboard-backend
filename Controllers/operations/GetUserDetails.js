@@ -54,7 +54,8 @@ export default async function GetUserDetails(req, res) {
                     resumeLink: existanceOfUser.resumeLink,
                     coverLetters: existanceOfUser.coverLetters,
                     // optimizedResumes intentionally omitted for performance; fetch lazily via dedicated endpoint
-                    transcript: existanceOfUser.transcript
+                    transcript: existanceOfUser.transcript,
+                    portfolioLinks: existanceOfUser.portfolioLinks || [],
                },
                userProfile: hasProfile ? profileLookUp : null,
                hasProfile: hasProfile

@@ -139,7 +139,9 @@ const GoogleOAuth = async (req, res) => {
                     planLimit: userDetails.planLimit,
                     resumeLink: userDetails.resumeLink,
                     coverLetters: userDetails.coverLetters,
-                    optimizedResumes: userDetails.optimizedResumes
+                    optimizedResumes: userDetails.optimizedResumes,
+                    transcript: userDetails.transcript,
+                    portfolioLinks: userDetails.portfolioLinks || [],
                },
                token: tokenNew,
                userProfile: hasProfile ? profileLookUp : null,

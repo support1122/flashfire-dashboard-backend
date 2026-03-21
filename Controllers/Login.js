@@ -36,6 +36,7 @@ export default async function Login(req, res) {
                          coverLetters: existanceOfUser.coverLetters,
                          optimizedResumes: existanceOfUser.optimizedResumes,
                          transcript: existanceOfUser.transcript,
+                         portfolioLinks: existanceOfUser.portfolioLinks || [],
                          dashboardManager: existanceOfUser.dashboardManager
                     },
                     token: jwt.sign({ email }, process.env.JWT_SECRET_KEY || process.env.JWT_SECRET || 'FLASHFIRE', { expiresIn: '7d' }),

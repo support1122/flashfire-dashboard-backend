@@ -81,6 +81,7 @@ app.post('/get-updated-user', async (req, res) => {
       coverLetters: existanceOfUser?.coverLetters,
       optimizedResumes: existanceOfUser?.optimizedResumes,
       transcript: existanceOfUser?.transcript,
+      portfolioLinks: existanceOfUser?.portfolioLinks || [],
       dashboardManager: existanceOfUser?.dashboardManager
     })
   } catch (error) {
