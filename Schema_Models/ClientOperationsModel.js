@@ -41,6 +41,22 @@ const ClientOperationsSchema = new mongoose.Schema({
       default: () => new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })
     }
   }],
+  /** Normalized lowercase strings; managed from Operations > Extensions */
+  excludedCompanies: {
+    type: [String],
+    default: []
+  },
+  excludedLocations: {
+    type: [String],
+    default: []
+  },
+  /** Items dropped from active lists (invalid / escaped / too long) — audit only */
+  exclusionSanitizeAudit: [{
+    text: { type: String, default: "" },
+    kind: { type: String, enum: ["company", "location"], default: "company" },
+    reason: { type: String, default: "" },
+    removedAt: { type: String, default: "" }
+  }],
   lockPeriods: [{
     id: {
       type: String,

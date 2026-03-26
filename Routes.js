@@ -40,11 +40,13 @@ import GetUserDetails from "./Controllers/operations/GetUserDetails.js";
 import GetUserResumes from "./Controllers/operations/GetUserResumes.js";
 import GetAllJobsOPS from "./Controllers/operations/GetAllJobs.js";
 import { getClientOperations, updateClientOperations, checkLockPeriod } from "./Controllers/operations/ClientOperations.js";
+import { reconcileExclusionJobsHandler } from "./Controllers/operations/reconcileExclusionJobs.js";
 import ForgotPassword from "./Controllers/ForgotPassword.js";
 import ExtensionLogin from "./Controllers/Extensions/login.js";
 import { ReciveData } from "./Controllers/Extensions/reciveData.js";
 import { extractJobData } from "./Controllers/Extensions/extractJobData.js";
 import ClientLogin from "./Controllers/Extensions/clientLogin.js";
+import { getExtensionExclusionLists } from "./Controllers/Extensions/exclusionLists.js";
 import { ProfileModel } from "./Schema_Models/ProfileModel.js";
 import { UserModel } from "./Schema_Models/UserModel.js";
 import CheckProfile from "./Controllers/CheckProfile.js";
@@ -310,6 +312,7 @@ app.post('/operations/plans/select', PlanSelect);
 // Client operations management routes
 app.post('/operations/client-operations', getClientOperations);
 app.put('/operations/client-operations', updateClientOperations);
+app.post('/operations/reconcile-exclusion-jobs', reconcileExclusionJobsHandler);
 app.post('/operations/check-lock-period', checkLockPeriod);
 
 //extensions
@@ -317,6 +320,7 @@ app.post('/extension/login', ExtensionLogin);
 app.post('/extension/sendData', ReciveData);
 app.post('/extension/extractJobData', extractJobData);
 app.post('/extension/saveToDashboard', saveToDashboard);
+app.post('/extension/exclusion-lists', getExtensionExclusionLists);
 app.post('/extension/clientLogin', ClientLogin);
 
 // Session management routes for admin dashboard
