@@ -1,5 +1,7 @@
 import { ClientOperationsModel } from "../../Schema_Models/ClientOperationsModel.js";
 import { ClientTodosModel } from "../../Schema_Models/ClientTodosModel.js";
+import { sanitizeExclusionList, partitionExclusionList } from "../../Utils/exclusionLists.js";
+import { reconcileExclusionJobsForClient } from "./reconcileExclusionJobs.js";
 import mongoose from "mongoose";
 
 const getCurrentISTTime = () => new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
@@ -78,6 +80,21 @@ const mergeLockPeriods = (periods1, periods2) => {
   return Array.from(periodMap.values());
 };
 
+const mergeExclusionLists = (a, b) =>
+  sanitizeExclusionList([...(a || []), ...(b || [])]);
+
+const mergeExclusionAudit = (a, b) => {
+  const seen = new Set();
+  const out = [];
+  for (const x of [...(a || []), ...(b || [])]) {
+    const k = `${x?.text}|${x?.kind}|${x?.removedAt}|${x?.reason}`;
+    if (!x?.text || seen.has(k)) continue;
+    seen.add(k);
+    out.push(x);
+  }
+  return out.slice(-100);
+};
+
 // Helper function to get default TODOs
 const getDefaultTodos = () => {
   const timestamp = Date.now();
@@ -137,6 +154,9 @@ export const getClientOperations = async (req, res) => {
         clientEmail: emailLower,
         todos: defaultTodos,
         lockPeriods: [],
+        excludedCompanies: [],
+        excludedLocations: [],
+        exclusionSanitizeAudit: [],
         createdAt: getCurrentISTTime(),
         updatedAt: getCurrentISTTime()
       };
@@ -158,6 +178,18 @@ export const getClientOperations = async (req, res) => {
         clientOps?.lockPeriods || [],
         clientTodos?.lockPeriods || []
       );
+      const mergedExcludedCompanies = mergeExclusionLists(
+        clientOps?.excludedCompanies,
+        clientTodos?.excludedCompanies
+      );
+      const mergedExcludedLocations = mergeExclusionLists(
+        clientOps?.excludedLocations,
+        clientTodos?.excludedLocations
+      );
+      const mergedExclusionAudit = mergeExclusionAudit(
+        clientOps?.exclusionSanitizeAudit,
+        clientTodos?.exclusionSanitizeAudit
+      );
 
       // Ensure default TODOs are present
       const defaultTodoTitles = ["Create optimized resume", "LinkedIn Optimization", "Cover letter Optimization"];
@@ -174,42 +206,36 @@ export const getClientOperations = async (req, res) => {
         });
       }
 
-      // Update both models with merged data
-      const updateData = {
+      // Atomic upsert avoids Mongoose VersionError when concurrent requests merge the same client
+      const mergeSet = {
         todos: mergedTodos,
         lockPeriods: mergedLockPeriods,
+        excludedCompanies: mergedExcludedCompanies,
+        excludedLocations: mergedExcludedLocations,
+        exclusionSanitizeAudit: mergedExclusionAudit,
         updatedAt: getCurrentISTTime()
       };
 
-      if (!clientOps) {
-        clientOps = new ClientOperationsModel({
+      const upsertOps = {
+        $set: mergeSet,
+        $setOnInsert: {
           clientEmail: emailLower,
-          ...updateData,
           createdAt: getCurrentISTTime()
-        });
-      } else {
-        clientOps.todos = mergedTodos;
-        clientOps.lockPeriods = mergedLockPeriods;
-        clientOps.updatedAt = getCurrentISTTime();
-      }
+        }
+      };
 
-      if (!clientTodos) {
-        clientTodos = new ClientTodosModel({
-          clientEmail: emailLower,
-          ...updateData,
-          createdAt: getCurrentISTTime()
-        });
-      } else {
-        clientTodos.todos = mergedTodos;
-        clientTodos.lockPeriods = mergedLockPeriods;
-        clientTodos.updatedAt = getCurrentISTTime();
-      }
+      await ClientOperationsModel.findOneAndUpdate(
+        { clientEmail: emailLower },
+        upsertOps,
+        { upsert: true, new: true }
+      );
+      await ClientTodosModel.findOneAndUpdate(
+        { clientEmail: emailLower },
+        upsertOps,
+        { upsert: true, new: true }
+      );
 
-      // Save both models
-      await Promise.all([
-        clientOps.save(),
-        clientTodos.save()
-      ]);
+      clientOps = await ClientOperationsModel.findOne({ clientEmail: emailLower });
     }
 
     return res.status(200).json({
@@ -228,7 +254,7 @@ export const getClientOperations = async (req, res) => {
 // Update client operations (TODOs and lock periods) - SYNCED with ClientTodosModel
 export const updateClientOperations = async (req, res) => {
   try {
-    const { clientEmail, todos, lockPeriods, operatorName } = req.body;
+    const { clientEmail, todos, lockPeriods, operatorName, excludedCompanies, excludedLocations } = req.body;
 
     if (!clientEmail) {
       return res.status(400).json({
@@ -255,6 +281,54 @@ export const updateClientOperations = async (req, res) => {
       updateData.lockPeriods = lockPeriods;
     }
 
+    const now = getCurrentISTTime();
+    const newAuditEntries = [];
+    let shouldReconcileExclusions = false;
+
+    if (excludedCompanies !== undefined) {
+      const { clean, quarantine } = partitionExclusionList(excludedCompanies, "company");
+      updateData.excludedCompanies = clean;
+      for (const q of quarantine) {
+        newAuditEntries.push({
+          text: q.text,
+          kind: q.kind,
+          reason: q.reason,
+          removedAt: now,
+        });
+      }
+      shouldReconcileExclusions = true;
+    }
+    if (excludedLocations !== undefined) {
+      const { clean, quarantine } = partitionExclusionList(excludedLocations, "location");
+      updateData.excludedLocations = clean;
+      for (const q of quarantine) {
+        newAuditEntries.push({
+          text: q.text,
+          kind: q.kind,
+          reason: q.reason,
+          removedAt: now,
+        });
+      }
+      shouldReconcileExclusions = true;
+    }
+
+    if (newAuditEntries.length > 0) {
+      const [op, td] = await Promise.all([
+        ClientOperationsModel.findOne({ clientEmail: emailLower })
+          .select("exclusionSanitizeAudit")
+          .lean(),
+        ClientTodosModel.findOne({ clientEmail: emailLower })
+          .select("exclusionSanitizeAudit")
+          .lean(),
+      ]);
+      const mergedExisting = mergeExclusionAudit(
+        op?.exclusionSanitizeAudit,
+        td?.exclusionSanitizeAudit
+      );
+      updateData.exclusionSanitizeAudit = [...mergedExisting, ...newAuditEntries].slice(-100);
+      shouldReconcileExclusions = true;
+    }
+
     // Update both models simultaneously to keep them in sync
     const [clientOps, clientTodos] = await Promise.all([
       ClientOperationsModel.findOneAndUpdate(
@@ -279,10 +353,20 @@ export const updateClientOperations = async (req, res) => {
       await clientTodos.save();
     }
 
+    let reconciliation = null;
+    if (shouldReconcileExclusions) {
+      try {
+        reconciliation = await reconcileExclusionJobsForClient(emailLower);
+      } catch (reconcileErr) {
+        console.error("reconcileExclusionJobsForClient:", reconcileErr);
+      }
+    }
+
     return res.status(200).json({
       success: true,
       message: "Client operations updated successfully",
-      data: clientOps
+      data: clientOps,
+      ...(reconciliation && { reconciliation }),
     });
   } catch (error) {
     console.error("Error updating client operations:", error);

@@ -41,6 +41,12 @@ export const JobSchema = new mongoose.Schema({
     required: true,
     default: 'unknown'
   },
+  /** Job location (e.g. from extension); used for exclusion reconciliation */
+  jobLocation: {
+    type: String,
+    required: false,
+    default: ''
+  },
   timeline: {
     type: [String],
     required: true,

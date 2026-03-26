@@ -1,7 +1,13 @@
 // controllers/StoreJobAndUserDetails.js
 import { JobModel } from "../Schema_Models/JobModel.js";
+import { ClientOperationsModel } from "../Schema_Models/ClientOperationsModel.js";
 import { isClientLocked } from "./operations/ClientOperations.js";
 import { resolveAddedByFromExtensionCode } from "../Utils/resolveAddedByFromExtensionCode.js";
+import {
+    buildExclusionCheckSets,
+    isCompanyBlocked,
+    isLocationBlocked,
+} from "../Utils/exclusionLists.js";
 
 /**
  * Normalize job title/company for duplicate check: trim and collapse multiple spaces.
@@ -173,6 +179,7 @@ export async function saveToDashboard(req, res) {
             url,
             extensionCode,
             operatorEmail,
+            location,
         } = req.body;
 
         // --- Input Validation (no changes here) ---
@@ -227,8 +234,19 @@ export async function saveToDashboard(req, res) {
             details: []
         };
 
-        for (const email of selectedEmails) {
-            const userEmail = email.trim();
+        const locationStr =
+            location !== undefined && location !== null ? String(location) : "";
+
+        const trimmedEmails = selectedEmails.map((e) => String(e).trim());
+        const emailsLower = trimmedEmails.map((e) => e.toLowerCase());
+        const opsDocs = await ClientOperationsModel.find({
+            clientEmail: { $in: emailsLower },
+        }).lean();
+        const opsByEmail = new Map(
+            opsDocs.map((d) => [d.clientEmail, d])
+        );
+
+        for (const userEmail of trimmedEmails) {
             try {
                 const lockCheck = await isClientLocked(userEmail);
                 if (lockCheck.isLocked) {
@@ -237,6 +255,34 @@ export async function saveToDashboard(req, res) {
                         user: userEmail,
                         status: 'failed',
                         reason: lockCheck.message || "Client is in lock period"
+                    });
+                    continue;
+                }
+
+                const opsDoc = opsByEmail.get(userEmail.toLowerCase());
+                const { companySet, locationExactSet, locationTokenSet } =
+                    buildExclusionCheckSets(
+                        opsDoc?.excludedCompanies,
+                        opsDoc?.excludedLocations
+                    );
+
+                if (isCompanyBlocked(company, companySet)) {
+                    summary.failedWithError++;
+                    summary.details.push({
+                        user: userEmail,
+                        status: "failed",
+                        error: "BLOCKED_COMPANY",
+                        reason: "Company name is blocked for this client.",
+                    });
+                    continue;
+                }
+                if (isLocationBlocked(locationStr, locationExactSet, locationTokenSet)) {
+                    summary.failedWithError++;
+                    summary.details.push({
+                        user: userEmail,
+                        status: "failed",
+                        error: "BLOCKED_LOCATION",
+                        reason: "Location is blocked for this client.",
                     });
                     continue;
                 }
@@ -271,6 +317,7 @@ export async function saveToDashboard(req, res) {
                     jobTitle: position,
                     joblink: url,
                     companyName: company,
+                    jobLocation: locationStr || "",
                     companyLogo : logo,
                     currentStatus: "saved",
                     jobDescription: description || "",

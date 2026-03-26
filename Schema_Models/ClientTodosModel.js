@@ -40,6 +40,20 @@ const ClientTodosSchema = new mongoose.Schema({
       default: () => new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })
     }
   }],
+  excludedCompanies: {
+    type: [String],
+    default: []
+  },
+  excludedLocations: {
+    type: [String],
+    default: []
+  },
+  exclusionSanitizeAudit: [{
+    text: { type: String, default: "" },
+    kind: { type: String, enum: ["company", "location"], default: "company" },
+    reason: { type: String, default: "" },
+    removedAt: { type: String, default: "" }
+  }],
   lockPeriods: [{
     id: {
       type: String,
