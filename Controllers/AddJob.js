@@ -1,6 +1,7 @@
 import mongoose from 'mongoose'
 import { JobModel } from '../Schema_Models/JobModel.js';
 import { isClientLocked } from './operations/ClientOperations.js';
+import { getExclusionBlockReason } from '../Utils/exclusionGuard.js';
 
 export default async function AddJob(req, res) {
     let {jobDetails, userDetails, role, operationsEmail} = req.body;
@@ -14,6 +15,29 @@ export default async function AddJob(req, res) {
                 return res.status(403).json({
                     success: false,
                     message: lockCheck.message || "Client is in lock period"
+                });
+            }
+        }
+
+        const clientForExclusions = jobDetails?.userID || userDetails?.email;
+        if (clientForExclusions) {
+            const blockReason = await getExclusionBlockReason(
+                clientForExclusions,
+                jobDetails?.companyName,
+                jobDetails?.jobLocation
+            );
+            if (blockReason === "BLOCKED_COMPANY") {
+                return res.status(403).json({
+                    success: false,
+                    error: "BLOCKED_COMPANY",
+                    message: "This company is blocked for this client.",
+                });
+            }
+            if (blockReason === "BLOCKED_LOCATION") {
+                return res.status(403).json({
+                    success: false,
+                    error: "BLOCKED_LOCATION",
+                    message: "This location is blocked for this client.",
                 });
             }
         }

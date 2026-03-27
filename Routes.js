@@ -222,8 +222,9 @@ app.get("/cache-stats", getCacheStats);
 app.post("/clear-cache", clearCache);
 
 
-// Job routes
+// Job routes (dashboard manual add + job board — same handler, duplicate + exclusion checks)
 app.post("/addjob", CheckForDuplicateJobs, AddJob);
+app.post("/api/jobs", CheckForDuplicateJobs, AddJob);
 app.get("/getalljobs", LocalTokenValidator, GetAllJobs);
 app.post("/getalljobs", GetAllJobs);
 app.post("/storejobanduserdetails", StoreJobAndUserDetails);
