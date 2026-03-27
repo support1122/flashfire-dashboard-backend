@@ -1,3 +1,8 @@
+/**
+ * Reconciliation: one ClientOperations read → build Sets (hash-set lookups),
+ * one JobModel.find for userID → each job O(1) company + O(k) location tokens.
+ * bulkWrite updates all matches in one round-trip.
+ */
 import { JobModel } from "../../Schema_Models/JobModel.js";
 import { UserModel } from "../../Schema_Models/UserModel.js";
 import { ClientOperationsModel } from "../../Schema_Models/ClientOperationsModel.js";
