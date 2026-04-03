@@ -415,6 +415,18 @@ async function processJob(job) {
 
   // Step 2: Prepare filtered resume (mirrors frontend logic from JobModal.tsx)
   const checkboxStates = resumeData.checkboxStates || {};
+
+  // Warn when checkboxStates is missing — this means user section preferences
+  // (showProjects, showLeadership, etc.) will fall back to defaults instead of
+  // the user's actual choices. This usually means the Gemini microservice isn't
+  // returning checkboxStates for this user's resume.
+  if (!resumeData.checkboxStates) {
+    console.warn(
+      `${tag} checkboxStates missing from resume — using defaults (showSummary=true, showProjects=false, showLeadership=false). ` +
+      `User's section preferences will NOT be applied for this optimization.`
+    );
+  }
+
   const filteredResume = {
     ...resumeData,
     summary: checkboxStates.showSummary !== false ? resumeData.summary : '',
@@ -443,6 +455,34 @@ async function processJob(job) {
     const err = new Error('Optimization returned empty/invalid data');
     err._stage = 'Gemini Optimization Response Validation';
     throw err;
+  }
+
+  // Guard: if Gemini dropped work experience entries, restore the missing originals.
+  // The prompt instructs Gemini to keep all entries but it sometimes ignores this.
+  // We never save a result with fewer work experiences than the original.
+  const origWorkExp = Array.isArray(resumeData.workExperience) ? resumeData.workExperience : [];
+  const optWorkExp = Array.isArray(optimizedData.workExperience) ? optimizedData.workExperience : [];
+  if (origWorkExp.length > 0 && optWorkExp.length < origWorkExp.length) {
+    // Build a lookup of IDs that survived in the optimized output
+    const survivedIds = new Set(
+      optWorkExp.filter(e => e && e.id != null).map(e => String(e.id))
+    );
+    // Collect original entries that are completely absent from the optimized result
+    const droppedEntries = origWorkExp.filter(e => {
+      if (e && e.id != null) return !survivedIds.has(String(e.id));
+      // No id: compare by index — entries beyond the optimized array length are dropped
+      return optWorkExp.indexOf(e) === -1;
+    });
+    if (droppedEntries.length > 0) {
+      console.warn(
+        `${tag} Gemini dropped ${droppedEntries.length} work experience ` +
+        `entr${droppedEntries.length === 1 ? 'y' : 'ies'} ` +
+        `(original: ${origWorkExp.length}, returned: ${optWorkExp.length}). ` +
+        `Restoring originals: ${droppedEntries.map(e => e.position || e.company || e.id).join(', ')}`
+      );
+      // Append dropped originals at the end so nothing is lost
+      optimizedData.workExperience = [...optWorkExp, ...droppedEntries];
+    }
   }
 
   // Step 4: Upload optimized resume to R2

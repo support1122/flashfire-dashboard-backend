@@ -149,7 +149,7 @@ const handleUpdateStatus = async (req, res, jobID, userEmail, userDetails) => {
   const [_, currentJob] = await Promise.all([
     checkRemovalLimit(userEmail, trimmedStatus, role),
     JobModel.findOne({ jobID, userID: userEmail })
-      .select('currentStatus companyName jobTitle')
+      .select('currentStatus companyName jobTitle appliedDate')
       .lean()
   ]);
 
@@ -167,8 +167,8 @@ const handleUpdateStatus = async (req, res, jobID, userEmail, userDetails) => {
     ...buildOperatorFields(role, req.body, userDetails)
   };
 
-  // Set appliedDate if transitioning from saved to applied
-  if (shouldSetAppliedDate(currentJob.currentStatus, statusToSet)) {
+  // Set appliedDate only on the first transition to applied (never overwrite once set)
+  if (shouldSetAppliedDate(currentJob.currentStatus, statusToSet) && !currentJob.appliedDate) {
     updateFields.appliedDate = getCurrentISTTime();
   }
 
@@ -218,7 +218,7 @@ const handleEdit = async (req, res, jobID, userEmail, userDetails) => {
   const [_, existingJob] = await Promise.all([
     checkRemovalLimit(userEmail, status, role),
     JobModel.findOne({ jobID, userID: userEmail })
-      .select('currentStatus companyName jobTitle')
+      .select('currentStatus companyName jobTitle appliedDate')
       .lean()
   ]);
 
@@ -243,8 +243,8 @@ const handleEdit = async (req, res, jobID, userEmail, userDetails) => {
     ...buildOperatorFields(role, req.body, userDetails)
   };
 
-  // Set appliedDate if transitioning from saved to applied
-  if (shouldSetAppliedDate(existingJob.currentStatus, nextStatus)) {
+  // Set appliedDate only on the first transition to applied (never overwrite once set)
+  if (shouldSetAppliedDate(existingJob.currentStatus, nextStatus) && !existingJob.appliedDate) {
     updateFields.appliedDate = getCurrentISTTime();
   }
 

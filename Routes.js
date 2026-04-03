@@ -56,6 +56,7 @@ import gmailRouter from "./Controllers/GmailRouter.js";
 import { listGroups, createGroup, getGroup, updateGroup } from "./Controllers/RecruiterAutomation.js";
 import { getWhatsAppGroups, linkUserToGroup, getUserGroupMapping, sendCustomNotification, checkNotificationCooldown } from "./Controllers/whatsapp/WhatsAppController.js";
 import { generateExtensionCode, verifyExtensionCode, listExtensionCodes } from "./Controllers/operations/ExtensionCodes.js";
+import { fixAppliedDates } from "./Controllers/FixAppliedDates.js";
 
 
 
@@ -230,6 +231,9 @@ app.post("/getalljobs", GetAllJobs);
 app.post("/storejobanduserdetails", StoreJobAndUserDetails);
 app.put("/updatechanges", VerifyJobIDAndChanges, UpdateChanges);
 app.post("/get-removal-reason", GetRemovalReason);
+
+// One-time data fix: reset appliedDate for Feb/March 2026 applied jobs to dateAdded + 1 day
+app.post("/fix/applied", fixAppliedDates);
 
 // Plan routes
 app.post('/api/plans/select', PlanSelect);
