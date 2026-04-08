@@ -42,9 +42,15 @@ export default async function AddJob(req, res) {
             }
         }
         
-        // Queue for auto-optimization if job has a description
+        // Always set an explicit auto-optimization state so ops can see what happened.
         if (jobDetails.jobDescription?.trim()) {
             jobDetails.autoOptimization = { status: 'pending', attempts: 0 };
+        } else {
+            jobDetails.autoOptimization = {
+                status: 'skipped',
+                attempts: 0,
+                error: 'Skipped: missing job description'
+            };
         }
 
         const createdJob = await JobModel.create(jobDetails);

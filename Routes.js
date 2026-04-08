@@ -41,6 +41,7 @@ import GetUserResumes from "./Controllers/operations/GetUserResumes.js";
 import GetAllJobsOPS from "./Controllers/operations/GetAllJobs.js";
 import { getClientOperations, updateClientOperations, checkLockPeriod } from "./Controllers/operations/ClientOperations.js";
 import { reconcileExclusionJobsHandler } from "./Controllers/operations/reconcileExclusionJobs.js";
+import { queueAutoOptimizeSavedJobs } from "./Controllers/operations/QueueAutoOptimizeSavedJobs.js";
 import ForgotPassword from "./Controllers/ForgotPassword.js";
 import ExtensionLogin from "./Controllers/Extensions/login.js";
 import { ReciveData } from "./Controllers/Extensions/reciveData.js";
@@ -319,6 +320,7 @@ app.post('/operations/client-operations', getClientOperations);
 app.put('/operations/client-operations', updateClientOperations);
 app.post('/operations/reconcile-exclusion-jobs', reconcileExclusionJobsHandler);
 app.post('/operations/check-lock-period', checkLockPeriod);
+app.post('/operations/auto-optimize-saved', queueAutoOptimizeSavedJobs);
 
 //extensions
 app.post('/extension/login', ExtensionLogin);
