@@ -329,9 +329,15 @@ export async function saveToDashboard(req, res) {
                     addedBy: addedByFromCode,
                 };
 
-                // Queue for auto-optimization if job has a description
+                // Always keep explicit status for ops visibility and debugging.
                 if (payload.jobDescription?.trim()) {
                     payload.autoOptimization = { status: 'pending', attempts: 0 };
+                } else {
+                    payload.autoOptimization = {
+                        status: 'skipped',
+                        attempts: 0,
+                        error: 'Skipped: missing job description'
+                    };
                 }
 
                 const newJob = await JobModel.create(payload);

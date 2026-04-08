@@ -70,3 +70,4 @@ build/
 env.example
 *.example
 .env
+/.omc
