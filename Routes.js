@@ -5,7 +5,7 @@ import Login from "./Controllers/Login.js";
 import Register from "./Controllers/Register.js";
 import GoogleOAuth from "./Controllers/GoogleOAuth.js";
 import { getAllClients } from './Controllers/ClientController.js';
-import { getDashboardManagers, getDashboardManagerByName } from './Controllers/DashboardManagerController.js';
+import { getDashboardManagers, getDashboardManagerByName, syncDashboardManagers } from './Controllers/DashboardManagerController.js';
 import Add_Update_Profile from "./Controllers/Add_Update_Profile.js";
 import AddJob from "./Controllers/AddJob.js";
 import GetAllJobs from "./Controllers/GetAllJobs.js";
@@ -71,6 +71,7 @@ app.post("/google-oauth", GoogleOAuth);
 app.post("/api/clients/register", RegisterVerify, Register);
 app.get("/api/clients/all", getAllClients);
 app.get("/api/dashboard-managers", getDashboardManagers);
+app.get("/sync/managers", syncDashboardManagers);
 app.post("/refresh-token", RefreshToken);
 app.post('/get-updated-user', async (req, res) => {
   try {
