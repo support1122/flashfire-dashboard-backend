@@ -32,6 +32,7 @@ const CLIENT_TRACKING_BASE_URL = (process.env.CLIENT_TRACKING_API_BASE_URL || ''
 
 const escapeRegex = (value = '') => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const normalizeName = (value = '') => String(value).trim().replace(/\s+/g, ' ').toLowerCase();
+const firstWord = (value = '') => normalizeName(value).split(' ')[0] || '';
 
 const buildFallbackProfilePhoto = (fullName = 'Manager') =>
   `https://ui-avatars.com/api/?name=${encodeURIComponent(fullName)}&background=f97316&color=ffffff&bold=true`;
@@ -92,10 +93,16 @@ export const getDashboardManagerByName = async (req, res) => {
       });
     }
 
-    // 3) Try normalized match in local list (handles odd spacing/casing).
+    // 3) Try normalized/full-name and first-name match in local list.
     if (!manager) {
       const localManagers = await DashboardManager.find({}).select('fullName profilePhoto email phone isActive').lean();
-      const normalizedLocal = localManagers.find((m) => normalizeName(m?.fullName) === normalizedTargetName);
+      const targetFirstWord = firstWord(trimmedName);
+      const normalizedLocal = localManagers.find((m) => {
+        const normalizedFull = normalizeName(m?.fullName);
+        if (normalizedFull === normalizedTargetName) return true;
+        // Support short input like "Sarah" resolving to "Sarah Ali"
+        return !!targetFirstWord && firstWord(normalizedFull) === targetFirstWord;
+      });
       if (normalizedLocal) {
         manager = normalizedLocal;
       }
@@ -105,7 +112,12 @@ export const getDashboardManagerByName = async (req, res) => {
     if (!manager) {
       try {
         const sourceManagers = await fetchManagersFromClientsTracking();
-        const sourceMatch = sourceManagers.find((m) => normalizeName(m?.fullName) === normalizedTargetName);
+        const targetFirstWord = firstWord(trimmedName);
+        const sourceMatch = sourceManagers.find((m) => {
+          const normalizedFull = normalizeName(m?.fullName);
+          if (normalizedFull === normalizedTargetName) return true;
+          return !!targetFirstWord && firstWord(normalizedFull) === targetFirstWord;
+        });
 
         if (sourceMatch) {
           const upsertPayload = {
