@@ -4,11 +4,14 @@ import { isClientLocked } from './operations/ClientOperations.js';
 import { getExclusionBlockReason } from '../Utils/exclusionGuard.js';
 
 export default async function AddJob(req, res) {
-    let {jobDetails, userDetails, role, operationsEmail} = req.body;
-    
+    let { jobDetails, userDetails, role, operationsEmail, operationsName } = req.body;
+
     try {
-        const isOperations = role === 'operations' || (operationsEmail && operationsEmail.endsWith('@flashfirehq'));
-        
+        const isOpsRole = role === 'operations' || role === 'operator';
+        const isOperations =
+            isOpsRole ||
+            (operationsEmail && String(operationsEmail).endsWith('@flashfirehq'));
+
         if (isOperations && jobDetails?.userID) {
             const lockCheck = await isClientLocked(jobDetails.userID);
             if (lockCheck.isLocked) {
@@ -51,6 +54,24 @@ export default async function AddJob(req, res) {
                 attempts: 0,
                 error: 'Skipped: missing job description'
             };
+        }
+
+        const opsDisplayName =
+            (operationsName && String(operationsName).trim()) ||
+            (userDetails?.name && String(userDetails.name).trim()) ||
+            'operations';
+
+        if (isOpsRole) {
+            jobDetails.createdByRole = 'operations';
+            jobDetails.timeline = ['Added'];
+            jobDetails.operatorName = opsDisplayName;
+            jobDetails.operatorEmail = operationsEmail || 'operations@flashfirehq';
+            jobDetails.addedBy = opsDisplayName;
+        } else {
+            jobDetails.createdByRole = 'user';
+            jobDetails.timeline = ['Added by user'];
+            jobDetails.operatorName = 'user';
+            jobDetails.operatorEmail = 'user@flashfirehq';
         }
 
         const createdJob = await JobModel.create(jobDetails);

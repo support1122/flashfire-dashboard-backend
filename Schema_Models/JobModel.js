@@ -97,6 +97,13 @@ export const JobSchema = new mongoose.Schema({
     required: false,
     default: null
   },
+  /** Who created the job in the dashboard: end client vs operations (extension jobs may omit). */
+  createdByRole: {
+    type: String,
+    required: false,
+    enum: ["user", "operations"],
+    default: undefined,
+  },
   appliedDate: {
     type: String,
     required: false,

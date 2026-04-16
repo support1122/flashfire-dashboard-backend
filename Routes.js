@@ -48,6 +48,9 @@ import { ReciveData } from "./Controllers/Extensions/reciveData.js";
 import { extractJobData } from "./Controllers/Extensions/extractJobData.js";
 import ClientLogin from "./Controllers/Extensions/clientLogin.js";
 import { getExtensionExclusionLists } from "./Controllers/Extensions/exclusionLists.js";
+import { getExtensionSettings, updateExtensionSettings } from "./Controllers/Extensions/settings.js";
+import { extGetProfile, extPatchProfile } from "./Controllers/Extensions/profileExt.js";
+import ExtensionAuth from "./Middlewares/ExtensionAuth.js";
 import { ProfileModel } from "./Schema_Models/ProfileModel.js";
 import { UserModel } from "./Schema_Models/UserModel.js";
 import CheckProfile from "./Controllers/CheckProfile.js";
@@ -329,7 +332,11 @@ app.post('/extension/sendData', ReciveData);
 app.post('/extension/extractJobData', extractJobData);
 app.post('/extension/saveToDashboard', saveToDashboard);
 app.post('/extension/exclusion-lists', getExtensionExclusionLists);
+app.post('/extension/settings/get', getExtensionSettings);
+app.post('/extension/settings/update', updateExtensionSettings);
 app.post('/extension/clientLogin', ClientLogin);
+app.get('/extension/profile', ExtensionAuth, extGetProfile);
+app.patch('/extension/profile', ExtensionAuth, extPatchProfile);
 
 // Session management routes for admin dashboard
 app.post('/api/sessions/generate-session-key', generateSessionKey);
