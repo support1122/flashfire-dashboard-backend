@@ -8,6 +8,7 @@ import {
     isCompanyBlocked,
     isLocationBlocked,
 } from "../Utils/exclusionLists.js";
+import { sanitizeJobTitle } from "../Utils/jobTitle.js";
 
 /**
  * Normalize job title/company for duplicate check: trim and collapse multiple spaces.
@@ -39,7 +40,8 @@ export default async function StoreJobAndUserDetails(req, res) {
         };
 
         const { value: userID } = pickKey(b, ["userID", "mappedEmail", "_editedBy"], "unknown@flashfirejobs.com");
-        const { value: jobTitle } = pickKey(b, ["title"], "Untitled Job");
+        const { value: rawJobTitle } = pickKey(b, ["title"], "Untitled Job");
+        const jobTitle = sanitizeJobTitle(rawJobTitle);
         const { value: companyName } = pickKey(b, ["companyName"], "unknown");
         const { value: joblink } = pickKey(b, ["applyUrl", "url"], "www.google.com");
         const { value: jobDescriptionHtml } = pickKey(b, ["descriptionHtml"]);
@@ -189,7 +191,8 @@ export async function saveToDashboard(req, res) {
                 message: "The 'selectedEmails' field is required and must be a non-empty array."
             });
         }
-        if (!position || !company || !url) {
+        const sanitizedPosition = sanitizeJobTitle(position);
+        if (!sanitizedPosition || !company || !url) {
             return res.status(400).json({
                 success: false,
                 message: "Missing required job details: 'position', 'company', and 'url' are required."
@@ -287,7 +290,7 @@ export async function saveToDashboard(req, res) {
                     continue;
                 }
                 
-                const normTitle = normalizeString(position);
+                const normTitle = normalizeString(sanitizedPosition);
                 const normCompany = normalizeString(company);
 
                 // Duplicate check: same user + same job title + same company (case-insensitive).
@@ -314,7 +317,7 @@ export async function saveToDashboard(req, res) {
                     dateAdded: new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }),
                     createdAt: new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }),
                     userID: userEmail,
-                    jobTitle: position,
+                    jobTitle: sanitizedPosition,
                     joblink: url,
                     companyName: company,
                     jobLocation: locationStr || "",
@@ -348,7 +351,7 @@ export async function saveToDashboard(req, res) {
                     jobId: newJob._id
                 });
                 console.log(
-                    `✅ Job saved — user: ${userEmail} | addedBy: "${addedByFromCode}" | code: ${rawExtensionCode} | ${position} @ ${company}`
+                    `✅ Job saved — user: ${userEmail} | addedBy: "${addedByFromCode}" | code: ${rawExtensionCode} | ${sanitizedPosition} @ ${company}`
                 );
 
             } catch (error) {

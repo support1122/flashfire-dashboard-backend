@@ -19,6 +19,7 @@ export const JobSchema = new mongoose.Schema({
   jobTitle: {
     type: String,
     required: true,
+    maxlength: 50,
     default: 'www.jobTitle.com'
   },
   currentStatus: {

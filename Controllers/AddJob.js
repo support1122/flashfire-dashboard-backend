@@ -2,11 +2,21 @@ import mongoose from 'mongoose'
 import { JobModel } from '../Schema_Models/JobModel.js';
 import { isClientLocked } from './operations/ClientOperations.js';
 import { getExclusionBlockReason } from '../Utils/exclusionGuard.js';
+import { sanitizeJobTitle } from '../Utils/jobTitle.js';
 
 export default async function AddJob(req, res) {
     let { jobDetails, userDetails, role, operationsEmail, operationsName } = req.body;
 
     try {
+        jobDetails = jobDetails || {};
+        jobDetails.jobTitle = sanitizeJobTitle(jobDetails?.jobTitle);
+        if (!jobDetails.jobTitle) {
+            return res.status(400).json({
+                success: false,
+                message: "Job title is required and must be at most 50 characters."
+            });
+        }
+
         const isOpsRole = role === 'operations' || role === 'operator';
         const isOperations =
             isOpsRole ||
