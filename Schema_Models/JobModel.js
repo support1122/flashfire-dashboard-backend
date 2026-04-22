@@ -19,6 +19,7 @@ export const JobSchema = new mongoose.Schema({
   jobTitle: {
     type: String,
     required: true,
+    maxlength: 50,
     default: 'www.jobTitle.com'
   },
   currentStatus: {
@@ -96,6 +97,13 @@ export const JobSchema = new mongoose.Schema({
     type: String,
     required: false,
     default: null
+  },
+  /** Who created the job in the dashboard: end client vs operations (extension jobs may omit). */
+  createdByRole: {
+    type: String,
+    required: false,
+    enum: ["user", "operations"],
+    default: undefined,
   },
   appliedDate: {
     type: String,

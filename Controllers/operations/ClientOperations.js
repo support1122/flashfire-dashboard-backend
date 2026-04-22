@@ -95,6 +95,28 @@ const mergeExclusionAudit = (a, b) => {
   return out.slice(-100);
 };
 
+const mergeAutofillPreferences = (a, b) => {
+  const src = (a && Object.keys(a).length ? a : null) || (b && Object.keys(b).length ? b : null) || {};
+  return {
+    autoClickNextPage: src.autoClickNextPage !== false,
+    autoSubmit: src.autoSubmit === true,
+    saveResponses: src.saveResponses !== false,
+    updatedAt: src.updatedAt || getCurrentISTTime(),
+  };
+};
+
+const mergeResumeRefs = (a, b) => {
+  const src = (a && Object.keys(a).length ? a : null) || (b && Object.keys(b).length ? b : null) || {};
+  return {
+    resumeId: src.resumeId || "",
+    resumeVersion: src.resumeVersion || "",
+    resumeLink: src.resumeLink || "",
+    source: src.source || "",
+    syncedAt: src.syncedAt || "",
+    updatedAt: src.updatedAt || getCurrentISTTime(),
+  };
+};
+
 // Helper function to get default TODOs
 const getDefaultTodos = () => {
   const timestamp = Date.now();
@@ -157,6 +179,8 @@ export const getClientOperations = async (req, res) => {
         excludedCompanies: [],
         excludedLocations: [],
         exclusionSanitizeAudit: [],
+        extensionAutofillPreferences: mergeAutofillPreferences(null, null),
+        extensionResumeRefs: mergeResumeRefs(null, null),
         createdAt: getCurrentISTTime(),
         updatedAt: getCurrentISTTime()
       };
@@ -190,6 +214,14 @@ export const getClientOperations = async (req, res) => {
         clientOps?.exclusionSanitizeAudit,
         clientTodos?.exclusionSanitizeAudit
       );
+      const mergedAutofillPreferences = mergeAutofillPreferences(
+        clientOps?.extensionAutofillPreferences,
+        clientTodos?.extensionAutofillPreferences
+      );
+      const mergedResumeRefs = mergeResumeRefs(
+        clientOps?.extensionResumeRefs,
+        clientTodos?.extensionResumeRefs
+      );
 
       // Ensure default TODOs are present
       const defaultTodoTitles = ["Create optimized resume", "LinkedIn Optimization", "Cover letter Optimization"];
@@ -213,6 +245,8 @@ export const getClientOperations = async (req, res) => {
         excludedCompanies: mergedExcludedCompanies,
         excludedLocations: mergedExcludedLocations,
         exclusionSanitizeAudit: mergedExclusionAudit,
+        extensionAutofillPreferences: mergedAutofillPreferences,
+        extensionResumeRefs: mergedResumeRefs,
         updatedAt: getCurrentISTTime()
       };
 

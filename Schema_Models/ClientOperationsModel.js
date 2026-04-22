@@ -57,6 +57,26 @@ const ClientOperationsSchema = new mongoose.Schema({
     reason: { type: String, default: "" },
     removedAt: { type: String, default: "" }
   }],
+  extensionAutofillPreferences: {
+    autoClickNextPage: { type: Boolean, default: true },
+    autoSubmit: { type: Boolean, default: false },
+    saveResponses: { type: Boolean, default: true },
+    updatedAt: {
+      type: String,
+      default: () => new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })
+    }
+  },
+  extensionResumeRefs: {
+    resumeId: { type: String, default: "" },
+    resumeVersion: { type: String, default: "" },
+    resumeLink: { type: String, default: "" },
+    source: { type: String, default: "" },
+    syncedAt: { type: String, default: "" },
+    updatedAt: {
+      type: String,
+      default: () => new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })
+    }
+  },
   lockPeriods: [{
     id: {
       type: String,

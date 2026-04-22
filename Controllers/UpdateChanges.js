@@ -323,7 +323,7 @@ export default async function UpdateChanges(req, res) {
     const updatedJobs = returnUpdatedJobs !== false
       ? await JobModel.find({ userID: userEmail })
         .select(
-          'jobID jobTitle companyName currentStatus createdAt updatedAt joblink dateAdded appliedDate attachments optimizedResume.hasResume optimizedResumeSeen autoOptimization timeline addedBy operatorName operatorEmail'
+          'jobID jobTitle companyName currentStatus createdAt updatedAt joblink dateAdded appliedDate attachments optimizedResume.hasResume optimizedResumeSeen autoOptimization timeline addedBy createdByRole operatorName operatorEmail'
         )
         .sort({ updatedAt: -1 })
         .lean()
