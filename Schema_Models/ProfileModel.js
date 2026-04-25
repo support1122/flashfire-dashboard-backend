@@ -329,6 +329,26 @@ export const profileSchema = new mongoose.Schema({
     type: String,
     required: false,
   },
+  veteranStatus: {
+    type: String,
+    required: false,
+    default: "",
+  },
+  disabilityStatus: {
+    type: String,
+    required: false,
+    default: "",
+  },
+  scholarshipRequired: {
+    type: String,
+    required: false,
+    default: "",
+  },
+  usWorkEligibility: {
+    type: String,
+    required: false,
+    default: "",
+  },
   joinTime: {
     type: String,
     enum: ["in 1 week", "in 2 week", "in 3 week", "in 4 week", "in 6-7 week"],
