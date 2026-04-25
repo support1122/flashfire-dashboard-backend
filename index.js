@@ -280,14 +280,31 @@ app.use(helmet({
   },
 }));
 // Rate limiting
+//
+// The scraper VM hammers /get-profile, /get-exclusions, /addjob etc. from
+// a single egress IP. The default 100 req / 15 min was tripping on every
+// medium scrape and surfacing as `BAD_STATUS 429` in scraper runs. Two
+// changes:
+//   1. `skip` lets requests carrying the shared service token bypass the
+//      counter entirely. The scraper attaches `x-service-token` (see
+//      DASH/scraper/src/clients/common/httpClient.js) so its bursts no
+//      longer eat into the public-IP budget.
+//   2. Bumped the public default from 100 → 600 / 15 min. Public traffic
+//      is operator + clients, both of which can legitimately spike past
+//      100 with normal navigation.
 const limiter = rateLimit({
   windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS) || 15 * 60 * 1000, // 15 minutes
-  max: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS) || 100, // limit each IP to 100 requests per windowMs
+  max: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS) || 600,
   message: {
     error: "Too many requests from this IP, please try again later.",
   },
   standardHeaders: true,
   legacyHeaders: false,
+  skip: (req) => {
+    const token = req.headers["x-service-token"];
+    const expected = process.env.DASHBOARD_SERVICE_TOKEN;
+    return Boolean(expected) && typeof token === "string" && token === expected;
+  },
 });
 
 app.use(limiter);
