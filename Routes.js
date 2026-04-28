@@ -9,6 +9,7 @@ import { getDashboardManagers, getDashboardManagerByName, syncDashboardManagers 
 import Add_Update_Profile from "./Controllers/Add_Update_Profile.js";
 import AddJob from "./Controllers/AddJob.js";
 import GetAllJobs from "./Controllers/GetAllJobs.js";
+import Get24HourJobs from "./Controllers/Get24HourJobs.js";
 import StoreJobAndUserDetails, { saveToDashboard } from "./Controllers/StoreJobAndUserDetails.js";
 import UpdateChanges from "./Controllers/UpdateChanges.js";
 import GetRemovalReason from "./Controllers/GetRemovalReason.js";
@@ -233,6 +234,7 @@ app.post("/addjob", CheckForDuplicateJobs, AddJob);
 app.post("/api/jobs", CheckForDuplicateJobs, AddJob);
 app.get("/getalljobs", LocalTokenValidator, GetAllJobs);
 app.post("/getalljobs", GetAllJobs);
+app.get("/get/prev24hourjobs", Get24HourJobs);
 app.post("/storejobanduserdetails", StoreJobAndUserDetails);
 app.put("/updatechanges", VerifyJobIDAndChanges, UpdateChanges);
 app.post("/get-removal-reason", GetRemovalReason);
