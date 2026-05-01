@@ -71,3 +71,12 @@ env.example
 *.example
 .env
 /.omc
+/graphify-out
+*.txt
+.graphify_analysis.json
+.graphify_ast.json
+.graphify_detect.json
+.graphify_extract.json
+.graphify_labels.json
+.graphify_python
+.graphify_semantic.json

@@ -1,5 +1,6 @@
 import mongoose from 'mongoose'
 import { JobModel } from '../Schema_Models/JobModel.js';
+import { ProfileModel } from '../Schema_Models/ProfileModel.js';
 import { isClientLocked } from './operations/ClientOperations.js';
 import { getExclusionBlockReason } from '../Utils/exclusionGuard.js';
 import { sanitizeJobTitle } from '../Utils/jobTitle.js';
@@ -33,6 +34,37 @@ export default async function AddJob(req, res) {
         }
 
         const clientForExclusions = jobDetails?.userID || userDetails?.email;
+
+        // Target-job-count cap. Refuse new ops pushes once the operator-set
+        // limit has been reached. Applies only to operations role; user
+        // role is unaffected (clients can still self-track).
+        if (isOpsRole && clientForExclusions) {
+            try {
+                const profile = await ProfileModel.findOne(
+                    { email: String(clientForExclusions).toLowerCase() },
+                    { targetJobCount: 1 },
+                ).lean();
+                const cap = Number(profile?.targetJobCount);
+                if (Number.isFinite(cap) && cap > 0) {
+                    const opsCount = await JobModel.countDocuments({
+                        userID: String(clientForExclusions).toLowerCase(),
+                        createdByRole: 'operations',
+                    });
+                    if (opsCount >= cap) {
+                        return res.status(403).json({
+                            success: false,
+                            error: 'TARGET_REACHED',
+                            message: `Client target reached (${opsCount}/${cap} jobs). Update target in Clients-Tracking → AI Summary tab to push more.`,
+                            cap,
+                            current: opsCount,
+                        });
+                    }
+                }
+            } catch (e) {
+                console.warn('TARGET_REACHED check failed:', e.message);
+            }
+        }
+
         if (clientForExclusions) {
             const blockReason = await getExclusionBlockReason(
                 clientForExclusions,

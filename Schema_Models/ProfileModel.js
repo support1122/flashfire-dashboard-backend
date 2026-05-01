@@ -417,6 +417,51 @@ export const profileSchema = new mongoose.Schema({
     required: false,
     default: "",
   },
+  // Maximum number of jobs operators are allowed to push for this
+  // client. /addjob checks JobModel.count vs this and refuses past the
+  // cap with TARGET_REACHED so we don't over-fill the tracker. Set in
+  // CT RegisterClient or the AI Summary admin tab. 0/null = no cap.
+  targetJobCount: {
+    type: Number,
+    required: false,
+    default: null,
+    min: 0,
+    max: 10000,
+  },
+  // AI-generated candidate summary (≤500 words). Built once from
+  // profile + resume by the JR-direct extension and reused by every
+  // job-fit grading call so picks stay consistent + cheaper.
+  aiSummary: {
+    type: String,
+    required: false,
+    default: "",
+  },
+  // Metadata about the last summary build — model used, source,
+  // timestamp. Kept separately so we can invalidate / regenerate.
+  aiSummaryMeta: {
+    builtAt: { type: Date, required: false, default: null },
+    model: { type: String, required: false, default: "" },
+    source: { type: String, required: false, default: "" }, // "profile+resume" / "profile-only"
+    wordCount: { type: Number, required: false, default: 0 },
+  },
+  // True when the profile has changed since the last summary build.
+  // Set true by Add_Update_Profile.js / file-upload paths; reset to false
+  // when BuildAiSummary or UpdateAiSummary completes. Drives "rebuild"
+  // banners in the AI Summary admin page.
+  summaryStale: {
+    type: Boolean,
+    required: false,
+    default: true,
+  },
+  // Operator's per-client OpenAI API key. Used by the JR-direct extension's
+  // SW to call api.openai.com directly for the auto-judge step. Stored as
+  // plain text per ops decision — extension fetches it on /extension/clientLogin
+  // and stores it in chrome.storage.local on the operator's device.
+  openaiKey: {
+    type: String,
+    required: false,
+    default: "",
+  },
 }, {
   timestamps: true
 });
