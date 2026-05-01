@@ -103,6 +103,9 @@ export async function extPatchProfile(req, res) {
       return res.status(400).json({ message: "No valid fields in patch" });
     }
 
+    // Any profile change marks the AI summary stale.
+    $set.summaryStale = true;
+
     // strictQuery false on upsert — only set fields present
     const updated = await ProfileModel.findOneAndUpdate(
       { email },

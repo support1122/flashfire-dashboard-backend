@@ -886,6 +886,8 @@ export default async function Add_Update_Profile(req, res) {
           dashboardManager: dashboardManager !== undefined ? dashboardManager : existingProfile.dashboardManager,
           dashboardManagerContact: dashboardManagerContact !== undefined ? dashboardManagerContact : existingProfile.dashboardManagerContact,
           referredBy: referredBy !== undefined ? referredBy : existingProfile.referredBy,
+          // Profile changed → flag summary as stale so admin sees the rebuild banner.
+          summaryStale: true,
         };
 
         const updatedProfile = await ProfileModel.findOneAndUpdate(
@@ -950,6 +952,8 @@ export default async function Add_Update_Profile(req, res) {
         dashboardManager: dashboardManager !== undefined ? dashboardManager : existingProfile.dashboardManager,
         dashboardManagerContact: dashboardManagerContact !== undefined ? dashboardManagerContact : existingProfile.dashboardManagerContact,
         referredBy: referredBy !== undefined ? referredBy : existingProfile.referredBy,
+        // Profile changed → flag summary as stale so admin sees the rebuild banner.
+        summaryStale: true,
       };
 
       const updatedProfile = await ProfileModel.findOneAndUpdate(

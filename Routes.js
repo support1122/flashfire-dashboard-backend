@@ -56,6 +56,12 @@ import { ProfileModel } from "./Schema_Models/ProfileModel.js";
 import { UserModel } from "./Schema_Models/UserModel.js";
 import CheckProfile from "./Controllers/CheckProfile.js";
 import GetProfile from "./Controllers/GetProfile.js";
+import UpdateAiSummary from "./Controllers/UpdateAiSummary.js";
+import BuildAiSummary from "./Controllers/BuildAiSummary.js";
+import UpdateTargetJobs from "./Controllers/UpdateTargetJobs.js";
+import UpdateOpenaiKey from "./Controllers/UpdateOpenaiKey.js";
+import PushHistory from "./Controllers/PushHistory.js";
+import SummariesOverview from "./Controllers/SummariesOverview.js";
 import { generateSessionKey, listSessionKeys, revokeSession, revokeUserSessions, listActiveSessions, verifySessionKey } from "./Controllers/operations/SessionKeys.js";
 import gmailRouter from "./Controllers/GmailRouter.js";
 import { listGroups, createGroup, getGroup, updateGroup } from "./Controllers/RecruiterAutomation.js";
@@ -209,6 +215,19 @@ app.post('/get-referral-stats', async (req, res) => {
 app.get("/get-profile", GetProfile);
 app.post("/check-profile", CheckProfile);
 app.post("/setprofile", ProfileCheck, Add_Update_Profile);
+// AI candidate summary — written by JR-direct extension's "Build Summary"
+// step. Persisted on the profile so every grading call reuses it.
+app.post("/update-ai-summary", UpdateAiSummary);
+// Server-side candidate brief builder. Consumers (JR-direct extension)
+// just POST { email } — backend pulls profile + resume + calls OpenAI.
+app.post("/build-ai-summary", BuildAiSummary);
+// Per-client target job count — enforced by /addjob.
+app.post("/update-target-jobs", UpdateTargetJobs);
+app.post("/update-openai-key", UpdateOpenaiKey);
+// Per-client daily push history — used by CT AI Summary tab "Push History" panel.
+app.get("/push-history", PushHistory);
+// One-shot aggregate for the admin AI Summaries page master list.
+app.get("/summaries-overview", SummariesOverview);
 app.post("/upload-profile-file", upload.single('file'), uploadProfileFile);
 
 // Generic file upload routes (supports both Cloudinary and R2)

@@ -2,6 +2,7 @@ import axios from 'axios';
 import { JobModel } from '../../Schema_Models/JobModel.js';
 import { uploadJSONToR2 } from '../../Utils/r2Storage.js';
 import { DiscordConnect } from '../../Utils/DiscordConnect.js';
+import { buildResumeOptimizationInstructionPrompt } from '../../Utils/resumeOptimizationPrompt.js';
 
 // ─── Configuration ───────────────────────────────────────────────────
 const RESUME_API_URL = process.env.RESUME_API_URL || 'http://localhost:5000';
@@ -12,14 +13,6 @@ const REQUEST_TIMEOUT_MS = parseInt(process.env.AUTO_OPT_REQUEST_TIMEOUT_MS) || 
 const WORKER_ENABLED = process.env.AUTO_OPT_ENABLED !== 'false';
 const STALE_THRESHOLD_MS = 5 * 60 * 1000; // 5 minutes
 const DISCORD_ERROR_URL = process.env.DISCORD_OPTIMIZATION_ERROR_URL;
-
-const OPTIMIZATION_PROMPT =
-  'if you recieve any HTML tages please ignore it and optimize the resume according to the given JD. ' +
-  'Make sure not to cut down or shorten any points in the Work Experience section. ' +
-  'IN all fields please do not cut down or shorten any points or content. ' +
-  'For example, if a role in the base resume has 6 points, the optimized version should also retain all 6 points. ' +
-  'The content should be aligned with the JD but the number of points per role must remain the same. ' +
-  'Do not touch or optimize publications if given to you.';
 
 let isProcessing = false;
 let workerRunning = false;
@@ -413,8 +406,16 @@ async function processJob(job) {
     return;
   }
 
+  // Strip microservice envelope fields — do not send to Gemini inside resume_json
+  const {
+    resumeId: mongoResumeIndexId,
+    firstName,
+    lastName,
+    ...resumePayload
+  } = resumeData;
+
   // Step 2: Prepare filtered resume (mirrors frontend logic from JobModal.tsx)
-  const checkboxStates = resumeData.checkboxStates || {};
+  const checkboxStates = resumePayload.checkboxStates || {};
 
   // Warn when checkboxStates is missing — this means user section preferences
   // (showProjects, showLeadership, etc.) will fall back to defaults instead of
@@ -428,21 +429,27 @@ async function processJob(job) {
   }
 
   const filteredResume = {
-    ...resumeData,
-    summary: checkboxStates.showSummary !== false ? resumeData.summary : '',
-    projects: checkboxStates.showProjects ? resumeData.projects : [],
-    leadership: checkboxStates.showLeadership ? resumeData.leadership : [],
-    publications: resumeData.publications || []
+    ...resumePayload,
+    summary: checkboxStates.showSummary !== false ? resumePayload.summary : '',
+    projects: checkboxStates.showProjects ? resumePayload.projects : [],
+    leadership: checkboxStates.showLeadership ? resumePayload.leadership : [],
+    publications: resumePayload.publications || []
   };
 
-  // Step 3: Call optimize-with-gemini
+  // Step 3: Call optimize-with-gemini (resume_id triggers Discord/token tracking when configured)
+  const optimizeBody = {
+    resume_data: filteredResume,
+    job_description:
+      buildResumeOptimizationInstructionPrompt(job.jobDescription) + job.jobDescription
+  };
+  if (mongoResumeIndexId) {
+    optimizeBody.resume_id = String(mongoResumeIndexId).trim();
+  }
+
   try {
     var optimizeRes = await axios.post(
       `${RESUME_API_URL}/api/optimize-with-gemini`,
-      {
-        resume_data: filteredResume,
-        job_description: OPTIMIZATION_PROMPT + job.jobDescription
-      },
+      optimizeBody,
       { timeout: REQUEST_TIMEOUT_MS }
     );
   } catch (err) {
@@ -460,7 +467,7 @@ async function processJob(job) {
   // Guard: if Gemini dropped work experience entries, restore the missing originals.
   // The prompt instructs Gemini to keep all entries but it sometimes ignores this.
   // We never save a result with fewer work experiences than the original.
-  const origWorkExp = Array.isArray(resumeData.workExperience) ? resumeData.workExperience : [];
+  const origWorkExp = Array.isArray(filteredResume.workExperience) ? filteredResume.workExperience : [];
   const optWorkExp = Array.isArray(optimizedData.workExperience) ? optimizedData.workExperience : [];
   if (origWorkExp.length > 0 && optWorkExp.length < origWorkExp.length) {
     // Build a lookup of IDs that survived in the optimized output
@@ -499,19 +506,13 @@ async function processJob(job) {
   }
 
   // Step 5: Update job in MongoDB with optimized resume + metadata
-  const sectionOrder = resumeData.sectionOrder || [
+  const sectionOrder = resumePayload.sectionOrder || [
     'personalInfo', 'summary', 'workExperience', 'projects',
     'leadership', 'skills', 'education', 'publications'
   ];
 
-  // Baseline must match the exact JSON sent to optimize-with-gemini (not full stored resume).
-  const baselineForDiff = {
-    ...resumeData,
-    summary: filteredResume.summary,
-    projects: filteredResume.projects,
-    leadership: filteredResume.leadership,
-    publications: filteredResume.publications
-  };
+  // Baseline must match the exact JSON sent to optimize-with-gemini
+  const baselineForDiff = { ...filteredResume };
   const changesMade = buildOptimizationChangesMade(baselineForDiff, optimizedData);
 
   await JobModel.findByIdAndUpdate(job._id, {
@@ -589,6 +590,16 @@ export function startAutoOptimizationWorker() {
   }
 
   workerRunning = true;
+
+  const nodeEnv = String(process.env.NODE_ENV || '').toLowerCase();
+  if (nodeEnv === 'production' && /localhost|127\.0\.0\.1/i.test(RESUME_API_URL)) {
+    console.warn(
+      '[AutoOptWorker] RESUME_API_URL points to localhost/127.0.0.1 while NODE_ENV=production. ' +
+        'Deployed dashboard hosts cannot reach your laptop — auto-optimization will stay "queued". ' +
+        'Set RESUME_API_URL to your public Gemini resume API base URL.'
+    );
+  }
+
   console.log('[AutoOptWorker] Starting auto-optimization worker');
   console.log(`[AutoOptWorker] Config: poll=${POLL_INTERVAL_MS}ms, delay=${DELAY_BETWEEN_JOBS_MS}ms, maxAttempts=${MAX_ATTEMPTS}, timeout=${REQUEST_TIMEOUT_MS}ms`);
   console.log(`[AutoOptWorker] Gemini service: ${RESUME_API_URL}`);
