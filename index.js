@@ -250,27 +250,31 @@ const corsOptions = {
     
     // Allow requests with no origin (like mobile apps or curl requests)
     if (!origin) return callback(null, true);
-    
-    if (allowedOrigins.indexOf(origin) !== -1) {
-      callback(null, true);
-    } else {
-      console.log(`CORS blocked origin: ${origin}`);
-      console.log(`Allowed origins: ${allowedOrigins.join(', ')}`);
-      callback(new Error('Not allowed by CORS'));
+
+    // Allow Chrome extension origins
+    if (origin?.startsWith("chrome-extension://")) {
+      return callback(null, true);
     }
+
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+
+    console.log("Blocked by CORS:", origin);
+    return callback(new Error("Not allowed by CORS"));
   },
   credentials: true,
-  optionsSuccessStatus: 200,
-  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With", "Origin", "Accept"],
-     exposedHeaders: ["Content-Length", "X-Requested-With"],
-  preflightContinue: false,
-  maxAge: 86400 // 24 hours
-};
+  methods: ["GET","POST","PUT","PATCH","DELETE","OPTIONS"],
+  allowedHeaders: ["Content-Type","Authorization"],
+}));
 
-app.use(cors());
+// Important: Handle preflight OPTIONS requests for all routes
+// This fixes most production CORS issues
+app.options('*', cors());
 
 app.use(helmet({
+  crossOriginResourcePolicy: { policy: "cross-origin" },
+  crossOriginEmbedderPolicy: false,
   contentSecurityPolicy: {
     directives: {
       defaultSrc: ["'self'"],
@@ -295,6 +299,28 @@ if (NODE_ENV === "development") {
   });
 }
 
+// Health check endpoint (before DB check so it's always accessible)
+app.get("/health", (req, res) => {
+  res.json({ 
+    status: "OK", 
+    message: "Server is running",
+    environment: NODE_ENV,
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime(),
+    port: PORT
+  });
+});
+
+// CORS test endpoint (before DB check so it's always accessible)
+app.get("/cors-test", (req, res) => {
+  res.json({ 
+    message: "CORS test successful",
+    origin: req.headers.origin,
+    cors: "working",
+    timestamp: new Date().toISOString()
+  });
+});
+
 // Protect routes until DB is connected to avoid Mongoose buffering timeouts
 app.use((req, res, next) => {
   if (mongoose.connection.readyState !== 1) {
@@ -308,28 +334,6 @@ app.use((req, res, next) => {
 
 // Routes
 app.use("/", Routes);
-
-// Health check endpoint
-app.get("/health", (req, res) => {
-  res.json({ 
-    status: "OK", 
-    message: "Server is running",
-    environment: NODE_ENV,
-    timestamp: new Date().toISOString(),
-    uptime: process.uptime(),
-    port: PORT
-  });
-});
-
-// CORS test endpoint
-app.get("/cors-test", (req, res) => {
-  res.json({ 
-    message: "CORS test successful",
-    origin: req.headers.origin,
-    cors: "working",
-    timestamp: new Date().toISOString()
-  });
-});
 
 // Root endpoint for Render health checks
 app.get("/", (req, res) => {
