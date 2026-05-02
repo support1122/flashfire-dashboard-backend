@@ -263,12 +263,12 @@ const corsOptions = {
   optionsSuccessStatus: 200,
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With", "Origin", "Accept"],
-     exposedHeaders: ["Content-Length", "X-Requested-With"],
+  exposedHeaders: ["Content-Length", "X-Requested-With"],
   preflightContinue: false,
   maxAge: 86400 // 24 hours
 };
 
-app.use(cors());
+app.use(cors(corsOptions));
 
 app.use(helmet({
   contentSecurityPolicy: {
@@ -399,6 +399,5 @@ app.use((err, req, res, next) => {
     process.exit(1);
   }
 })();
-
 
 
