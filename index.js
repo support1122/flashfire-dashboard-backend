@@ -226,51 +226,13 @@ console.log(`🌐 Server will run on port: ${PORT}`);
 //   },
 // }));
 
-// CORS configuration
-const corsOptions = {
-  origin: function (origin, callback) {
-    const allowedOrigins = NODE_ENV === "production"
-      ? [
-          "https://portal.flashfirejobs.com",
-          "http://localhost:3000",
-          "https://www.portal.flashfirejobs.com",
-          "https://flashfire-dashboard-frontend.vercel.app",
-          "chrome://extensions/?id=feekbkgobkhnfchgngipimimiiglgpnj",
-          "https://flashfire-dashboard.vercel.app",
-          // Clients-tracking / applications-monitor (onboarding attachment uploads)
-          "https://clients-tracking.vercel.app",
-          "https://applications-monitor.flashfirejobs.com",
-          "https://www.applications-monitor.flashfirejobs.com",
-          "https://dashboardtracking.vercel.app",
-          "https://utm-track-frontend.vercel.app",
-          "https://hq.flashfirejobs.com",
-          ...(process.env.ALLOWED_ORIGINS?.split(",") || [])
-        ]
-        : ["http://localhost:3000", "http://localhost:5173", "http://localhost:5000"];
-    
-    // Allow requests with no origin (like mobile apps or curl requests)
-    if (!origin) return callback(null, true);
-    
-    if (allowedOrigins.indexOf(origin) !== -1) {
-      callback(null, true);
-    } else {
-      console.log(`CORS blocked origin: ${origin}`);
-      console.log(`Allowed origins: ${allowedOrigins.join(', ')}`);
-      callback(new Error('Not allowed by CORS'));
-    }
-  },
-  credentials: true,
-  optionsSuccessStatus: 200,
-  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With", "Origin", "Accept"],
-  exposedHeaders: ["Content-Length", "X-Requested-With"],
-  preflightContinue: false,
-  maxAge: 86400 // 24 hours
-};
-
-app.use(cors(corsOptions));
+// Open CORS policy (temporary): allow all origins
+app.use(cors());
+app.options("*", cors());
 
 app.use(helmet({
+  crossOriginResourcePolicy: { policy: "cross-origin" },
+  crossOriginEmbedderPolicy: false,
   contentSecurityPolicy: {
     directives: {
       defaultSrc: ["'self'"],
@@ -295,6 +257,28 @@ if (NODE_ENV === "development") {
   });
 }
 
+// Health check endpoint (before DB check so it's always accessible)
+app.get("/health", (req, res) => {
+  res.json({ 
+    status: "OK", 
+    message: "Server is running",
+    environment: NODE_ENV,
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime(),
+    port: PORT
+  });
+});
+
+// CORS test endpoint (before DB check so it's always accessible)
+app.get("/cors-test", (req, res) => {
+  res.json({ 
+    message: "CORS test successful",
+    origin: req.headers.origin,
+    cors: "working",
+    timestamp: new Date().toISOString()
+  });
+});
+
 // Protect routes until DB is connected to avoid Mongoose buffering timeouts
 app.use((req, res, next) => {
   if (mongoose.connection.readyState !== 1) {
@@ -308,28 +292,6 @@ app.use((req, res, next) => {
 
 // Routes
 app.use("/", Routes);
-
-// Health check endpoint
-app.get("/health", (req, res) => {
-  res.json({ 
-    status: "OK", 
-    message: "Server is running",
-    environment: NODE_ENV,
-    timestamp: new Date().toISOString(),
-    uptime: process.uptime(),
-    port: PORT
-  });
-});
-
-// CORS test endpoint
-app.get("/cors-test", (req, res) => {
-  res.json({ 
-    message: "CORS test successful",
-    origin: req.headers.origin,
-    cors: "working",
-    timestamp: new Date().toISOString()
-  });
-});
 
 // Root endpoint for Render health checks
 app.get("/", (req, res) => {
