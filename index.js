@@ -243,6 +243,7 @@ const corsOptions = {
           "https://www.applications-monitor.flashfirejobs.com",
           "https://dashboardtracking.vercel.app",
           "https://utm-track-frontend.vercel.app",
+          "https://hq.flashfirejobs.com",
           ...(process.env.ALLOWED_ORIGINS?.split(",") || [])
         ]
         : ["http://localhost:3000", "http://localhost:5173", "http://localhost:5000"];
