@@ -226,51 +226,9 @@ console.log(`🌐 Server will run on port: ${PORT}`);
 //   },
 // }));
 
-// CORS configuration
-const corsOptions = {
-  origin: function (origin, callback) {
-    const allowedOrigins = NODE_ENV === "production"
-      ? [
-          "https://portal.flashfirejobs.com",
-          "http://localhost:3000",
-          "https://www.portal.flashfirejobs.com",
-          "https://flashfire-dashboard-frontend.vercel.app",
-          "chrome://extensions/?id=feekbkgobkhnfchgngipimimiiglgpnj",
-          "https://flashfire-dashboard.vercel.app",
-          // Clients-tracking / applications-monitor (onboarding attachment uploads)
-          "https://clients-tracking.vercel.app",
-          "https://applications-monitor.flashfirejobs.com",
-          "https://www.applications-monitor.flashfirejobs.com",
-          "https://dashboardtracking.vercel.app",
-          "https://utm-track-frontend.vercel.app",
-          "https://hq.flashfirejobs.com",
-          ...(process.env.ALLOWED_ORIGINS?.split(",") || [])
-        ]
-        : ["http://localhost:3000", "http://localhost:5173", "http://localhost:5000"];
-    
-    // Allow requests with no origin (like mobile apps or curl requests)
-    if (!origin) return callback(null, true);
-
-    // Allow Chrome extension origins
-    if (origin?.startsWith("chrome-extension://")) {
-      return callback(null, true);
-    }
-
-    if (allowedOrigins.includes(origin)) {
-      return callback(null, true);
-    }
-
-    console.log("Blocked by CORS:", origin);
-    return callback(new Error("Not allowed by CORS"));
-  },
-  credentials: true,
-  methods: ["GET","POST","PUT","PATCH","DELETE","OPTIONS"],
-  allowedHeaders: ["Content-Type","Authorization"],
-}));
-
-// Important: Handle preflight OPTIONS requests for all routes
-// This fixes most production CORS issues
-app.options('*', cors());
+// Open CORS policy (temporary): allow all origins
+app.use(cors());
+app.options("*", cors());
 
 app.use(helmet({
   crossOriginResourcePolicy: { policy: "cross-origin" },
@@ -403,6 +361,5 @@ app.use((err, req, res, next) => {
     process.exit(1);
   }
 })();
-
 
 
