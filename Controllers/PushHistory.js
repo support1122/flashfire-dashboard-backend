@@ -11,6 +11,15 @@ import { ProfileModel } from "../Schema_Models/ProfileModel.js";
 
 const TZ = "Asia/Kolkata";
 
+// Daily cap aligns with /addjob TARGET_REACHED — count ops jobs created since
+// today's 00:00 IST so capInfo.remaining resets every midnight.
+function startOfTodayIST() {
+  const offsetMs = 5.5 * 60 * 60 * 1000;
+  const istNow = new Date(Date.now() + offsetMs);
+  istNow.setUTCHours(0, 0, 0, 0);
+  return new Date(istNow.getTime() - offsetMs);
+}
+
 export default async function PushHistory(req, res) {
   try {
     const email = String(req.query.email || "").trim().toLowerCase();
@@ -53,12 +62,23 @@ export default async function PushHistory(req, res) {
     ];
     const rows = await JobModel.aggregate(pipeline);
 
-    // 2) all-time ops total (used by /addjob cap; also display)
+    // 2) all-time ops total (display only)
     const opsCountAll = await JobModel.countDocuments({
       userID: email,
       createdByRole: "operations",
     });
     const allCount = await JobModel.countDocuments({ userID: email });
+
+    // 2b) today's ops count — drives the cap. Mirrors AddJob.js daily window.
+    const todayStart = startOfTodayIST();
+    const todaySeconds = Math.floor(todayStart.getTime() / 1000);
+    const todayOidHex = todaySeconds.toString(16).padStart(8, "0") + "0000000000000000";
+    const todayLowBound = new ObjectId(todayOidHex);
+    const opsCountToday = await JobModel.countDocuments({
+      userID: email,
+      createdByRole: "operations",
+      _id: { $gte: todayLowBound },
+    });
 
     // 3) target cap (if set on profile)
     const profile = await ProfileModel.findOne(
@@ -74,11 +94,13 @@ export default async function PushHistory(req, res) {
       totals: { ops: opsCountAll, all: allCount },
       capInfo: {
         targetJobCount: profile?.targetJobCount ?? null,
-        currentOps: opsCountAll,
+        currentOps: opsCountToday,
+        currentOpsAllTime: opsCountAll,
+        windowResetsAt: "00:00 Asia/Kolkata",
         remaining:
           Number.isFinite(Number(profile?.targetJobCount))
           && profile.targetJobCount > 0
-            ? Math.max(0, profile.targetJobCount - opsCountAll)
+            ? Math.max(0, profile.targetJobCount - opsCountToday)
             : null,
       },
     });

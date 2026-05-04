@@ -1,5 +1,6 @@
 import { UserModel } from "../../Schema_Models/UserModel.js";
 import { ProfileModel } from "../../Schema_Models/ProfileModel.js";
+import { getAppSettings } from "../../Schema_Models/AppSettings.js";
 import dotenv from 'dotenv';
 import jwt from 'jsonwebtoken'
 import { decrypt } from "../../Utils/CryptoHelper.js";
@@ -20,7 +21,27 @@ export default async function ClientLogin(req, res) {
         if (passwordDecrypted === password) {
             // Find user profile
             let profileLookUp = await ProfileModel.findOne({email});
-            
+
+            // Inject the global OpenAI key as a fallback when the per-client
+            // profile doesn't carry one. Extension prefers profile.openaiKey;
+            // by overlaying global onto a missing/empty value here we keep
+            // the extension code unchanged.
+            if (profileLookUp) {
+                const existingKey = (profileLookUp.openaiKey || "").trim();
+                if (!existingKey) {
+                    try {
+                        const settings = await getAppSettings();
+                        const globalKey = (settings?.globalOpenaiKey || "").trim();
+                        if (globalKey) {
+                            profileLookUp = profileLookUp.toObject ? profileLookUp.toObject() : profileLookUp;
+                            profileLookUp.openaiKey = globalKey;
+                        }
+                    } catch (e) {
+                        console.warn("clientLogin global-key fallback failed:", e.message);
+                    }
+                }
+            }
+
             return res.status(200).json({
                 message: 'Login Success..!',
                 userDetails: { 

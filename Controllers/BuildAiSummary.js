@@ -19,6 +19,7 @@
 
 import axios from "axios";
 import { ProfileModel } from "../Schema_Models/ProfileModel.js";
+import { getAppSettings } from "../Schema_Models/AppSettings.js";
 
 const RESUME_API_URL = process.env.RESUME_API_URL || "http://localhost:5000";
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
@@ -41,7 +42,16 @@ Required structure (use these exact section headers):
 - 2-3 sentence overview (current title, total YOE, primary discipline).
 
 # Target Roles
-- Bullet list of role titles the candidate wants. Group same-family roles
+- FIRST line: list every POSITIVE entry from profile.preferredRoles VERBATIM,
+  comma-separated, prefixed with "Preferred roles (verbatim from profile): ".
+  Do not paraphrase or rename. The downstream grader cites these strings
+  literally in pick reasons.
+- SECOND line (only if profile.preferredRoles contains negative clauses like
+  "Do not add Technician roles", "no QA", "exclude manager positions"): list
+  the cleaned excluded role names VERBATIM, comma-separated, prefixed with
+  "Excluded roles (verbatim from profile, do NOT pick these): ". Omit this
+  line entirely when there are no negative clauses.
+- Then bullet list of role titles the candidate wants, grouping same-family roles
   (e.g. "Software Engineer / Backend Engineer / Platform Engineer" — one bullet).
 - Note seniority band (intern / entry / mid / senior / lead / exec).
 
@@ -57,6 +67,9 @@ Required structure (use these exact section headers):
 # Hard Disqualifiers (auto-SKIP if matched)
 - Specific factors that must reject a job (e.g. "anything requiring active
   US security clearance — candidate does not have it").
+- INCLUDE every excluded role from the "Excluded roles" line above as its
+  own disqualifier bullet, with the exact wording the candidate used
+  (e.g. "Technician roles — candidate explicitly opted out").
 
 # Notes for Grader
 - 2-4 sentences of nuance: how to weight role family vs seniority vs location.
@@ -69,8 +82,141 @@ Rules:
   say "not specified".
 - Plain text, no markdown beyond the # headers and - bullets.`;
 
-function buildUserPrompt(profile, resume, existingSummary) {
+// Fields that materially affect the summary's grader-facing content. We
+// snapshot only these (not the entire mongo doc) so the diff is small,
+// readable, and stable across schema additions.
+const SNAPSHOT_FIELDS = [
+  "preferredRoles",
+  "preferredLocations",
+  "experienceLevel",
+  "visaStatus",
+  "usWorkEligibility",
+  "targetCompanies",
+  "excludedCompanies",
+  "removedCompanies",
+  "salaryExpectation",
+  "currentTitle",
+  "yearsOfExperience",
+  "industriesOfInterest",
+  "willingToRelocate",
+  "workAuthorization",
+];
+
+// splitPreferredRoles: clients sometimes type negative clauses INTO the
+// preferredRoles field ("Do not add Technician roles", "no QA", "exclude
+// manager positions"). Treat them as exclusions, not preferences. Splits
+// each entry on common comma boundaries first so a single mixed string
+// like "Backend Engineer, no QA" still partitions cleanly.
+const NEG_LEAD_RE = /^\s*(?:do\s*not|don'?t|no(?:t|pe)?|avoid|exclude|skip|never|reject|hate|dislike|remove|drop|filter\s*out)\s*(?:add|include|consider|show|pick|push|send|want)?\b\s*/i;
+const ROLE_NOUN_RE = /\b(?:roles?|positions?|jobs?|titles?)\b/gi;
+function splitPreferredRoles(input) {
+  const preferred = [];
+  const excluded = [];
+  const raw = Array.isArray(input)
+    ? input
+    : typeof input === "string"
+      ? input.split(/\s*[/|,]\s*|\s{2,}/)
+      : [];
+  // Second pass: each array entry can itself contain a comma (e.g.
+  // "Backend Engineer, no QA"). Re-split when a negative marker shows
+  // up after a comma so we don't lose the positive prefix.
+  const exploded = [];
+  for (const r of raw) {
+    const s = String(r || "").trim();
+    if (!s) continue;
+    if (s.includes(",") && NEG_LEAD_RE.test(s.split(",").slice(-1)[0].trim())) {
+      for (const piece of s.split(/\s*,\s*/)) exploded.push(piece);
+    } else {
+      exploded.push(s);
+    }
+  }
+  for (const piece of exploded) {
+    const s = String(piece || "").trim();
+    if (!s) continue;
+    const m = s.match(NEG_LEAD_RE);
+    if (m) {
+      const cleaned = s.replace(NEG_LEAD_RE, "").replace(ROLE_NOUN_RE, "").trim();
+      if (cleaned) excluded.push(cleaned);
+    } else {
+      preferred.push(s);
+    }
+  }
+  return { preferred, excluded };
+}
+
+function snapshotProfile(profile) {
+  if (!profile) return {};
+  const snap = {};
+  for (const k of SNAPSHOT_FIELDS) {
+    if (profile[k] !== undefined) snap[k] = profile[k];
+  }
+  return snap;
+}
+
+// normaliseFieldValue: turns scalars + slash/comma/pipe-separated strings +
+// arrays into a sorted unique list of strings. Lets the diff compare
+// "Backend Engineer / Platform Engineer" (string from older profile) with
+// ["Backend Engineer","Platform Engineer"] (array from newer UI) and report
+// no change instead of false-positive churn.
+function normaliseFieldValue(v) {
+  if (v == null || v === "") return [];
+  if (Array.isArray(v)) return [...new Set(v.map(String).map((s) => s.trim()).filter(Boolean))].sort();
+  if (typeof v === "object") return [JSON.stringify(v)];
+  const s = String(v);
+  if (/[/|,]/.test(s) || /\s{2,}/.test(s)) {
+    return [...new Set(s.split(/\s*[/|,]\s*|\s{2,}/).map((p) => p.trim()).filter(Boolean))].sort();
+  }
+  return [s.trim()];
+}
+
+// computeProfileDiff: returns a structured human-readable diff between the
+// snapshot stored at last summary build and the current profile state. Empty
+// arrays for unchanged fields. The downstream prompt block converts this
+// into explicit ADD/REMOVE bullets so the model can't gloss over edits.
+function computeProfileDiff(prevSnapshot, current) {
+  const prev = prevSnapshot || {};
+  const cur = current || {};
+  const changes = [];
+  for (const field of SNAPSHOT_FIELDS) {
+    const before = normaliseFieldValue(prev[field]);
+    const after = normaliseFieldValue(cur[field]);
+    if (before.length === 0 && after.length === 0) continue;
+    const added = after.filter((v) => !before.includes(v));
+    const removed = before.filter((v) => !after.includes(v));
+    if (added.length === 0 && removed.length === 0) continue;
+    changes.push({ field, before, after, added, removed });
+  }
+  return changes;
+}
+
+function renderDiffBlock(changes) {
+  if (!changes.length) return "(no field-level changes detected — refresh wording only if the existing summary is internally inconsistent)";
+  return changes
+    .map((c) => {
+      const lines = [`### ${c.field}`];
+      if (c.removed.length) lines.push(`  REMOVED: ${c.removed.map((v) => `"${v}"`).join(", ")}`);
+      if (c.added.length)   lines.push(`  ADDED:   ${c.added.map((v) => `"${v}"`).join(", ")}`);
+      lines.push(`  Before: ${c.before.length ? c.before.map((v) => `"${v}"`).join(", ") : "(empty)"}`);
+      lines.push(`  After:  ${c.after.length ? c.after.map((v) => `"${v}"`).join(", ") : "(empty)"}`);
+      return lines.join("\n");
+    })
+    .join("\n\n");
+}
+
+function buildUserPrompt(profile, resume, existingSummary, profileDiff) {
   const profileBlob = JSON.stringify(profile || {}, null, 2).slice(0, 12_000);
+  // Split positive vs negative role clauses up-front so the model sees an
+  // explicit "EXCLUDED ROLES" block rather than having to detect "Do not
+  // add ..." phrasing buried inside the preferredRoles array. Reduces the
+  // chance the model lists an excluded role under Target Roles.
+  const { preferred: preferredRoles, excluded: excludedRoles } = splitPreferredRoles(profile?.preferredRoles);
+  const rolesBlock = `\n\n## Role classifier (AUTHORITATIVE — applies on top of profile.preferredRoles)
+Preferred (positive):  ${preferredRoles.length ? preferredRoles.map((r) => `"${r}"`).join(", ") : "(none)"}
+Excluded (negative):   ${excludedRoles.length ? excludedRoles.map((r) => `"${r}"`).join(", ") : "(none)"}
+Rules:
+- Use ONLY the Preferred list on the "Preferred roles (verbatim from profile)" line.
+- Render the Excluded list on the "Excluded roles (verbatim from profile, do NOT pick these)" line and add a matching bullet under Hard Disqualifiers.
+- NEVER include any excluded role under Strong Signals or Target Roles bullets.`;
   const resumeBlob = resume
     ? JSON.stringify(
         {
@@ -92,25 +238,53 @@ function buildUserPrompt(profile, resume, existingSummary) {
   // structure and only revise the parts that no longer match the inputs.
   // This avoids OpenAI rewriting tone/wording on every minor profile edit.
   if (existingSummary && existingSummary.trim().length > 100) {
-    return `## Existing summary (the candidate's profile has changed since this was built)
+    const diffBlock = renderDiffBlock(profileDiff || []);
+    const removedAll = (profileDiff || []).flatMap((c) => c.removed);
+    const removalGuard = removedAll.length
+      ? `\n\nMANDATORY REMOVALS — these strings MUST NOT appear anywhere in the
+updated summary (the candidate explicitly removed them from their profile,
+do not infer they still apply, do not list them in any section):
+${removedAll.map((v) => `  • "${v}"`).join("\n")}`
+      : "";
+    return `## Existing summary (built from a profile snapshot that is now out of date)
 ${existingSummary.trim().slice(0, 6_000)}
 
-## Updated onboarding profile
+## Field-level diff since last build (AUTHORITATIVE — applies on top of existing summary)
+${diffBlock}
+${rolesBlock}
+
+## Updated onboarding profile (full current state)
 ${profileBlob}
 
 ## Parsed resume
 ${resumeBlob}
 
 ## Task
-Update the existing summary above to reflect the updated profile. Keep the
-same section structure, tone, and any specific phrasing that still applies.
-Only change the sentences/bullets that contradict the new profile data
-(removed locations, changed seniority, new visa status, added/removed
-preferred roles, etc.). Mark added/removed locations or constraints
-explicitly. Do NOT rewrite from scratch.`;
+Rewrite the existing summary so every section is consistent with the
+updated profile. Hard rules:
+
+1. Treat the diff above as authoritative. Every REMOVED value must be
+   STRIPPED from the summary even if the existing summary still mentions
+   it; every ADDED value must be INCORPORATED into the appropriate
+   section (Target Roles, Hard Constraints, Strong Signals, etc.).
+2. Preserve voice, tone, and phrasing for sentences that are NOT
+   contradicted by the diff. Do not rewrite from scratch.
+3. The "Preferred roles (verbatim from profile)" line at the top of
+   the Target Roles section must be regenerated from the CURRENT
+   preferredRoles list — never reuse the old line.
+4. The Hard Constraints "Locations" bullet must list ONLY the current
+   preferredLocations. If the diff shows a removed city, that city
+   must vanish from the summary entirely.
+5. If a field in the diff went from a value to empty, replace the
+   relevant bullet with "not specified" rather than leaving the old
+   text in place.${removalGuard}
+
+Output the FULL updated summary in the same format as before — do not
+output a diff or a list of changes.`;
   }
   return `## Onboarding profile
 ${profileBlob}
+${rolesBlock}
 
 ## Parsed resume
 ${resumeBlob}`;
@@ -137,12 +311,12 @@ async function fetchResume(email) {
   }
 }
 
-async function callOpenAI(profile, resume, existingSummary) {
+async function callOpenAI(profile, resume, existingSummary, profileDiff, apiKey) {
   const body = {
     model: OPENAI_MODEL,
     messages: [
       { role: "system", content: SYSTEM_PROMPT },
-      { role: "user", content: buildUserPrompt(profile, resume, existingSummary) },
+      { role: "user", content: buildUserPrompt(profile, resume, existingSummary, profileDiff) },
     ],
     temperature: 0.2,
   };
@@ -151,7 +325,7 @@ async function callOpenAI(profile, resume, existingSummary) {
       timeout: 60_000,
       headers: {
         "content-type": "application/json",
-        authorization: `Bearer ${OPENAI_API_KEY}`,
+        authorization: `Bearer ${apiKey || OPENAI_API_KEY}`,
       },
     });
     const summary = (res.data?.choices?.[0]?.message?.content || "").trim();
@@ -172,11 +346,23 @@ async function callOpenAI(profile, resume, existingSummary) {
 
 export default async function BuildAiSummary(req, res) {
   try {
-    if (!OPENAI_API_KEY) {
+    // Resolve effective key: env var first, then admin-managed global from
+    // AppSettings. Lets ops drop in / rotate the key via the AI Summaries UI
+    // without redeploying the backend.
+    let effectiveKey = OPENAI_API_KEY;
+    if (!effectiveKey) {
+      try {
+        const settings = await getAppSettings();
+        effectiveKey = (settings?.globalOpenaiKey || "").trim();
+      } catch (e) {
+        console.warn("BuildAiSummary global-key load failed:", e.message);
+      }
+    }
+    if (!effectiveKey) {
       return res.status(503).json({
         success: false,
         error: "NO_OPENAI_KEY",
-        message: "OPENAI_API_KEY is not set in dashboard backend env",
+        message: "OPENAI key not configured (neither env OPENAI_API_KEY nor AppSettings.globalOpenaiKey set)",
         step: "config",
       });
     }
@@ -206,9 +392,9 @@ export default async function BuildAiSummary(req, res) {
           step: "loading-profile",
         });
       }
-      return await runForProfile(fallback, res);
+      return await runForProfile(fallback, res, effectiveKey);
     }
-    return await runForProfile(profile, res);
+    return await runForProfile(profile, res, effectiveKey);
   } catch (err) {
     console.error("BuildAiSummary fatal:", err);
     return res.status(500).json({
@@ -224,7 +410,7 @@ function escapeRegex(s) {
   return String(s).replace(/[-/\\^$*+?.()|[\]{}]/g, "\\$&");
 }
 
-async function runForProfile(profile, res) {
+async function runForProfile(profile, res, apiKey) {
   const email = profile.email;
 
   // 2. Resume (optional)
@@ -238,7 +424,21 @@ async function runForProfile(profile, res) {
     profile?.summaryStale && typeof profile.aiSummary === "string"
       ? profile.aiSummary
       : "";
-  const ai = await callOpenAI(profile, resume, existingSummary);
+  // Compute the structured diff between the snapshot stored at last build
+  // and the current profile. Only meaningful when we have BOTH a previous
+  // summary AND a previous snapshot — otherwise we're building fresh and
+  // the diff would be the whole profile (== noise).
+  const prevSnapshot = profile?.aiSummaryMeta?.profileSnapshot || null;
+  const profileDiff = existingSummary && prevSnapshot
+    ? computeProfileDiff(prevSnapshot, profile)
+    : [];
+  if (profileDiff.length) {
+    console.log(
+      "BuildAiSummary diff:",
+      profileDiff.map((c) => `${c.field}[+${c.added.length}/-${c.removed.length}]`).join(" "),
+    );
+  }
+  const ai = await callOpenAI(profile, resume, existingSummary, profileDiff, apiKey);
   if (!ai.ok) {
     return res.status(502).json({
       success: false,
@@ -270,6 +470,10 @@ async function runForProfile(profile, res) {
           model: OPENAI_MODEL,
           source,
           wordCount,
+          // Snapshot of the SNAPSHOT_FIELDS we just consumed. The next
+          // rebuild diffs against this so the model sees explicit
+          // ADD/REMOVE deltas rather than re-deriving them.
+          profileSnapshot: snapshotProfile(profile),
         },
         // Summary just rebuilt — clear stale flag.
         summaryStale: false,
