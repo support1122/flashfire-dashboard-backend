@@ -443,6 +443,12 @@ export const profileSchema = new mongoose.Schema({
     model: { type: String, required: false, default: "" },
     source: { type: String, required: false, default: "" }, // "profile+resume" / "profile-only"
     wordCount: { type: Number, required: false, default: 0 },
+    // Snapshot of the profile fields the prompt actually consumed at build time.
+    // On the next rebuild we diff this against the current profile so the AI
+    // gets an explicit changed-fields list ("removed location 'New York'") and
+    // can strip stale references — without this the model often retains old
+    // wording even when the new profile contradicts it.
+    profileSnapshot: { type: Object, required: false, default: null },
   },
   // True when the profile has changed since the last summary build.
   // Set true by Add_Update_Profile.js / file-upload paths; reset to false

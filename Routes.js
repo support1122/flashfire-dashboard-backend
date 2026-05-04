@@ -60,6 +60,7 @@ import UpdateAiSummary from "./Controllers/UpdateAiSummary.js";
 import BuildAiSummary from "./Controllers/BuildAiSummary.js";
 import UpdateTargetJobs from "./Controllers/UpdateTargetJobs.js";
 import UpdateOpenaiKey from "./Controllers/UpdateOpenaiKey.js";
+import { GetGlobalOpenaiKey, SetGlobalOpenaiKey } from "./Controllers/GlobalOpenaiKey.js";
 import PushHistory from "./Controllers/PushHistory.js";
 import SummariesOverview from "./Controllers/SummariesOverview.js";
 import { generateSessionKey, listSessionKeys, revokeSession, revokeUserSessions, listActiveSessions, verifySessionKey } from "./Controllers/operations/SessionKeys.js";
@@ -224,6 +225,8 @@ app.post("/build-ai-summary", BuildAiSummary);
 // Per-client target job count — enforced by /addjob.
 app.post("/update-target-jobs", UpdateTargetJobs);
 app.post("/update-openai-key", UpdateOpenaiKey);
+app.get("/admin/global-openai-key", GetGlobalOpenaiKey);
+app.post("/admin/global-openai-key", SetGlobalOpenaiKey);
 // Per-client daily push history — used by CT AI Summary tab "Push History" panel.
 app.get("/push-history", PushHistory);
 // One-shot aggregate for the admin AI Summaries page master list.

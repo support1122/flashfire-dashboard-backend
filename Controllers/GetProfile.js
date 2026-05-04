@@ -1,5 +1,6 @@
 import { ProfileModel } from "../Schema_Models/ProfileModel.js";
 import { UserModel } from "../Schema_Models/UserModel.js";
+import { getAppSettings } from "../Schema_Models/AppSettings.js";
 
 export default async function GetProfile(req, res) {
   try {
@@ -22,6 +23,19 @@ export default async function GetProfile(req, res) {
       ...profile,
       removedJobsCount: user?.removedJobsCount || 0
     };
+
+    // Fallback to the admin-managed global OpenAI key when the per-client
+    // profile has none. Extension reads userProfile.openaiKey on every
+    // reloadProfile call, so the swap is invisible to the client code.
+    if (!userProfile.openaiKey || !String(userProfile.openaiKey).trim()) {
+      try {
+        const settings = await getAppSettings();
+        const globalKey = (settings?.globalOpenaiKey || "").trim();
+        if (globalKey) userProfile.openaiKey = globalKey;
+      } catch (e) {
+        console.warn("GetProfile global-key fallback failed:", e.message);
+      }
+    }
 
     return res.json({
       message: "Profile retrieved successfully",

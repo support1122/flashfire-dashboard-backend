@@ -5,6 +5,17 @@ import { isClientLocked } from './operations/ClientOperations.js';
 import { getExclusionBlockReason } from '../Utils/exclusionGuard.js';
 import { sanitizeJobTitle } from '../Utils/jobTitle.js';
 
+// Daily cap window: ops jobs are counted from 00:00 Asia/Kolkata each day.
+// IST is UTC+5:30 fixed (no DST), so we shift the wall-clock IST midnight back
+// to its UTC equivalent. Returned Date is UTC; pair with an _id ObjectId range
+// for an indexed aggregation that does not depend on createdAt's string format.
+function startOfTodayIST() {
+    const offsetMs = 5.5 * 60 * 60 * 1000;
+    const istNow = new Date(Date.now() + offsetMs);
+    istNow.setUTCHours(0, 0, 0, 0);
+    return new Date(istNow.getTime() - offsetMs);
+}
+
 export default async function AddJob(req, res) {
     let { jobDetails, userDetails, role, operationsEmail, operationsName } = req.body;
 
@@ -46,15 +57,22 @@ export default async function AddJob(req, res) {
                 ).lean();
                 const cap = Number(profile?.targetJobCount);
                 if (Number.isFinite(cap) && cap > 0) {
+                    // Daily window — count only ops jobs created since today's
+                    // 00:00 IST. Resets every midnight, not 24h sliding.
+                    const since = startOfTodayIST();
+                    const sinceSeconds = Math.floor(since.getTime() / 1000);
+                    const oidLowHex = sinceSeconds.toString(16).padStart(8, '0') + '0000000000000000';
+                    const ObjectId = JobModel.base.Types.ObjectId;
                     const opsCount = await JobModel.countDocuments({
                         userID: String(clientForExclusions).toLowerCase(),
                         createdByRole: 'operations',
+                        _id: { $gte: new ObjectId(oidLowHex) },
                     });
                     if (opsCount >= cap) {
                         return res.status(403).json({
                             success: false,
                             error: 'TARGET_REACHED',
-                            message: `Client target reached (${opsCount}/${cap} jobs). Update target in Clients-Tracking → AI Summary tab to push more.`,
+                            message: `Daily target reached (${opsCount}/${cap} today). Resets at 00:00 IST or raise the target on the dashboard.`,
                             cap,
                             current: opsCount,
                         });
