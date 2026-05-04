@@ -39,8 +39,16 @@ export default async function GetAllJobs(req, res) {
 
         const allJobsRaw = await cursor;
         
-        const parseDateAdded = (dateString) => {
-            if (!dateString) return 0;
+        const parseDateAdded = (raw) => {
+            if (raw == null || raw === "") return 0;
+            if (raw instanceof Date) {
+                const t = raw.getTime();
+                return Number.isNaN(t) ? 0 : t;
+            }
+            if (typeof raw === "number" && Number.isFinite(raw)) {
+                return raw;
+            }
+            const dateString = typeof raw === "string" ? raw : String(raw);
             try {
                 if (/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(dateString)) {
                     return new Date(dateString).getTime();
