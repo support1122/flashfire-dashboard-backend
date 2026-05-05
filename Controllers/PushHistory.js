@@ -8,17 +8,9 @@
 
 import { JobModel } from "../Schema_Models/JobModel.js";
 import { ProfileModel } from "../Schema_Models/ProfileModel.js";
+import { startOfTodayIST, DEFAULT_DAILY_CAP } from "../Utils/dailyCapGuard.js";
 
 const TZ = "Asia/Kolkata";
-
-// Daily cap aligns with /addjob TARGET_REACHED — count ops jobs created since
-// today's 00:00 IST so capInfo.remaining resets every midnight.
-function startOfTodayIST() {
-  const offsetMs = 5.5 * 60 * 60 * 1000;
-  const istNow = new Date(Date.now() + offsetMs);
-  istNow.setUTCHours(0, 0, 0, 0);
-  return new Date(istNow.getTime() - offsetMs);
-}
 
 export default async function PushHistory(req, res) {
   try {
@@ -92,17 +84,23 @@ export default async function PushHistory(req, res) {
       days,
       history: rows.map((r) => ({ date: r._id, ops: r.ops, all: r.all })),
       totals: { ops: opsCountAll, all: allCount },
-      capInfo: {
-        targetJobCount: profile?.targetJobCount ?? null,
-        currentOps: opsCountToday,
-        currentOpsAllTime: opsCountAll,
-        windowResetsAt: "00:00 Asia/Kolkata",
-        remaining:
-          Number.isFinite(Number(profile?.targetJobCount))
-          && profile.targetJobCount > 0
-            ? Math.max(0, profile.targetJobCount - opsCountToday)
-            : null,
-      },
+      capInfo: (() => {
+        // Single source of truth: dailyCapGuard.DEFAULT_DAILY_CAP. Anything
+        // here MUST match the AddJob.js gate or extension/admin UIs will
+        // show different numbers than what the server actually enforces.
+        const rawCap = Number(profile?.targetJobCount);
+        const explicit = Number.isFinite(rawCap) && rawCap > 0 ? rawCap : null;
+        const effective = explicit ?? DEFAULT_DAILY_CAP;
+        return {
+          targetJobCount: explicit,
+          effectiveCap: effective,
+          isDefaultCap: explicit == null,
+          currentOps: opsCountToday,
+          currentOpsAllTime: opsCountAll,
+          windowResetsAt: "00:00 Asia/Kolkata",
+          remaining: Math.max(0, effective - opsCountToday),
+        };
+      })(),
     });
   } catch (err) {
     console.error("PushHistory error:", err);

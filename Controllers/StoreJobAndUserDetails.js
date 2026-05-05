@@ -9,6 +9,7 @@ import {
     isLocationBlocked,
 } from "../Utils/exclusionLists.js";
 import { sanitizeJobTitle } from "../Utils/jobTitle.js";
+import { checkCap, detectOvershoot } from "../Utils/dailyCapGuard.js";
 
 /**
  * Normalize job title/company for duplicate check: trim and collapse multiple spaces.
@@ -289,7 +290,51 @@ export async function saveToDashboard(req, res) {
                     });
                     continue;
                 }
-                
+
+                // Daily cap gate (saveToDashboard is operator-driven via the
+                // 5-digit code → tag every push as createdByRole:'operations').
+                // Same guard as /addjob — fail-closed on DB error, log structured
+                // event when the cap trips. Each user iteration is independent
+                // so one client hitting the cap doesn't block others in the batch.
+                let capCheck;
+                try {
+                    capCheck = await checkCap(userEmail);
+                } catch (e) {
+                    console.error("dailyCapGuard.checkCap failed (saveToDashboard):", e.message);
+                    summary.failedWithError++;
+                    summary.details.push({
+                        user: userEmail,
+                        status: "failed",
+                        error: e.code === "BAD_INPUT" ? "BAD_INPUT" : "CAP_CHECK_FAILED",
+                        reason: e.code === "BAD_INPUT" ? e.message : "Could not verify daily cap (DB unavailable). Try again shortly.",
+                    });
+                    continue;
+                }
+                if (!capCheck.allowed) {
+                    console.log(JSON.stringify({
+                        event: "cap.hit",
+                        path: "saveToDashboard",
+                        client: userEmail,
+                        cap: capCheck.cap,
+                        count: capCheck.count,
+                        isDefault: capCheck.isDefault,
+                        operator: addedByFromCode,
+                        code: rawExtensionCode,
+                        ts: new Date().toISOString(),
+                    }));
+                    summary.failedWithError++;
+                    summary.details.push({
+                        user: userEmail,
+                        status: "failed",
+                        error: capCheck.reason || "TARGET_REACHED",
+                        reason: capCheck.message,
+                        cap: capCheck.cap,
+                        current: capCheck.count,
+                        isDefaultCap: capCheck.isDefault,
+                    });
+                    continue;
+                }
+
                 const normTitle = normalizeString(sanitizedPosition);
                 const normCompany = normalizeString(company);
 
@@ -313,6 +358,9 @@ export async function saveToDashboard(req, res) {
                 }
 
                 // If no duplicate is found, create and save the job.
+                // Tag createdByRole='operations' so the cap counter sees these
+                // pushes — historically saveToDashboard left the field undefined,
+                // which silently bypassed the cap.
                 const payload = {
                     dateAdded: new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }),
                     createdAt: new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }),
@@ -330,6 +378,7 @@ export async function saveToDashboard(req, res) {
                     operatorEmail: operatorEmail || 'user@flashfirehq',
                     extensionCode: rawExtensionCode,
                     addedBy: addedByFromCode,
+                    createdByRole: 'operations',
                 };
 
                 // Always keep explicit status for ops visibility and debugging.
@@ -344,6 +393,8 @@ export async function saveToDashboard(req, res) {
                 }
 
                 const newJob = await JobModel.create(payload);
+                // Post-insert overshoot detection (concurrent push race).
+                detectOvershoot(userEmail, capCheck.cap).catch(() => {});
                 summary.saved++;
                 summary.details.push({
                     user: userEmail,

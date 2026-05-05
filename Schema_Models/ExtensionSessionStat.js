@@ -1,0 +1,52 @@
+// ExtensionSessionStat: every JR-direct extension capture session emits one
+// row when the operator stops or flushes. Powers the per-operator + per-client
+// stats card on the AI Summaries admin page so we can see who's working and
+// who's idle without manual reporting.
+//
+// One row per (operator, client, session). Aggregation in SummariesOverview
+// sums these up. No PII beyond the operator email + client email both already
+// carried by the dashboard.
+
+import mongoose from "mongoose";
+
+const extensionSessionStatSchema = new mongoose.Schema({
+    // Extension only has operator NAME (extension-code-verify returns name,
+    // not email). Email left optional for forward-compat if we add operator
+    // accounts later. operatorName is the primary identifier.
+    operatorEmail: { type: String, default: "", index: true },
+    operatorName:  { type: String, required: true, index: true },
+    // 5-digit extension code the operator typed at panel login. Indexed so
+    // the per-code daily breakdown is one query, not a join. Empty when the
+    // operator skipped/failed code verification.
+    extensionCode: { type: String, default: "", index: true },
+    clientEmail:   { type: String, required: true, index: true },
+    clientName:    { type: String, default: "" },
+    captures:      { type: Number, default: 0 },
+    linkedinSkipped: { type: Number, default: 0 },
+    judged:        { type: Number, default: 0 },
+    picks:         { type: Number, default: 0 },
+    pushed:        { type: Number, default: 0 },
+    duplicates:    { type: Number, default: 0 },
+    blocked:       { type: Number, default: 0 },
+    errors:        { type: Number, default: 0 },
+    // Per-skipKind tally so admin can see WHY pick rate is low (role-miss
+    // dominates → wrong preferredRoles; threshold dominates → operator slider
+    // too aggressive). Free-form Object so new skipKinds don't need migrations.
+    skipsByKind:   { type: Object, default: {} },
+    skipsRollup:   {
+        roleMismatch:        { type: Number, default: 0 },
+        seniorityMismatch:   { type: Number, default: 0 },
+        locationMismatch:    { type: Number, default: 0 },
+        authMismatch:        { type: Number, default: 0 },
+        threshold:           { type: Number, default: 0 },
+        companyBlocked:      { type: Number, default: 0 },
+        other:               { type: Number, default: 0 },
+    },
+    startedAt:     { type: Date, default: null },
+    endedAt:       { type: Date, default: () => new Date(), index: true },
+    extensionVersion: { type: String, default: "" },
+}, { timestamps: true });
+
+extensionSessionStatSchema.index({ clientEmail: 1, operatorEmail: 1, endedAt: -1 });
+
+export const ExtensionSessionStat = mongoose.model("ExtensionSessionStat", extensionSessionStatSchema);

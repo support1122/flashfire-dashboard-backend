@@ -4,17 +4,7 @@ import { ProfileModel } from '../Schema_Models/ProfileModel.js';
 import { isClientLocked } from './operations/ClientOperations.js';
 import { getExclusionBlockReason } from '../Utils/exclusionGuard.js';
 import { sanitizeJobTitle } from '../Utils/jobTitle.js';
-
-// Daily cap window: ops jobs are counted from 00:00 Asia/Kolkata each day.
-// IST is UTC+5:30 fixed (no DST), so we shift the wall-clock IST midnight back
-// to its UTC equivalent. Returned Date is UTC; pair with an _id ObjectId range
-// for an indexed aggregation that does not depend on createdAt's string format.
-function startOfTodayIST() {
-    const offsetMs = 5.5 * 60 * 60 * 1000;
-    const istNow = new Date(Date.now() + offsetMs);
-    istNow.setUTCHours(0, 0, 0, 0);
-    return new Date(istNow.getTime() - offsetMs);
-}
+import { checkCap, detectOvershoot } from '../Utils/dailyCapGuard.js';
 
 export default async function AddJob(req, res) {
     let { jobDetails, userDetails, role, operationsEmail, operationsName } = req.body;
@@ -46,41 +36,60 @@ export default async function AddJob(req, res) {
 
         const clientForExclusions = jobDetails?.userID || userDetails?.email;
 
-        // Target-job-count cap. Refuse new ops pushes once the operator-set
-        // limit has been reached. Applies only to operations role; user
-        // role is unaffected (clients can still self-track).
-        if (isOpsRole && clientForExclusions) {
-            try {
-                const profile = await ProfileModel.findOne(
-                    { email: String(clientForExclusions).toLowerCase() },
-                    { targetJobCount: 1 },
-                ).lean();
-                const cap = Number(profile?.targetJobCount);
-                if (Number.isFinite(cap) && cap > 0) {
-                    // Daily window — count only ops jobs created since today's
-                    // 00:00 IST. Resets every midnight, not 24h sliding.
-                    const since = startOfTodayIST();
-                    const sinceSeconds = Math.floor(since.getTime() / 1000);
-                    const oidLowHex = sinceSeconds.toString(16).padStart(8, '0') + '0000000000000000';
-                    const ObjectId = JobModel.base.Types.ObjectId;
-                    const opsCount = await JobModel.countDocuments({
-                        userID: String(clientForExclusions).toLowerCase(),
-                        createdByRole: 'operations',
-                        _id: { $gte: new ObjectId(oidLowHex) },
-                    });
-                    if (opsCount >= cap) {
-                        return res.status(403).json({
-                            success: false,
-                            error: 'TARGET_REACHED',
-                            message: `Daily target reached (${opsCount}/${cap} today). Resets at 00:00 IST or raise the target on the dashboard.`,
-                            cap,
-                            current: opsCount,
-                        });
-                    }
-                }
-            } catch (e) {
-                console.warn('TARGET_REACHED check failed:', e.message);
+        // Daily-cap gate. Production rules (covered by dailyCapGuard.js):
+        //   1. Ops pushes MUST resolve a client email — reject up-front
+        //      otherwise (used to silently skip the cap check).
+        //   2. Cap defaults to 30/day when admin hasn't set one — no
+        //      unbounded route.
+        //   3. DB errors propagate as 503 (fail-closed). Old code logged
+        //      and let the push through.
+        //   4. After insert, detectOvershoot() logs a structured warning
+        //      when concurrent inserts raced past the limit.
+        //   5. Cap counts ops jobs only since 00:00 IST today.
+        if (isOpsRole) {
+            if (!clientForExclusions) {
+                return res.status(400).json({
+                    success: false,
+                    error: 'BAD_INPUT',
+                    message: 'Operations push requires jobDetails.userID or userDetails.email — refusing without a client to attribute the push to.',
+                });
             }
+            let capCheck;
+            try {
+                capCheck = await checkCap(clientForExclusions);
+            } catch (e) {
+                console.error('dailyCapGuard.checkCap failed:', e.message, e.stack);
+                if (e.code === 'BAD_INPUT') {
+                    return res.status(400).json({ success: false, error: 'BAD_INPUT', message: e.message });
+                }
+                return res.status(503).json({
+                    success: false,
+                    error: 'CAP_CHECK_FAILED',
+                    message: 'Could not verify daily cap (DB unavailable). Push refused — try again shortly.',
+                });
+            }
+            if (!capCheck.allowed) {
+                console.log(JSON.stringify({
+                    event: 'cap.hit',
+                    client: clientForExclusions,
+                    cap: capCheck.cap,
+                    count: capCheck.count,
+                    isDefault: capCheck.isDefault,
+                    operator: operationsName || operationsEmail || 'unknown',
+                    ts: new Date().toISOString(),
+                }));
+                return res.status(403).json({
+                    success: false,
+                    error: capCheck.reason || 'TARGET_REACHED',
+                    message: capCheck.message,
+                    cap: capCheck.cap,
+                    current: capCheck.count,
+                    remaining: 0,
+                    isDefaultCap: capCheck.isDefault,
+                });
+            }
+            // Stash the snapshot so we can detectOvershoot() after insert.
+            req._capSnapshot = capCheck;
         }
 
         if (clientForExclusions) {
@@ -135,7 +144,16 @@ export default async function AddJob(req, res) {
         }
 
         const createdJob = await JobModel.create(jobDetails);
-        
+
+        // Post-insert overshoot detection. Concurrent /addjob requests can
+        // both pass the pre-check at cap-1 and both insert. Log structured
+        // warning so ops can audit. Non-blocking, fire-and-forget.
+        if (req._capSnapshot && clientForExclusions) {
+            detectOvershoot(clientForExclusions, req._capSnapshot.cap).catch((err) => {
+                console.warn('detectOvershoot threw:', err?.message);
+            });
+        }
+
         let NewJobList = await JobModel.find({userID : jobDetails?.userID}).lean();
         
         NewJobList = NewJobList.map(job => ({
