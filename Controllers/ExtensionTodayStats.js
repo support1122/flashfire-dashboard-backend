@@ -28,9 +28,14 @@ export default async function ExtensionTodayStats(req, res) {
         const ObjectId = JobModel.base.Types.ObjectId;
         const todayLowBound = new ObjectId(todaySeconds.toString(16).padStart(8, "0") + "0000000000000000");
 
-        const [extAgg, pushedToday, profile] = await Promise.all([
+        const [extAgg, extByOp, pushedToday, pushedTodayByCode, pushedTodayByName, profile] = await Promise.all([
+            // Client-wide ext-session totals.
             ExtensionSessionStat.aggregate([
-                { $match: { clientEmail: email, endedAt: { $gte: todayStart } } },
+                { $match: { clientEmail: email, $or: [
+    { endedAt: { $gte: todayStart } },
+    { startedAt: { $gte: todayStart } },
+    { updatedAt: { $gte: todayStart } },
+] } },
                 {
                     $group: {
                         _id: null,
@@ -50,11 +55,43 @@ export default async function ExtensionTodayStats(req, res) {
                     },
                 },
             ]),
+            // Per-operator ext-session totals (group by extensionCode + name).
+            ExtensionSessionStat.aggregate([
+                { $match: { clientEmail: email, $or: [
+    { endedAt: { $gte: todayStart } },
+    { startedAt: { $gte: todayStart } },
+    { updatedAt: { $gte: todayStart } },
+] } },
+                {
+                    $group: {
+                        _id: {
+                            code: { $ifNull: ["$extensionCode", ""] },
+                            name: { $ifNull: ["$operatorName", "(unknown)"] },
+                        },
+                        captures: { $sum: "$captures" },
+                        linkedinSkipped: { $sum: "$linkedinSkipped" },
+                        pushedExt: { $sum: "$pushed" },
+                        sessions: { $sum: 1 },
+                        lastSessionAt: { $max: "$endedAt" },
+                    },
+                },
+            ]),
             JobModel.countDocuments({
                 userID: email,
                 createdByRole: "operations",
                 _id: { $gte: todayLowBound },
             }),
+            // Server-truth pushed today, grouped by extensionCode (set by AddJob
+            // when extension sends it + by saveToDashboard).
+            JobModel.aggregate([
+                { $match: { userID: email, createdByRole: "operations", _id: { $gte: todayLowBound } } },
+                { $group: { _id: { $ifNull: ["$extensionCode", ""] }, count: { $sum: 1 } } },
+            ]),
+            // Fallback: group by operatorName for jobs missing extensionCode.
+            JobModel.aggregate([
+                { $match: { userID: email, createdByRole: "operations", _id: { $gte: todayLowBound } } },
+                { $group: { _id: { $ifNull: ["$operatorName", "(unknown)"] }, count: { $sum: 1 } } },
+            ]),
             ProfileModel.findOne({ email }, { targetJobCount: 1 }).lean(),
         ]);
 
@@ -66,6 +103,57 @@ export default async function ExtensionTodayStats(req, res) {
         const rawCap = Number(profile?.targetJobCount);
         const explicitCap = Number.isFinite(rawCap) && rawCap > 0 ? rawCap : null;
         const effectiveCap = explicitCap ?? DEFAULT_DAILY_CAP;
+
+        // Per-operator union: merge ext-session aggregation with JobModel
+        // pushed-today grouped by extensionCode and (fallback) operatorName.
+        // Key on extensionCode when present, fall back to operatorName so
+        // pre-v1.15 sessions still surface a row.
+        const byCode = new Map();   // code → row
+        const byName = new Map();   // operatorName → row (for code-less)
+        const upsert = (key, fields) => {
+            const map = key.code ? byCode : byName;
+            const k = key.code || key.name;
+            const cur = map.get(k) || {
+                extensionCode: key.code || "",
+                operatorName: key.name || "(unknown)",
+                captures: 0, linkedinSkipped: 0, pushed: 0,
+                pushedExt: 0, sessions: 0, lastSessionAt: null,
+            };
+            Object.assign(cur, {
+                captures:        (cur.captures || 0)        + (fields.captures || 0),
+                linkedinSkipped: (cur.linkedinSkipped || 0) + (fields.linkedinSkipped || 0),
+                pushed:          (cur.pushed || 0)          + (fields.pushed || 0),
+                pushedExt:       (cur.pushedExt || 0)       + (fields.pushedExt || 0),
+                sessions:        (cur.sessions || 0)        + (fields.sessions || 0),
+            });
+            if (fields.lastSessionAt && (!cur.lastSessionAt || fields.lastSessionAt > cur.lastSessionAt)) {
+                cur.lastSessionAt = fields.lastSessionAt;
+            }
+            if (key.name && cur.operatorName === "(unknown)") cur.operatorName = key.name;
+            map.set(k, cur);
+        };
+        for (const r of extByOp) {
+            upsert({ code: r._id?.code || "", name: r._id?.name || "(unknown)" }, {
+                captures: r.captures, linkedinSkipped: r.linkedinSkipped,
+                pushedExt: r.pushedExt, sessions: r.sessions, lastSessionAt: r.lastSessionAt,
+            });
+        }
+        for (const r of pushedTodayByCode) {
+            const code = r._id || "";
+            if (!code) continue; // empty code rows roll into operatorName fallback
+            upsert({ code, name: "" }, { pushed: r.count });
+        }
+        // Fallback: jobs missing extensionCode → key by operatorName.
+        for (const r of pushedTodayByName) {
+            const name = r._id || "(unknown)";
+            // Skip names already attributed to a code (avoid double-count).
+            const knownInCode = [...byCode.values()].some((row) => row.operatorName === name);
+            if (knownInCode) continue;
+            upsert({ code: "", name }, { pushed: r.count });
+        }
+        const operators = [...byCode.values(), ...byName.values()].sort((a, b) => {
+            return (b.pushed + b.captures) - (a.pushed + a.captures);
+        });
 
         return res.json({
             success: true,
@@ -83,6 +171,7 @@ export default async function ExtensionTodayStats(req, res) {
             cap: effectiveCap,
             isDefaultCap: explicitCap == null,
             remaining: Math.max(0, effectiveCap - pushedToday),
+            operators,
         });
     } catch (err) {
         console.error("ExtensionTodayStats error:", err);

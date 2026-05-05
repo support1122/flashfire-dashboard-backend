@@ -7,7 +7,7 @@ import { sanitizeJobTitle } from '../Utils/jobTitle.js';
 import { checkCap, detectOvershoot } from '../Utils/dailyCapGuard.js';
 
 export default async function AddJob(req, res) {
-    let { jobDetails, userDetails, role, operationsEmail, operationsName } = req.body;
+    let { jobDetails, userDetails, role, operationsEmail, operationsName, extensionCode } = req.body;
 
     try {
         jobDetails = jobDetails || {};
@@ -136,6 +136,10 @@ export default async function AddJob(req, res) {
             jobDetails.operatorName = opsDisplayName;
             jobDetails.operatorEmail = operationsEmail || 'operations@flashfirehq';
             jobDetails.addedBy = opsDisplayName;
+            // Tag the 5-digit operator code so per-operator aggregation
+            // works on JobModel.extensionCode (today-stats / activity).
+            const code = String(extensionCode || '').trim();
+            if (/^\d{5}$/.test(code)) jobDetails.extensionCode = code;
         } else {
             jobDetails.createdByRole = 'user';
             jobDetails.timeline = ['Added by user'];

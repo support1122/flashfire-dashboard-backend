@@ -66,6 +66,7 @@ import SummariesOverview from "./Controllers/SummariesOverview.js";
 import ExtensionSessionStatLog from "./Controllers/ExtensionSessionStatLog.js";
 import OperatorActivity from "./Controllers/OperatorActivity.js";
 import ExtensionTodayStats from "./Controllers/ExtensionTodayStats.js";
+import ExtensionDailyHistory from "./Controllers/ExtensionDailyHistory.js";
 import { generateSessionKey, listSessionKeys, revokeSession, revokeUserSessions, listActiveSessions, verifySessionKey } from "./Controllers/operations/SessionKeys.js";
 import gmailRouter from "./Controllers/GmailRouter.js";
 import { listGroups, createGroup, getGroup, updateGroup } from "./Controllers/RecruiterAutomation.js";
@@ -237,6 +238,7 @@ app.get("/summaries-overview", SummariesOverview);
 app.post("/extension/session-stat", ExtensionSessionStatLog);
 app.get("/admin/operator-activity", OperatorActivity);
 app.get("/extension/today-stats", ExtensionTodayStats);
+app.get("/extension/daily-history", ExtensionDailyHistory);
 app.post("/upload-profile-file", upload.single('file'), uploadProfileFile);
 
 // Generic file upload routes (supports both Cloudinary and R2)
