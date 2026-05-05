@@ -32,7 +32,9 @@ export default async function ExtensionSessionStatLog(req, res) {
         // (free-form) AND the canonical 7-key rollup the extension sends.
         const sb = (b.skipsByKind && typeof b.skipsByKind === "object") ? b.skipsByKind : {};
         const sr = b.skipsRollup || {};
-        const doc = await ExtensionSessionStat.create({
+        const sessionId = String(b.sessionId || "").trim().slice(0, 64);
+        const baseDoc = {
+            sessionId,
             operatorEmail,
             operatorName,
             extensionCode: String(b.extensionCode || "").trim().slice(0, 64),
@@ -59,7 +61,20 @@ export default async function ExtensionSessionStatLog(req, res) {
             startedAt: b.startedAt ? new Date(b.startedAt) : null,
             endedAt: b.endedAt ? new Date(b.endedAt) : new Date(),
             extensionVersion: String(b.extensionVersion || "").slice(0, 32),
-        });
+        };
+        // When sessionId present → upsert. Heartbeats during capture write
+        // updated counters into the same row instead of creating duplicates.
+        // No sessionId → fall back to insert (backwards compat).
+        let doc;
+        if (sessionId) {
+            doc = await ExtensionSessionStat.findOneAndUpdate(
+                { sessionId },
+                { $set: baseDoc },
+                { upsert: true, new: true, setDefaultsOnInsert: true },
+            );
+        } else {
+            doc = await ExtensionSessionStat.create(baseDoc);
+        }
         return res.json({ success: true, id: doc._id });
     } catch (err) {
         console.error("ExtensionSessionStatLog error:", err);

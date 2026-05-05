@@ -143,12 +143,24 @@ export default async function SummariesOverview(req, res) {
             {
               $group: {
                 _id: { client: { $toLower: { $ifNull: ["$clientEmail", ""] } }, operator: "$operatorName" },
+                extensionCode: { $last: "$extensionCode" },
                 captures: { $sum: "$captures" },
                 linkedinSkipped: { $sum: "$linkedinSkipped" },
                 pushed: { $sum: "$pushed" },
                 judged: { $sum: "$judged" },
                 picks: { $sum: "$picks" },
+                duplicates: { $sum: "$duplicates" },
+                blocked: { $sum: "$blocked" },
+                errors: { $sum: "$errors" },
+                roleMismatch:      { $sum: { $ifNull: ["$skipsRollup.roleMismatch", 0] } },
+                seniorityMismatch: { $sum: { $ifNull: ["$skipsRollup.seniorityMismatch", 0] } },
+                locationMismatch:  { $sum: { $ifNull: ["$skipsRollup.locationMismatch", 0] } },
+                authMismatch:      { $sum: { $ifNull: ["$skipsRollup.authMismatch", 0] } },
+                threshold:         { $sum: { $ifNull: ["$skipsRollup.threshold", 0] } },
+                companyBlocked:    { $sum: { $ifNull: ["$skipsRollup.companyBlocked", 0] } },
+                otherSkip:         { $sum: { $ifNull: ["$skipsRollup.other", 0] } },
                 sessions: { $sum: 1 },
+                firstSessionAt: { $min: "$startedAt" },
                 lastSessionAt: { $max: "$endedAt" },
               },
             },
@@ -182,25 +194,52 @@ export default async function SummariesOverview(req, res) {
       });
     }
 
-    // Extension stats per client (sum across operators).
+    // Extension stats per client (sum across operators) + per-operator detail.
     const extByClient = new Map();
     const extByClientOperator = new Map();
     for (const r of sessionStats) {
       const c = String(r._id?.client || "").toLowerCase();
       const op = r._id?.operator || "(unknown)";
       if (!c) continue;
-      const cur = extByClient.get(c) || { captures: 0, linkedinSkipped: 0, pushed: 0, lastSessionAt: null };
-      cur.captures += r.captures || 0;
+      const totalSkipsExceptRole = (r.threshold || 0) + (r.seniorityMismatch || 0)
+        + (r.locationMismatch || 0) + (r.authMismatch || 0)
+        + (r.companyBlocked || 0) + (r.otherSkip || 0);
+      const totalRejected = (r.roleMismatch || 0) + totalSkipsExceptRole;
+
+      const cur = extByClient.get(c) || {
+        captures: 0, linkedinSkipped: 0, pushed: 0, judged: 0, picks: 0,
+        rejected: 0, roleMismatch: 0, otherSkip: 0,
+        sessions: 0, firstSessionAt: null, lastSessionAt: null,
+      };
+      cur.captures        += r.captures || 0;
       cur.linkedinSkipped += r.linkedinSkipped || 0;
-      cur.pushed += r.pushed || 0;
-      if (!cur.lastSessionAt || (r.lastSessionAt && r.lastSessionAt > cur.lastSessionAt)) {
-        cur.lastSessionAt = r.lastSessionAt;
-      }
+      cur.pushed          += r.pushed || 0;
+      cur.judged          += r.judged || 0;
+      cur.picks           += r.picks || 0;
+      cur.rejected        += totalRejected;
+      cur.roleMismatch    += r.roleMismatch || 0;
+      cur.otherSkip       += totalSkipsExceptRole;
+      cur.sessions        += r.sessions || 1;
+      if (r.firstSessionAt && (!cur.firstSessionAt || r.firstSessionAt < cur.firstSessionAt)) cur.firstSessionAt = r.firstSessionAt;
+      if (r.lastSessionAt  && (!cur.lastSessionAt  || r.lastSessionAt  > cur.lastSessionAt))  cur.lastSessionAt  = r.lastSessionAt;
       extByClient.set(c, cur);
+
       extByClientOperator.set(`${c}::${op}`, {
+        extensionCode: r.extensionCode || "",
         captures: r.captures || 0,
         linkedinSkipped: r.linkedinSkipped || 0,
         pushed: r.pushed || 0,
+        judged: r.judged || 0,
+        picks: r.picks || 0,
+        rejected: totalRejected,
+        roleMismatch: r.roleMismatch || 0,
+        otherSkip: totalSkipsExceptRole,
+        duplicates: r.duplicates || 0,
+        blocked: r.blocked || 0,
+        errors: r.errors || 0,
+        sessions: r.sessions || 1,
+        firstSessionAt: r.firstSessionAt || null,
+        lastSessionAt: r.lastSessionAt || null,
       });
     }
 
@@ -242,8 +281,9 @@ export default async function SummariesOverview(req, res) {
         const ext = extByClient.get(email);
         if (ext) linkedinSkippedTotal += ext.linkedinSkipped;
 
-        // Per-client operator chips, enriched with capture+skip counts when
-        // ExtensionSessionStat carries them for that operator.
+        // Per-client operator chips. Carries the full ExtensionSessionStat
+        // rollup so the UI can render an English breakdown sentence per
+        // operator (scraped X · LinkedIn Y · rejected Z · saved W).
         const ops = (perClientOps.get(email) || []).map((row) => {
           const ek = extByClientOperator.get(`${email}::${row.operator}`);
           return {
@@ -251,8 +291,20 @@ export default async function SummariesOverview(req, res) {
             count: row.count,
             todayCount: row.todayCount,
             lastPushAt: row.lastPushAt,
+            // Extension-reported lifetime metadata (null when this operator
+            // hasn't run a session for this client through v1.15+ extension).
+            extensionCode: ek?.extensionCode || "",
             captures: ek?.captures || 0,
             linkedinSkipped: ek?.linkedinSkipped || 0,
+            judged: ek?.judged || 0,
+            picks: ek?.picks || 0,
+            rejected: ek?.rejected || 0,
+            roleMismatch: ek?.roleMismatch || 0,
+            otherSkip: ek?.otherSkip || 0,
+            pushedExt: ek?.pushed || 0,
+            sessions: ek?.sessions || 0,
+            firstSessionAt: ek?.firstSessionAt || null,
+            lastSessionAt: ek?.lastSessionAt || null,
           };
         });
 

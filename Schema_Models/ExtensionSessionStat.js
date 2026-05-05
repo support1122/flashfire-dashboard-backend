@@ -13,6 +13,12 @@ const extensionSessionStatSchema = new mongoose.Schema({
     // Extension only has operator NAME (extension-code-verify returns name,
     // not email). Email left optional for forward-compat if we add operator
     // accounts later. operatorName is the primary identifier.
+    // Stable per-session id minted by the extension at start-capture time.
+    // Every subsequent heartbeat / batch / stop POST upserts on this id so
+    // the live "scraped today" counter reflects scrolling in near-real-time
+    // without inserting a new row per heartbeat. Optional to keep backwards
+    // compat with old extension builds that only send on stop/flush.
+    sessionId:     { type: String, default: "", index: true },
     operatorEmail: { type: String, default: "", index: true },
     operatorName:  { type: String, required: true, index: true },
     // 5-digit extension code the operator typed at panel login. Indexed so
