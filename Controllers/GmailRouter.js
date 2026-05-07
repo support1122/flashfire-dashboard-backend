@@ -6,6 +6,10 @@ import { RecruiterEmailGroup } from "../Schema_Models/RecruiterEmailGroup.js";
 import { RecruiterEmailTemplate } from "../Schema_Models/RecruiterEmailTemplate.js";
 import { RecruiterEmailAutomation } from "../Schema_Models/RecruiterEmailAutomation.js";
 import { GmailSendLog } from "../Schema_Models/GmailSendLog.js";
+import { UserModel } from "../Schema_Models/UserModel.js";
+import { JobModel } from "../Schema_Models/JobModel.js";
+
+const EXECUTIVE_AUTOMATION_THRESHOLD = 200;
 
 const router = express.Router();
 
@@ -606,6 +610,26 @@ export async function runRecruiterAutomationDailyJob() {
 
   for (const automation of automations) {
     if (!automation.group || !automation.template) {
+      continue;
+    }
+    const ownerEmailLc = automation.ownerEmail.toLowerCase();
+    const user = await UserModel.findOne({ email: ownerEmailLc })
+      .select("planType email")
+      .lean();
+    if (!user) {
+      console.log(`[RecruiterAutomation] skip ${ownerEmailLc}: no user`);
+      continue;
+    }
+    if (user.planType !== "Executive") {
+      console.log(`[RecruiterAutomation] skip ${ownerEmailLc}: plan=${user.planType}, need Executive`);
+      continue;
+    }
+    const appliedCount = await JobModel.countDocuments({
+      userID: ownerEmailLc,
+      currentStatus: { $regex: /applied/i }
+    });
+    if (appliedCount < EXECUTIVE_AUTOMATION_THRESHOLD) {
+      console.log(`[RecruiterAutomation] skip ${ownerEmailLc}: applied=${appliedCount} < ${EXECUTIVE_AUTOMATION_THRESHOLD}`);
       continue;
     }
     const allEmails = Array.isArray(automation.group.emails) ? automation.group.emails : [];
