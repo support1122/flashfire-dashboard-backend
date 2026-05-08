@@ -8,8 +8,18 @@ import { RecruiterEmailAutomation } from "../Schema_Models/RecruiterEmailAutomat
 import { GmailSendLog } from "../Schema_Models/GmailSendLog.js";
 import { UserModel } from "../Schema_Models/UserModel.js";
 import { JobModel } from "../Schema_Models/JobModel.js";
+import { ensureAiTemplateForOwner } from "./RecruiterAiTemplate.js";
 
 const EXECUTIVE_AUTOMATION_THRESHOLD = 200;
+// Counts a job toward the threshold if it is in any "active pipeline" status:
+// saved, applied, or interviewing. Excludes removed / rejected / offer.
+const PIPELINE_STATUS_RE = /^(saved|applied|interview)/i;
+function pipelineCountFilter(userEmail) {
+  return {
+    userID: userEmail,
+    currentStatus: { $regex: PIPELINE_STATUS_RE }
+  };
+}
 
 const router = express.Router();
 
@@ -108,7 +118,8 @@ router.get("/auth/google", (req, res) => {
     access_type: "offline",
     scope: [
       "https://www.googleapis.com/auth/gmail.send",
-      "https://www.googleapis.com/auth/gmail.readonly"
+      "https://www.googleapis.com/auth/gmail.readonly",
+      "https://www.googleapis.com/auth/gmail.modify"
     ],
     prompt: "consent",
     state: ownerEmail ? encodeURIComponent(ownerEmail) : undefined
@@ -600,7 +611,39 @@ async function sendGmail(user, { to, subject, text, attachment = null }) {
   });
 }
 
+async function runAiTemplatePrePass() {
+  try {
+    const executiveUsers = await UserModel.find({ planType: "Executive" })
+      .select("email")
+      .lean();
+    if (!executiveUsers.length) return;
+
+    for (const u of executiveUsers) {
+      const email = (u.email || "").toLowerCase();
+      if (!email) continue;
+      const count = await JobModel.countDocuments(pipelineCountFilter(email));
+      if (count < EXECUTIVE_AUTOMATION_THRESHOLD) continue;
+
+      const result = await ensureAiTemplateForOwner(email);
+      if (result === "linked") {
+        console.log(`[RecruiterAutomation] AI template linked for ${email} (pipeline=${count})`);
+      } else if (result === "skip_no_resume") {
+        console.log(`[RecruiterAutomation] AI skipped for ${email}: no resume assigned`);
+      } else if (result === "skip_no_group" || result === "skip_no_automation") {
+        console.log(`[RecruiterAutomation] AI skipped for ${email}: ${result}`);
+      }
+    }
+  } catch (e) {
+    console.error("[RecruiterAutomation] AI pre-pass error:", e?.message);
+  }
+}
+
 export async function runRecruiterAutomationDailyJob() {
+  // Pre-pass: for any Executive user crossing the threshold whose automation
+  // row exists with a group set but no template, build an AI template (resume +
+  // profile -> GPT) and link it. Defaults dailyLimit=20, enabled=true.
+  await runAiTemplatePrePass();
+
   const automations = await RecruiterEmailAutomation.find({
     enabled: true,
     dailyLimit: { $gt: 0 }
@@ -624,12 +667,9 @@ export async function runRecruiterAutomationDailyJob() {
       console.log(`[RecruiterAutomation] skip ${ownerEmailLc}: plan=${user.planType}, need Executive`);
       continue;
     }
-    const appliedCount = await JobModel.countDocuments({
-      userID: ownerEmailLc,
-      currentStatus: { $regex: /applied/i }
-    });
-    if (appliedCount < EXECUTIVE_AUTOMATION_THRESHOLD) {
-      console.log(`[RecruiterAutomation] skip ${ownerEmailLc}: applied=${appliedCount} < ${EXECUTIVE_AUTOMATION_THRESHOLD}`);
+    const pipelineCount = await JobModel.countDocuments(pipelineCountFilter(ownerEmailLc));
+    if (pipelineCount < EXECUTIVE_AUTOMATION_THRESHOLD) {
+      console.log(`[RecruiterAutomation] skip ${ownerEmailLc}: pipeline=${pipelineCount} < ${EXECUTIVE_AUTOMATION_THRESHOLD}`);
       continue;
     }
     const allEmails = Array.isArray(automation.group.emails) ? automation.group.emails : [];

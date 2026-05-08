@@ -69,7 +69,9 @@ import ExtensionTodayStats from "./Controllers/ExtensionTodayStats.js";
 import ExtensionDailyHistory from "./Controllers/ExtensionDailyHistory.js";
 import { generateSessionKey, listSessionKeys, revokeSession, revokeUserSessions, listActiveSessions, verifySessionKey } from "./Controllers/operations/SessionKeys.js";
 import gmailRouter from "./Controllers/GmailRouter.js";
+import gmailInboxRouter from "./Controllers/GmailInboxRouter.js";
 import { listGroups, createGroup, getGroup, updateGroup } from "./Controllers/RecruiterAutomation.js";
+import { aiGenerateTemplateHandler } from "./Controllers/RecruiterAiTemplate.js";
 import { getWhatsAppGroups, linkUserToGroup, getUserGroupMapping, sendCustomNotification, checkNotificationCooldown } from "./Controllers/whatsapp/WhatsAppController.js";
 import { generateExtensionCode, verifyExtensionCode, listExtensionCodes } from "./Controllers/operations/ExtensionCodes.js";
 import { fixAppliedDates } from "./Controllers/FixAppliedDates.js";
@@ -388,6 +390,8 @@ app.get("/admin/recruiter-groups/:id", getGroup);
 app.put("/admin/recruiter-groups/:id", updateGroup);
 
 app.use("/gmail", gmailRouter);
+app.use("/gmail/inbox", gmailInboxRouter);
+app.post("/gmail/automation/template/ai-generate", aiGenerateTemplateHandler);
 
 app.get("/api/whatsapp/groups", getWhatsAppGroups);
 app.post("/api/whatsapp/link-user", linkUserToGroup);
