@@ -3,11 +3,22 @@ import { ProfileModel } from "../Schema_Models/ProfileModel.js";
 import { UserModel } from "../Schema_Models/UserModel.js";
 import { RecruiterEmailTemplate } from "../Schema_Models/RecruiterEmailTemplate.js";
 import { RecruiterEmailAutomation } from "../Schema_Models/RecruiterEmailAutomation.js";
+import { RecruiterEmailGroup } from "../Schema_Models/RecruiterEmailGroup.js";
 import { getAppSettings } from "../Schema_Models/AppSettings.js";
 
 const RESUME_API_URL = process.env.RESUME_API_URL || "http://localhost:5000";
 const OPENAI_MODEL = process.env.OPENAI_RECRUITER_MODEL || "gpt-4o";
 const DEFAULT_AI_DAILY_LIMIT = 20;
+
+async function findDefaultTechGroup() {
+  return RecruiterEmailGroup.findOne({
+    $or: [
+      { category: /^tech$/i },
+      { name: /^technical$/i },
+      { name: /^tech$/i }
+    ]
+  }).sort({ updatedAt: -1, createdAt: -1 });
+}
 
 /**
  * Fetch resume from gemini-resume microservice. Returns the same payload shape
@@ -328,17 +339,28 @@ export async function ensureAiTemplateForOwner(ownerEmail) {
   const owner = String(ownerEmail || "").toLowerCase().trim();
   if (!owner) return "error";
 
-  const auto = await RecruiterEmailAutomation.findOne({ ownerEmail: owner });
-  if (!auto) return "skip_no_automation";
-  if (!auto.group) return "skip_no_group";
-  if (auto.template) return "skip_already_has_template";
+  let auto = await RecruiterEmailAutomation.findOne({ ownerEmail: owner });
+  let groupId = auto?.group || null;
+  if (!groupId) {
+    const techGroup = await findDefaultTechGroup();
+    if (!techGroup) return "skip_no_group";
+    groupId = techGroup._id;
+  }
+  if (auto?.template) return "skip_already_has_template";
 
   try {
     const tpl = await aiGenerateAndSaveTemplate(owner);
-    auto.template = tpl._id;
-    if (!auto.dailyLimit || auto.dailyLimit <= 0) auto.dailyLimit = DEFAULT_AI_DAILY_LIMIT;
-    if (auto.enabled !== true) auto.enabled = true;
-    await auto.save();
+    auto = await RecruiterEmailAutomation.findOneAndUpdate(
+      { ownerEmail: owner },
+      {
+        ownerEmail: owner,
+        group: groupId,
+        template: tpl._id,
+        dailyLimit: auto?.dailyLimit > 0 ? auto.dailyLimit : DEFAULT_AI_DAILY_LIMIT,
+        enabled: true
+      },
+      { upsert: true, new: true, setDefaultsOnInsert: true }
+    );
     return "linked";
   } catch (err) {
     if (err.message === "no_resume_assigned") return "skip_no_resume";
@@ -353,13 +375,37 @@ export async function aiGenerateTemplateHandler(req, res) {
     const { ownerEmail, linkToAutomation } = req.body || {};
     if (!ownerEmail) return res.status(400).json({ error: "ownerEmail required" });
 
+    const owner = String(ownerEmail).toLowerCase().trim();
     const tpl = await aiGenerateAndSaveTemplate(ownerEmail);
+    let automation = null;
+    let automationWarning = null;
 
     if (linkToAutomation) {
-      await RecruiterEmailAutomation.findOneAndUpdate(
-        { ownerEmail: String(ownerEmail).toLowerCase().trim() },
-        { $set: { template: tpl._id } }
-      );
+      const existing = await RecruiterEmailAutomation.findOne({ ownerEmail: owner });
+      const groupId = existing?.group || (await findDefaultTechGroup())?._id;
+      if (groupId) {
+        const doc = await RecruiterEmailAutomation.findOneAndUpdate(
+          { ownerEmail: owner },
+          {
+            ownerEmail: owner,
+            group: groupId,
+            template: tpl._id,
+            dailyLimit: existing?.dailyLimit > 0 ? existing.dailyLimit : DEFAULT_AI_DAILY_LIMIT,
+            enabled: true
+          },
+          { upsert: true, new: true, setDefaultsOnInsert: true }
+        );
+        automation = {
+          id: String(doc._id),
+          ownerEmail: doc.ownerEmail,
+          groupId: String(doc.group),
+          templateId: String(doc.template),
+          dailyLimit: doc.dailyLimit,
+          enabled: doc.enabled
+        };
+      } else {
+        automationWarning = "No Technical/tech recruiter group found. Template was saved but automation was not linked.";
+      }
     }
 
     res.json({
@@ -371,7 +417,9 @@ export async function aiGenerateTemplateHandler(req, res) {
         aiGenerated: tpl.aiGenerated,
         aiBuiltAt: tpl.aiBuiltAt,
         aiModel: tpl.aiModel
-      }
+      },
+      automation,
+      warning: automationWarning
     });
   } catch (err) {
     const code = err.message;

@@ -629,7 +629,7 @@ async function runAiTemplatePrePass() {
         console.log(`[RecruiterAutomation] AI template linked for ${email} (pipeline=${count})`);
       } else if (result === "skip_no_resume") {
         console.log(`[RecruiterAutomation] AI skipped for ${email}: no resume assigned`);
-      } else if (result === "skip_no_group" || result === "skip_no_automation") {
+      } else if (result === "skip_no_group") {
         console.log(`[RecruiterAutomation] AI skipped for ${email}: ${result}`);
       }
     }
@@ -768,4 +768,3 @@ export async function runRecruiterAutomationDailyJob() {
 }
 
 export default router;
-
