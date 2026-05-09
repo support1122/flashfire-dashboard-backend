@@ -1,9 +1,12 @@
 import Operations from "../../Schema_Models/Operations.js";
 import bcrypt from "bcrypt";
 
+const normalizeEmail = (email) => String(email || "").trim().toLowerCase();
+
 export async function OperationsLogin(req, res) {
      try {
-          const { email, password } = req.body;
+          const { password } = req.body || {};
+          const email = normalizeEmail(req.body?.email);
 
           if (!email || !password) {
                return res.status(400).json({ error: "Email and password are required" });

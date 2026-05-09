@@ -338,7 +338,7 @@ app.use((err, req, res, next) => {
     }
 
     cron.schedule(
-      "0 22 * * *",
+      "0 23 * * *",
       async () => {
         try {
           await runRecruiterAutomationDailyJob();
