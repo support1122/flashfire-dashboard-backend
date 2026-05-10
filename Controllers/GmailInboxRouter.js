@@ -164,10 +164,19 @@ function walkParts(payload, accumulator) {
   const parts = payload.parts || [];
 
   if (filename && body.attachmentId) {
+    // Named file attachment
     accumulator.attachments.push({
       attachmentId: body.attachmentId,
       filename,
       mimetype: payload.mimeType || "application/octet-stream",
+      size: Number(body.size || 0)
+    });
+  } else if (!filename && body.attachmentId) {
+    // Gmail stores large body parts (> ~2 MB) as anonymous attachments.
+    // body.data is absent; we must fetch via messages.attachments.get.
+    accumulator.inlineBodyParts.push({
+      attachmentId: body.attachmentId,
+      mimeType: mime,
       size: Number(body.size || 0)
     });
   } else if (mime === "text/plain" && body.data) {
@@ -180,7 +189,7 @@ function walkParts(payload, accumulator) {
 }
 
 function extractBodies(payload) {
-  const acc = { text: "", html: "", attachments: [] };
+  const acc = { text: "", html: "", attachments: [], inlineBodyParts: [] };
   walkParts(payload, acc);
   return acc;
 }
@@ -352,6 +361,22 @@ async function getCachedOrFetchMessage({ user, ownerEmail, messageId }) {
   });
   const meta = normalizeMessageMeta(detail.data);
   const bodies = extractBodies(detail.data.payload);
+
+  // Fetch large inline body parts that Gmail stored as anonymous attachments.
+  for (const part of bodies.inlineBodyParts) {
+    try {
+      const r = await gmail.users.messages.attachments.get({
+        userId: "me",
+        messageId,
+        id: part.attachmentId
+      });
+      const decoded = decodeBase64Url(r.data.data || "").toString("utf8");
+      if (part.mimeType === "text/html") bodies.html += decoded;
+      else if (part.mimeType === "text/plain") bodies.text += decoded;
+    } catch (e) {
+      console.warn(`[Inbox] inline body part fetch failed ${part.attachmentId}: ${e.message}`);
+    }
+  }
 
   const htmlKey = bodies.html
     ? await uploadInboxBody({
