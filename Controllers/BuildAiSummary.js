@@ -60,12 +60,12 @@ Required structure (use these exact section headers):
 - Work authorisation (citizen / GC / H1B / OPT / needs sponsorship).
 - Salary floor if profile states one.
 - Industries / company stages excluded if any.
-- Employment types accepted (Full-time / Part-time / Contract / Internship).
-  Default is Full-time ONLY when profile.employmentTypes is missing or
-  empty. If the list does NOT include Contract, add a bullet "Skip
-  contract / contract-to-hire roles". If it does NOT include Internship,
-  add "Skip internships". Mirror for Part-time. Be explicit so the
-  grader does not push a 6-month contract to a full-time-only candidate.
+- Employment types accepted: take VERBATIM from the "Employment type rules"
+  block in the user prompt. That block enumerates each of Full-time / Part-time
+  / Contract / Internship as either ACCEPT or REJECT and supplies the exact
+  Hard Constraints + Hard Disqualifiers wording to use. Do NOT invent
+  rejections or skip-bullets for any type marked ACCEPT, even if you would
+  default to skipping it. Do NOT omit rejections for types marked REJECT.
 
 # Strong Signals (auto-PICK if matched)
 - Keywords / role titles / skills that indicate a strong fit when seen on a job.
@@ -227,6 +227,22 @@ function buildUserPrompt(profile, resume, existingSummary, profileDiff) {
   const employmentTypes = cleanedEmp.length ? cleanedEmp : ["Full-time"];
   const allEmp = ["Full-time", "Part-time", "Contract", "Internship"];
   const excludedEmp = allEmp.filter((t) => !employmentTypes.includes(t));
+  // Per-type bullet wording. Each entry is { accept, reject } — the exact
+  // line the model must (accept) or must NOT (reject) put in the summary.
+  // Generated server-side so the model never has to "decide" what to write
+  // for a given type — it just copies the supplied line.
+  const EMP_WORDING = {
+    "Full-time":  { accept: "Open to full-time roles.",                          reject: "Skip full-time roles." },
+    "Part-time":  { accept: "Open to part-time roles.",                          reject: "Skip part-time roles." },
+    "Contract":   { accept: "Open to contract / contract-to-hire roles.",        reject: "Skip contract / contract-to-hire roles." },
+    "Internship": { accept: "Open to internships.",                              reject: "Skip internships." },
+  };
+  const empPerType = allEmp.map((t) => {
+    const isAccepted = employmentTypes.includes(t);
+    const wording = isAccepted ? EMP_WORDING[t].accept : EMP_WORDING[t].reject;
+    const section = isAccepted ? "Hard Constraints" : "Hard Disqualifiers";
+    return `  - ${t}: ${isAccepted ? "ACCEPT" : "REJECT"} → put "${wording}" under ${section}. Do NOT add any contradictory bullet for ${t} in any other section.`;
+  }).join("\n");
   const rolesBlock = `\n\n## Role classifier (AUTHORITATIVE — applies on top of profile.preferredRoles)
 Preferred (positive):  ${preferredRoles.length ? preferredRoles.map((r) => `"${r}"`).join(", ") : "(none)"}
 Excluded (negative):   ${excludedRoles.length ? excludedRoles.map((r) => `"${r}"`).join(", ") : "(none)"}
@@ -236,7 +252,12 @@ Rules:
 - Use ONLY the Preferred list on the "Preferred roles (verbatim from profile)" line.
 - Render the Excluded list on the "Excluded roles (verbatim from profile, do NOT pick these)" line and add a matching bullet under Hard Disqualifiers.
 - NEVER include any excluded role under Strong Signals or Target Roles bullets.
-- The Hard Constraints section MUST surface the Accepted employment types verbatim. For every rejected type, add a Hard Disqualifier bullet (e.g. "Skip contract / contract-to-hire roles" when Contract is rejected).`;
+
+## Employment type rules (AUTHORITATIVE — overrides every other instruction)
+For each employment type below, use EXACTLY the wording given. Do not invent
+synonyms, do not add "skip" bullets for any ACCEPT type, do not omit "skip"
+bullets for any REJECT type:
+${empPerType}`;
   const resumeBlob = resume
     ? JSON.stringify(
         {
@@ -266,6 +287,28 @@ updated summary (the candidate explicitly removed them from their profile,
 do not infer they still apply, do not list them in any section):
 ${removedAll.map((v) => `  • "${v}"`).join("\n")}`
       : "";
+
+    // Employment-type flip guard: if a type changed ACCEPT↔REJECT, the
+    // existing summary likely still carries the old bullet. The per-type
+    // rules block above already states the new wording, but the existing
+    // summary is also fed in and can be sticky — call out the flip
+    // explicitly so the model strips the contradictory line.
+    const empDiff = (profileDiff || []).find((c) => c.field === "employmentTypes");
+    let empFlipGuard = "";
+    if (empDiff) {
+      const flips = [];
+      for (const t of empDiff.added) {
+        // type became ACCEPTED → any "Skip <t>" bullet must be removed
+        flips.push(`  • ${t} is now ACCEPTED — REMOVE any "Skip ${t.toLowerCase()}" / "no ${t.toLowerCase()}" bullet from the existing summary and use ONLY the wording supplied in the Employment type rules block above.`);
+      }
+      for (const t of empDiff.removed) {
+        // type became REJECTED → must add the skip bullet
+        flips.push(`  • ${t} is now REJECTED — ENSURE the existing summary contains the Hard Disqualifier wording supplied in the Employment type rules block above for ${t}, and remove any "Open to ${t.toLowerCase()}" / accepting language.`);
+      }
+      if (flips.length) {
+        empFlipGuard = `\n\nEMPLOYMENT TYPE FLIPS (CRITICAL — overrides the existing summary):\n${flips.join("\n")}`;
+      }
+    }
     return `## Existing summary (built from a profile snapshot that is now out of date)
 ${existingSummary.trim().slice(0, 6_000)}
 
@@ -297,7 +340,12 @@ updated profile. Hard rules:
    must vanish from the summary entirely.
 5. If a field in the diff went from a value to empty, replace the
    relevant bullet with "not specified" rather than leaving the old
-   text in place.${removalGuard}
+   text in place.
+6. The Employment type rules block above is AUTHORITATIVE. The existing
+   summary may contradict it (e.g. carry a "Skip internships" bullet from
+   a previous build). When that happens, the per-type wording in the rules
+   block WINS — delete every contradictory line and substitute the
+   supplied wording verbatim.${removalGuard}${empFlipGuard}
 
 Output the FULL updated summary in the same format as before — do not
 output a diff or a list of changes.`;
