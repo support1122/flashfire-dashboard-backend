@@ -13,7 +13,14 @@ const appSettingsSchema = new mongoose.Schema({
     // bolt on later via the existing CryptoHelper if compliance asks.
     globalOpenaiKey: { type: String, default: "" },
     updatedBy: { type: String, default: "" },
-}, { timestamps: true });
+    // Scrape-milestone tracking. Keyed by IST date (YYYY-MM-DD) so each
+    // day's milestones reset automatically without a cron. Two sub-maps:
+    //   scrapeMilestones      → highest milestone reached today (5000-multiple)
+    //   scrapeMilestonesFired → idempotent claim flags per (day, milestone)
+    //                           used to dedupe Discord webhooks across restarts.
+    scrapeMilestones:      { type: Object, default: {} },
+    scrapeMilestonesFired: { type: Object, default: {} },
+}, { timestamps: true, minimize: false });
 
 export const AppSettingsModel = mongoose.model("AppSettings", appSettingsSchema);
 

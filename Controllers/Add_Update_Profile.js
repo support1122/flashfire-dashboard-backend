@@ -766,6 +766,35 @@
 import { ProfileModel } from "../Schema_Models/ProfileModel.js";
 import { UserModel } from "../Schema_Models/UserModel.js";
 
+// Allowed employment-type values. Anything outside this set is dropped on
+// save so a typo in the UI can't poison ProfileModel.employmentTypes.
+const EMPLOYMENT_TYPE_ENUM = ["Full-time", "Part-time", "Contract", "Internship"];
+
+// normaliseEmploymentTypes: validate + dedupe + default. `input` is the
+// raw req.body value (array, string, or undefined). `fallback` is the
+// existing profile's value (or null for create). Returns a clean array.
+//   - Array of valid strings → dedupe, return.
+//   - Empty array OR undefined → use fallback OR ["Full-time"].
+//   - Single string → wrap, validate.
+function normaliseEmploymentTypes(input, fallback) {
+    const DEFAULT = ["Full-time"];
+    const raw = Array.isArray(input)
+        ? input
+        : (typeof input === "string" && input.trim() ? input.split(",") : null);
+    if (raw === null || raw === undefined) {
+        return Array.isArray(fallback) && fallback.length ? fallback : DEFAULT;
+    }
+    const cleaned = [...new Set(
+        raw
+            .map((v) => String(v || "").trim())
+            .filter((v) => EMPLOYMENT_TYPE_ENUM.includes(v))
+    )];
+    if (cleaned.length === 0) {
+        return Array.isArray(fallback) && fallback.length ? fallback : DEFAULT;
+    }
+    return cleaned;
+}
+
 export default async function Add_Update_Profile(req, res) {
   try {
     const {
@@ -792,6 +821,7 @@ export default async function Add_Update_Profile(req, res) {
       preferredLocations,
       targetCompanies,
       reasonForLeaving,
+      employmentTypes,
       veteranStatus,
       disabilityStatus,
       scholarshipRequired,
@@ -869,6 +899,10 @@ export default async function Add_Update_Profile(req, res) {
           preferredLocations: preferredLocations || existingProfile.preferredLocations,
           targetCompanies: targetCompanies || existingProfile.targetCompanies,
           reasonForLeaving: reasonForLeaving || existingProfile.reasonForLeaving,
+          // Employment types — array. Falls back to existing value OR
+          // ["Full-time"] default if never set. Validated against allowed
+          // enum before persist.
+          employmentTypes: normaliseEmploymentTypes(employmentTypes, existingProfile.employmentTypes),
           veteranStatus: veteranStatus !== undefined ? veteranStatus : existingProfile.veteranStatus,
           disabilityStatus: disabilityStatus !== undefined ? disabilityStatus : existingProfile.disabilityStatus,
           scholarshipRequired: scholarshipRequired !== undefined ? scholarshipRequired : existingProfile.scholarshipRequired,
@@ -935,6 +969,7 @@ export default async function Add_Update_Profile(req, res) {
         preferredLocations: preferredLocations || existingProfile.preferredLocations,
         targetCompanies: targetCompanies || existingProfile.targetCompanies,
         reasonForLeaving: reasonForLeaving || existingProfile.reasonForLeaving,
+        employmentTypes: normaliseEmploymentTypes(employmentTypes, existingProfile.employmentTypes),
         veteranStatus: veteranStatus !== undefined ? veteranStatus : existingProfile.veteranStatus,
         disabilityStatus: disabilityStatus !== undefined ? disabilityStatus : existingProfile.disabilityStatus,
         scholarshipRequired: scholarshipRequired !== undefined ? scholarshipRequired : existingProfile.scholarshipRequired,
@@ -993,6 +1028,7 @@ export default async function Add_Update_Profile(req, res) {
         preferredLocations: preferredLocations || [],
         targetCompanies: targetCompanies || [],
         reasonForLeaving: reasonForLeaving || "",
+        employmentTypes: normaliseEmploymentTypes(employmentTypes, null),
         veteranStatus: veteranStatus || "",
         disabilityStatus: disabilityStatus || "",
         scholarshipRequired: scholarshipRequired || "",

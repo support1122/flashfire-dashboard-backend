@@ -10,6 +10,7 @@
 // the AI Summaries page.
 
 import { ExtensionSessionStat } from "../Schema_Models/ExtensionSessionStat.js";
+import { checkAndNotifyScrapeMilestone } from "../Utils/scrapeCostNotifier.js";
 
 function num(v) {
     const n = Number(v);
@@ -75,6 +76,12 @@ export default async function ExtensionSessionStatLog(req, res) {
         } else {
             doc = await ExtensionSessionStat.create(baseDoc);
         }
+        // Fire-and-forget — check whether today's cumulative scrape count
+        // just crossed a 5000-multiple. Posts to Discord webhook when so.
+        // Never blocks the response path.
+        checkAndNotifyScrapeMilestone().catch((err) => {
+            console.warn("scrape milestone check threw:", err?.message);
+        });
         return res.json({ success: true, id: doc._id });
     } catch (err) {
         console.error("ExtensionSessionStatLog error:", err);

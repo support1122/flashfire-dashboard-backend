@@ -329,6 +329,17 @@ export const profileSchema = new mongoose.Schema({
     type: String,
     required: false,
   },
+  // Employment types the candidate WILL accept. Multi-select from the
+  // /profile UI. Defaults to ["Full-time"] when the client never edited
+  // it — matches the legacy behavior (most clients want full-time only).
+  // Used by the JR-direct extension + scraper to filter postings before
+  // AI judging and surfaced in the AI summary so the model honors it.
+  // Allowed values: "Full-time" | "Part-time" | "Contract" | "Internship".
+  employmentTypes: {
+    type: [String],
+    required: false,
+    default: ["Full-time"],
+  },
   veteranStatus: {
     type: String,
     required: false,

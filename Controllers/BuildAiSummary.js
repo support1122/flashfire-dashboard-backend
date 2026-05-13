@@ -60,6 +60,12 @@ Required structure (use these exact section headers):
 - Work authorisation (citizen / GC / H1B / OPT / needs sponsorship).
 - Salary floor if profile states one.
 - Industries / company stages excluded if any.
+- Employment types accepted (Full-time / Part-time / Contract / Internship).
+  Default is Full-time ONLY when profile.employmentTypes is missing or
+  empty. If the list does NOT include Contract, add a bullet "Skip
+  contract / contract-to-hire roles". If it does NOT include Internship,
+  add "Skip internships". Mirror for Part-time. Be explicit so the
+  grader does not push a 6-month contract to a full-time-only candidate.
 
 # Strong Signals (auto-PICK if matched)
 - Keywords / role titles / skills that indicate a strong fit when seen on a job.
@@ -91,6 +97,7 @@ const SNAPSHOT_FIELDS = [
   "experienceLevel",
   "visaStatus",
   "usWorkEligibility",
+  "employmentTypes",
   "targetCompanies",
   "excludedCompanies",
   "removedCompanies",
@@ -210,13 +217,26 @@ function buildUserPrompt(profile, resume, existingSummary, profileDiff) {
   // add ..." phrasing buried inside the preferredRoles array. Reduces the
   // chance the model lists an excluded role under Target Roles.
   const { preferred: preferredRoles, excluded: excludedRoles } = splitPreferredRoles(profile?.preferredRoles);
+  // Employment types — multi-select array from the /profile UI. Default
+  // to ["Full-time"] when profile field is missing/empty so legacy clients
+  // still surface as full-time-only in the prompt.
+  const rawEmp = Array.isArray(profile?.employmentTypes) ? profile.employmentTypes : [];
+  const cleanedEmp = rawEmp
+    .map((v) => String(v || "").trim())
+    .filter((v) => ["Full-time", "Part-time", "Contract", "Internship"].includes(v));
+  const employmentTypes = cleanedEmp.length ? cleanedEmp : ["Full-time"];
+  const allEmp = ["Full-time", "Part-time", "Contract", "Internship"];
+  const excludedEmp = allEmp.filter((t) => !employmentTypes.includes(t));
   const rolesBlock = `\n\n## Role classifier (AUTHORITATIVE — applies on top of profile.preferredRoles)
 Preferred (positive):  ${preferredRoles.length ? preferredRoles.map((r) => `"${r}"`).join(", ") : "(none)"}
 Excluded (negative):   ${excludedRoles.length ? excludedRoles.map((r) => `"${r}"`).join(", ") : "(none)"}
+Accepted employment types: ${employmentTypes.join(", ")}
+Rejected employment types: ${excludedEmp.length ? excludedEmp.join(", ") : "(none — accepts all)"}
 Rules:
 - Use ONLY the Preferred list on the "Preferred roles (verbatim from profile)" line.
 - Render the Excluded list on the "Excluded roles (verbatim from profile, do NOT pick these)" line and add a matching bullet under Hard Disqualifiers.
-- NEVER include any excluded role under Strong Signals or Target Roles bullets.`;
+- NEVER include any excluded role under Strong Signals or Target Roles bullets.
+- The Hard Constraints section MUST surface the Accepted employment types verbatim. For every rejected type, add a Hard Disqualifier bullet (e.g. "Skip contract / contract-to-hire roles" when Contract is rejected).`;
   const resumeBlob = resume
     ? JSON.stringify(
         {
