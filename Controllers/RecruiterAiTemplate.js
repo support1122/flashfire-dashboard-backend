@@ -164,43 +164,52 @@ STYLE RULES (strict — violation is failure):
 - Do not invent metrics, employers, projects, technologies, or dates. Use ONLY facts present in the candidate's resume / profile context provided in the user message. If a fact is missing, leave it out — never fabricate.
 - Match the candidate's actual stack and seniority. Do not generalize.
 - Subject must communicate: target role + years of experience. Format: "Application <Role Title> | <N>+ Years Experience". Replace <Role> with the candidate's primary target role. Replace <N> with their actual experience years.
-- Body opening: brief greeting ("Greetings,"). One short intro paragraph (2-3 sentences) stating who they are, role they target, and core stack.
-- Then 4 to 5 bullet points of concrete achievements pulled directly from the resume's work experience. Each bullet starts with a bullet character "•" followed by a single space, then the achievement. Keep each bullet under 35 words.
-- One short closing paragraph (1-2 sentences) about education / authorization / fit.
+- Body structure (follow exactly, in this order):
+  1. Greeting line: "Greetings,"
+  2. Blank line, then a short pleasant line: "Hope you're doing well."
+  3. Blank line, then the intro paragraph (3-4 sentences): full name, the role they target with seniority, their core stack, and a sentence on what they specialize in or focus on. Make this paragraph substantive, not a one-liner.
+  4. Blank line, then the lead-in line exactly: "In my recent roles, I have:"
+  5. Blank line, then 5 to 6 bullet points of concrete achievements pulled directly from the resume's work experience. Each bullet starts with a bullet character "•" followed by a single space. Each bullet should be a FULL, detailed sentence of 30 to 55 words: state the achievement AND the method / context / tools that produced it (e.g. "...through workflow optimization and automation initiatives", "...to support strategic decision-making and business planning"). Do not write terse bullets. The last bullet should describe cross-functional collaboration or stakeholder work if the resume supports it.
+  6. Blank line, then a closing paragraph (1-2 sentences) about education and work authorization.
+  7. Blank line, then a final line offering to connect, exactly in this spirit: "I've attached my resume and would welcome the opportunity to discuss how my <discipline> experience can contribute to your team and business goals."
 - Signature block exactly:
   Best regards,
   <Full Name>
   <Phone> | <Email>
   <City, State, Country>
+- Total body length should land around 220-320 words. Richer and fuller is better than terse, but never pad with fluff or invented facts.
+- Prefer "approximately" over the "~" symbol. Write numbers naturally.
 
 OUTPUT FORMAT:
 Return STRICT JSON only, with two keys: subject (string) and body (string). No prose, no code fences, no commentary. The body must be plain text with real newline characters \\n between paragraphs and bullets.`;
 
-const STYLE_REFERENCE = `STYLE REFERENCE EXAMPLE (do not copy verbatim — only follow tone, structure, and rules):
-Subject: Application Full Stack Engineer | 3+ Years Experience
+const STYLE_REFERENCE = `STYLE REFERENCE EXAMPLE (do not copy verbatim — only follow tone, structure, length, and bullet richness):
+Subject: Application Business Analyst | 3+ Years Experience
 Body:
 Greetings,
 
 Hope you're doing well.
 
-My name is Sohni Rais, and I am a Full Stack Software Engineer with 3+ years of experience building and shipping production-grade web applications using React, TypeScript, Node.js, and SQL-based backends. I specialize in developing scalable, secure, and high-performance applications with a strong focus on user experience, system reliability, and clean architecture.
+My name is Aaditi Jayesh Shah, and I am a Business Analyst with experience in strategy and operations analysis. I specialize in driving requirements discovery, process optimization, and KPI analytics using SQL, Tableau/Power BI, Advanced Excel, and Python.
 
 In my recent roles, I have:
 
-• Built and delivered end-to-end platforms including a healthcare patient portal and a school management system, implementing secure authentication, role-based workflows, and responsive user interfaces.
-• Developed and optimized REST APIs using Node.js and Express with MySQL and MongoDB backends, reducing API response times by 20% through query tuning and caching strategies.
-• Designed and implemented modern frontend interfaces using React, TypeScript, and Angular, improving UI performance by 25% through state optimization and component reusability.
-• Integrated automated testing using Jest and React Testing Library and set up CI pipelines with GitHub Actions, increasing release confidence and reducing manual regression effort.
-• Collaborated closely with cross-functional teams in Agile environments to deliver features across iterative sprints while maintaining high code quality and documentation standards.
+• Identified approximately $30K in improvement opportunities, reducing manual effort by 30% and eliminating 200+ weekly manual data entries through workflow optimization and automation initiatives.
+• Improved CTR by 20% through A/B testing support while also reducing supplier lead times by 18% and cutting excess inventory by 1,200 units through operational analysis and process improvements.
+• Built data-driven strategy deliverables, including $10B+ market sizing analyses and adoption/revenue scenario models to support strategic decision-making and business planning.
+• Conducted a 5-stage funnel analysis on 8,000+ leads to identify MQL/SQL conversion drop-offs and define rollout KPIs for performance tracking and optimization.
+• Collaborated cross-functionally with stakeholders to gather business requirements, develop analytical insights, and support data-backed operational and strategic initiatives.
 
-I am currently pursuing a Master of Science in Information Systems at Northeastern University and am legally authorized to work in the United States.
+I am currently pursuing a Master of Science in Engineering Management at the University of Southern California and am on F1 OPT status in the United States.
 
-I would welcome the opportunity to discuss how my skills and experience can contribute to your engineering and product goals.
+I've attached my resume and would welcome the opportunity to discuss how my analytical and strategic experience can contribute to your team and business goals.
 
 Best regards,
-Sohni Rais
-+1 (857) 328 7850 | raissohni12@gmail.com
-Boston, MA, USA`;
+Aaditi Jayesh Shah
++1 213-574-5047 | aaditishah26@gmail.com
+Los Angeles, CA, USA
+
+NOTE ON LENGTH: every bullet above is a full, detailed sentence (30-55 words) that names the achievement AND the method/context behind it. Match that depth. Do not produce short or stripped-down bullets.`;
 
 function buildUserPrompt({ resume, profile, user, ownerEmail }) {
   return [

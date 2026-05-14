@@ -391,6 +391,15 @@ app.post("/admin/recruiter-groups", createGroup);
 app.get("/admin/recruiter-groups/:id", getGroup);
 app.put("/admin/recruiter-groups/:id", updateGroup);
 
+// Activity Monitor — admin audit trail.
+//   GET  /admin/activity         — cursor-paginated feed (Bearer + admin role)
+//   GET  /admin/activity/facets  — filter dropdown values
+//   POST /admin/activity/ingest  — cross-service ingestion (shared secret)
+import { listActivity, listActivityFacets, ingestActivity, verifyAdminForActivity } from "./Controllers/ActivityController.js";
+app.get("/admin/activity", verifyAdminForActivity, listActivity);
+app.get("/admin/activity/facets", verifyAdminForActivity, listActivityFacets);
+app.post("/admin/activity/ingest", ingestActivity);
+
 app.use("/gmail", gmailRouter);
 app.use("/gmail/inbox", gmailInboxRouter);
 app.post("/gmail/automation/template/ai-generate", aiGenerateTemplateHandler);
