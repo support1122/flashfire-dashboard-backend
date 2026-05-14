@@ -76,6 +76,9 @@ Required structure (use these exact section headers):
 - INCLUDE every excluded role from the "Excluded roles" line above as its
   own disqualifier bullet, with the exact wording the candidate used
   (e.g. "Technician roles — candidate explicitly opted out").
+- ALWAYS include this exact bullet verbatim, for every candidate, no
+  exceptions: "Job posting age — skip any job posted more than 48 hours
+  ago. Only postings from the last 48 hours are in scope."
 
 # Notes for Grader
 - 2-4 sentences of nuance: how to weight role family vs seniority vs location.
