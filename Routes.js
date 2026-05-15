@@ -395,9 +395,11 @@ app.put("/admin/recruiter-groups/:id", updateGroup);
 //   GET  /admin/activity         — cursor-paginated feed (Bearer + admin role)
 //   GET  /admin/activity/facets  — filter dropdown values
 //   POST /admin/activity/ingest  — cross-service ingestion (shared secret)
-import { listActivity, listActivityFacets, ingestActivity, verifyAdminForActivity } from "./Controllers/ActivityController.js";
-app.get("/admin/activity", verifyAdminForActivity, listActivity);
-app.get("/admin/activity/facets", verifyAdminForActivity, listActivityFacets);
+import { listActivity, listActivityFacets, ingestActivity } from "./Controllers/ActivityController.js";
+// Read-only activity views — token gate removed per ops request. URL is
+// only shared with trusted people; no auth middleware. Ingest stays gated.
+app.get("/admin/activity", listActivity);
+app.get("/admin/activity/facets", listActivityFacets);
 app.post("/admin/activity/ingest", ingestActivity);
 
 app.use("/gmail", gmailRouter);
