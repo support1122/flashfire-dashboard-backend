@@ -1,15 +1,17 @@
 import multer from "multer";
 import { uploadFile } from "../Utils/storageService.js";
 import { ProfileModel } from "../Schema_Models/ProfileModel.js";
+import { compressImageBuffer, formatCompressionLog } from "../Utils/compressImage.js";
 import dotenv from "dotenv";
 
 dotenv.config();
 
 // Configure multer for memory storage
+// 25MB limit — source images can be 6-10MB; we compress server-side to ~1-2MB before R2.
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: {
-    fileSize: 10 * 1024 * 1024, // 10MB limit
+    fileSize: 25 * 1024 * 1024,
   },
 });
 
@@ -53,13 +55,18 @@ export const uploadSingleFile = async (req, res) => {
       clientName = email.replace(/[^a-zA-Z0-9._-]/g, '_');
     }
 
-    // Upload file using unified storage service with email-based folder structure
-    const fileBuffer = req.file.buffer;
-    
-    const uploadResult = await uploadFile(fileBuffer, {
+    // Compress images server-side before R2/Cloudinary upload.
+    // Non-image MIME types pass through untouched.
+    const compression = await compressImageBuffer(req.file.buffer, {
+      originalMime: req.file.mimetype,
+      originalFilename: req.file.originalname,
+    });
+    console.log(formatCompressionLog(compression));
+
+    const uploadResult = await uploadFile(compression.buffer, {
       folder,
-      filename: req.file.originalname,
-      contentType: req.file.mimetype,
+      filename: compression.filename || req.file.originalname,
+      contentType: compression.contentType || req.file.mimetype,
       clientName,
       fileType: determinedFileType,
     });
@@ -129,11 +136,17 @@ export const uploadBase64File = async (req, res) => {
     const base64Data = fileData.split(',')[1];
     const fileBuffer = Buffer.from(base64Data, 'base64');
 
-    // Upload file using unified storage service
-    const uploadResult = await uploadFile(fileBuffer, {
+    // Compress images before storage upload.
+    const compression = await compressImageBuffer(fileBuffer, {
+      originalMime: contentType,
+      originalFilename: filename,
+    });
+    console.log(formatCompressionLog(compression));
+
+    const uploadResult = await uploadFile(compression.buffer, {
       folder,
-      filename,
-      contentType,
+      filename: compression.filename || filename,
+      contentType: compression.contentType || contentType,
       clientName,
       fileType,
     });
@@ -171,10 +184,16 @@ export const uploadOnboardingAttachment = async (req, res) => {
     if (!req.file) {
       return res.status(400).json({ success: false, message: "No file uploaded" });
     }
-    const uploadResult = await uploadFile(req.file.buffer, {
+    const compression = await compressImageBuffer(req.file.buffer, {
+      originalMime: req.file.mimetype,
+      originalFilename: req.file.originalname,
+    });
+    console.log(formatCompressionLog(compression));
+
+    const uploadResult = await uploadFile(compression.buffer, {
       folder: 'onboarding-attachments',
-      filename: req.file.originalname,
-      contentType: req.file.mimetype,
+      filename: compression.filename || req.file.originalname,
+      contentType: compression.contentType || req.file.mimetype,
       fileType: 'attachments',
     });
     if (!uploadResult.success) {
