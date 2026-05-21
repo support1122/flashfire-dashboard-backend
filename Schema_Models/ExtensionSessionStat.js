@@ -48,6 +48,14 @@ const extensionSessionStatSchema = new mongoose.Schema({
         companyBlocked:      { type: Number, default: 0 },
         other:               { type: Number, default: 0 },
     },
+    // Judge-model split — how many AI-judge batches this session ran on
+    // Gemini 2.5 Flash Lite vs OpenAI gpt-4o-mini, plus failed Gemini calls
+    // that fell back to OpenAI. Powers the per-model scrape-cost breakdown.
+    modelStats: {
+        geminiBatches: { type: Number, default: 0 },
+        geminiErrors:  { type: Number, default: 0 },
+        openaiBatches: { type: Number, default: 0 },
+    },
     startedAt:     { type: Date, default: null },
     endedAt:       { type: Date, default: () => new Date(), index: true },
     extensionVersion: { type: String, default: "" },

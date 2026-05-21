@@ -80,3 +80,6 @@ env.example
 .graphify_labels.json
 .graphify_python
 .graphify_semantic.json
+
+# Vertex AI service-account key (secret — never commit)
+flashfire-466710-*.json
