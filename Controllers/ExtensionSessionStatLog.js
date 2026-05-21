@@ -59,6 +59,11 @@ export default async function ExtensionSessionStatLog(req, res) {
                 companyBlocked:    num(sr.companyBlocked),
                 other:             num(sr.other),
             },
+            modelStats: {
+                geminiBatches: num((b.modelStats || {}).geminiBatches),
+                geminiErrors:  num((b.modelStats || {}).geminiErrors),
+                openaiBatches: num((b.modelStats || {}).openaiBatches),
+            },
             startedAt: b.startedAt ? new Date(b.startedAt) : null,
             endedAt: b.endedAt ? new Date(b.endedAt) : new Date(),
             extensionVersion: String(b.extensionVersion || "").slice(0, 32),

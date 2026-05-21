@@ -45,6 +45,7 @@ import { reconcileExclusionJobsHandler } from "./Controllers/operations/reconcil
 import { queueAutoOptimizeSavedJobs } from "./Controllers/operations/QueueAutoOptimizeSavedJobs.js";
 import ForgotPassword from "./Controllers/ForgotPassword.js";
 import ExtensionLogin from "./Controllers/Extensions/login.js";
+import { GeminiJudge } from "./Controllers/Extensions/geminiJudge.js";
 import { ReciveData } from "./Controllers/Extensions/reciveData.js";
 import { extractJobData } from "./Controllers/Extensions/extractJobData.js";
 import ClientLogin from "./Controllers/Extensions/clientLogin.js";
@@ -373,6 +374,9 @@ app.post('/extension/settings/update', updateExtensionSettings);
 app.post('/extension/clientLogin', ClientLogin);
 app.get('/extension/profile', ExtensionAuth, extGetProfile);
 app.patch('/extension/profile', ExtensionAuth, extPatchProfile);
+// Gemini (Vertex AI) judge slice — extension routes ~10-15% of judge
+// batches here; OpenAI handles the rest in-worker.
+app.post('/extension/gemini-judge', GeminiJudge);
 
 // Session management routes for admin dashboard
 app.post('/api/sessions/generate-session-key', generateSessionKey);
