@@ -24,23 +24,39 @@ import { VertexAI } from "@google-cloud/vertexai";
 
 if (process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON && !process.env.GOOGLE_APPLICATION_CREDENTIALS) {
     try {
+        let rawCred = String(process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON).trim();
+        // Strip ONE layer of wrapping quotes. Common copy-paste mistake: the
+        // value was lifted out of a .env file (where the JSON is single-quoted
+        // as `KEY='{...}'`) and pasted into a host env-var UI, where the value
+        // must be the raw unquoted JSON. Without this, JSON.parse chokes on
+        // the leading quote and auth fails silently.
+        if (
+            (rawCred.startsWith("'") && rawCred.endsWith("'")) ||
+            (rawCred.startsWith('"') && rawCred.endsWith('"') && !rawCred.startsWith('{"'))
+        ) {
+            rawCred = rawCred.slice(1, -1).trim();
+        }
+        const parsed = JSON.parse(rawCred); // throws → caught below
         const tmpPath = path.join(os.tmpdir(), `gcp-credentials-${process.pid}.json`);
-        fs.writeFileSync(tmpPath, process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON, "utf8");
+        // Write the re-serialised JSON so the key file is always clean.
+        fs.writeFileSync(tmpPath, JSON.stringify(parsed), "utf8");
         process.env.GOOGLE_APPLICATION_CREDENTIALS = tmpPath;
         console.log("[VertexJudge] Using Vertex AI credentials from GOOGLE_APPLICATION_CREDENTIALS_JSON (temp file)");
     } catch (err) {
-        console.error("[VertexJudge] Failed to write credentials from GOOGLE_APPLICATION_CREDENTIALS_JSON:", err.message);
+        console.error(
+            "[VertexJudge] GOOGLE_APPLICATION_CREDENTIALS_JSON is set but not valid JSON — "
+            + "paste the RAW service-account JSON (starting with { ending with }), no surrounding quotes. Error:",
+            err.message,
+        );
     }
 }
 
-// Whether usable Gemini credentials are present. When NEITHER env var is set
-// (e.g. the production host was never given the GCP service-account JSON),
-// google-auth would otherwise fall back to probing the GCE metadata server —
-// which HANGS for ~tens of seconds on a non-GCP host and stalls the request
-// until Cloudflare returns a 502. We detect that here and fail fast instead.
-const HAS_GEMINI_CREDENTIALS = Boolean(
-    process.env.GOOGLE_APPLICATION_CREDENTIALS || process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON
-);
+// Whether usable Gemini credentials are present. True only when a key file
+// path is in place (set above from valid JSON, or pre-set as a file path).
+// When false, google-auth would fall back to probing the GCE metadata server
+// — which HANGS for ~tens of seconds on a non-GCP host until Cloudflare 502s.
+// We detect that here and fail fast instead.
+const HAS_GEMINI_CREDENTIALS = Boolean(process.env.GOOGLE_APPLICATION_CREDENTIALS);
 if (!HAS_GEMINI_CREDENTIALS) {
     console.warn("[VertexJudge] No GCP credentials (GOOGLE_APPLICATION_CREDENTIALS_JSON / GOOGLE_APPLICATION_CREDENTIALS) — Gemini judge disabled; /extension/gemini-judge will fail fast and the extension falls back to OpenAI.");
 }
