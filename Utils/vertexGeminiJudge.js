@@ -33,6 +33,31 @@ if (process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON && !process.env.GOOGLE_APPLI
     }
 }
 
+// Whether usable Gemini credentials are present. When NEITHER env var is set
+// (e.g. the production host was never given the GCP service-account JSON),
+// google-auth would otherwise fall back to probing the GCE metadata server —
+// which HANGS for ~tens of seconds on a non-GCP host and stalls the request
+// until Cloudflare returns a 502. We detect that here and fail fast instead.
+const HAS_GEMINI_CREDENTIALS = Boolean(
+    process.env.GOOGLE_APPLICATION_CREDENTIALS || process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON
+);
+if (!HAS_GEMINI_CREDENTIALS) {
+    console.warn("[VertexJudge] No GCP credentials (GOOGLE_APPLICATION_CREDENTIALS_JSON / GOOGLE_APPLICATION_CREDENTIALS) — Gemini judge disabled; /extension/gemini-judge will fail fast and the extension falls back to OpenAI.");
+}
+
+// Hard ceiling on a single Vertex call. Even with credentials, a wedged
+// Vertex request must never outlive this — the route returns fast and the
+// extension falls back rather than the client hanging.
+const VERTEX_CALL_TIMEOUT_MS = Number(process.env.GEMINI_JUDGE_TIMEOUT_MS) || 25000;
+
+function withTimeout(promise, ms, label) {
+    let timer;
+    const timeout = new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+    });
+    return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
 // gemini-2.5-flash-lite — cheapest Gemini 2.5 tier, used for the judge slice.
 const GEMINI_JUDGE_MODEL = process.env.GEMINI_JUDGE_MODEL || "gemini-2.5-flash-lite";
 
@@ -67,6 +92,15 @@ export async function judgeBatchViaGemini({ system, user, temperature = 0 }) {
     if (!user || typeof user !== "string") {
         return { ok: false, error: "BAD_INPUT", message: "user prompt required" };
     }
+    // Fail fast when this host has no GCP credentials — never let the call
+    // hang on a metadata-server probe.
+    if (!HAS_GEMINI_CREDENTIALS) {
+        return {
+            ok: false,
+            error: "NO_CREDENTIALS",
+            message: "GCP credentials not configured on this host (set GOOGLE_APPLICATION_CREDENTIALS_JSON).",
+        };
+    }
     const startedAt = Date.now();
     try {
         const model = vertexAi.getGenerativeModel({
@@ -80,9 +114,13 @@ export async function judgeBatchViaGemini({ system, user, temperature = 0 }) {
             },
         });
 
-        const resp = await model.generateContent({
-            contents: [{ role: "user", parts: [{ text: user }] }],
-        });
+        const resp = await withTimeout(
+            model.generateContent({
+                contents: [{ role: "user", parts: [{ text: user }] }],
+            }),
+            VERTEX_CALL_TIMEOUT_MS,
+            "Vertex generateContent",
+        );
 
         const content = resp?.response?.candidates?.[0]?.content?.parts?.[0]?.text;
         if (!content) {
