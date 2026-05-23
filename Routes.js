@@ -46,6 +46,7 @@ import { queueAutoOptimizeSavedJobs } from "./Controllers/operations/QueueAutoOp
 import ForgotPassword from "./Controllers/ForgotPassword.js";
 import ExtensionLogin from "./Controllers/Extensions/login.js";
 import { GeminiJudge } from "./Controllers/Extensions/geminiJudge.js";
+import { GeminiForScrapingTest } from "./Controllers/Extensions/geminiJudgeTest.js";
 import { ReciveData } from "./Controllers/Extensions/reciveData.js";
 import { extractJobData } from "./Controllers/Extensions/extractJobData.js";
 import ClientLogin from "./Controllers/Extensions/clientLogin.js";
@@ -377,6 +378,10 @@ app.patch('/extension/profile', ExtensionAuth, extPatchProfile);
 // Gemini (Vertex AI) judge slice — extension routes ~10-15% of judge
 // batches here; OpenAI handles the rest in-worker.
 app.post('/extension/gemini-judge', GeminiJudge);
+// Diagnostic: fire one canned judge batch through Vertex + report cred state.
+// GET form for easy curl/browser use; POST also accepted for symmetry.
+app.get('/test/gemini-for-scraping', GeminiForScrapingTest);
+app.post('/test/gemini-for-scraping', GeminiForScrapingTest);
 
 // Session management routes for admin dashboard
 app.post('/api/sessions/generate-session-key', generateSessionKey);
