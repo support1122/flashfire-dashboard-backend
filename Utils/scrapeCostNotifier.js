@@ -248,16 +248,20 @@ async function fireDiscord(milestone, costInfo, today) {
     );
 
     const footer = costInfo.hasModelSplit
-        ? `Routing: Gemini-first → OpenAI fallback · Gemini $${GEMINI_INPUT_PER_M}/1M in · $${GEMINI_OUTPUT_PER_M}/1M out — OpenAI $${OPENAI_INPUT_PER_M}/1M in · $${OPENAI_OUTPUT_PER_M}/1M out`
-        : `Routing: Gemini-first → OpenAI fallback (no modelStats yet — costs estimated at OpenAI rates) · ${TOKENS_PER_BATCH_IN}/${TOKENS_PER_BATCH_OUT} tokens per batch`;
+        ? `Routing: Gemini default · OpenAI fallback only · Gemini $${GEMINI_INPUT_PER_M}/1M in · $${GEMINI_OUTPUT_PER_M}/1M out — OpenAI $${OPENAI_INPUT_PER_M}/1M in · $${OPENAI_OUTPUT_PER_M}/1M out · keys held server-side`
+        : `Routing: Gemini default · OpenAI fallback only (no modelStats yet — priced at OpenAI rates) · ${TOKENS_PER_BATCH_IN}/${TOKENS_PER_BATCH_OUT} tokens per batch`;
 
-    // Routing summary line in the description so the model story is the
-    // first thing ops see, not buried in fields.
+    // Routing summary line in the description — first thing ops see.
+    // Wording reflects new architecture (v1.47.0+): every judge call runs
+    // server-side via dashboard backend; Gemini is the default model and
+    // OpenAI only ever fires on Vertex failure.
     const routingLine = costInfo.hasModelSplit
         ? (costInfo.gemini.batches > 0
-            ? `🟢 Routing: **Gemini ${costInfo.geminiPct}%** primary · OpenAI ${(100 - costInfo.geminiPct).toFixed(1)}% fallback${costInfo.geminiErrors ? ` · ${costInfo.geminiErrors} Gemini error(s) fell back to OpenAI` : ""}`
-            : `🟡 Routing: **0% Gemini** · 100% OpenAI fallback · ${costInfo.geminiErrors} Gemini error(s) — Vertex appears down or extension misconfigured`)
-        : `⚠️ Routing: **unknown** — extension did not report modelStats. Configured as Gemini-first; deployed build may be old.`;
+            ? (costInfo.openai.batches === 0
+                ? `🟢 **All ${costInfo.batches} batches on Gemini.** OpenAI fallback was not needed today.`
+                : `🟢 **Gemini ${costInfo.geminiPct}% (default)** · OpenAI ${(100 - costInfo.geminiPct).toFixed(1)}% fallback${costInfo.geminiErrors ? ` · ${costInfo.geminiErrors} Vertex error(s) fell back to OpenAI` : ""}`)
+            : `🟡 **0% Gemini** · 100% OpenAI fallback · ${costInfo.geminiErrors} Vertex error(s) — Vertex appears down or extension misconfigured`)
+        : `⚠️ Routing: **unknown** — extension did not report modelStats. Default is Gemini; deployed build may predate v1.47.0 — repackage + reinstall.`;
     const embed = {
         title: `📈 Scrape milestone: ${milestone.toLocaleString()} jobs today`,
         description: `Today (${today} IST) the JR-Direct extension has captured **${milestone.toLocaleString()}** jobs across all operators.\n\n${routingLine}`,
