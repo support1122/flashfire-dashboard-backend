@@ -20,10 +20,15 @@
 import axios from "axios";
 import { ProfileModel } from "../Schema_Models/ProfileModel.js";
 import { getAppSettings } from "../Schema_Models/AppSettings.js";
+import { callGemini, GEMINI_JUDGE_MODEL, HAS_GEMINI_CREDENTIALS } from "../Utils/vertexGeminiJudge.js";
 
 const RESUME_API_URL = process.env.RESUME_API_URL || "http://localhost:5000";
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
 const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4o-mini";
+// Gemini-first switch for summary builds. Set FF_SUMMARY_PREFER_GEMINI=0 to
+// force OpenAI path. Default on — cheaper + same JSON-free output works.
+const PREFER_GEMINI = process.env.FF_SUMMARY_PREFER_GEMINI !== "0";
+const GEMINI_SUMMARY_MODEL = process.env.GEMINI_SUMMARY_MODEL || GEMINI_JUDGE_MODEL;
 const MAX_SUMMARY_CHARS = 8000;
 
 const SYSTEM_PROMPT = `You are a senior recruiter writing a candidate brief.
@@ -415,90 +420,64 @@ async function callOpenAI(profile, resume, existingSummary, profileDiff, apiKey)
   }
 }
 
-export default async function BuildAiSummary(req, res) {
+// Core build pipeline — no req/res. Returns a { success, ... } object so it
+// can be called both from the HTTP handler AND fire-and-forget from profile
+// create/update controllers to auto-rebuild summaries.
+export async function buildSummaryForEmail(email) {
   try {
-    // Resolve effective key: env var first, then admin-managed global from
-    // AppSettings. Lets ops drop in / rotate the key via the AI Summaries UI
-    // without redeploying the backend.
     let effectiveKey = OPENAI_API_KEY;
     if (!effectiveKey) {
       try {
         const settings = await getAppSettings();
         effectiveKey = (settings?.globalOpenaiKey || "").trim();
       } catch (e) {
-        console.warn("BuildAiSummary global-key load failed:", e.message);
+        console.warn("buildSummaryForEmail global-key load failed:", e.message);
       }
     }
     if (!effectiveKey) {
-      return res.status(503).json({
-        success: false,
-        error: "NO_OPENAI_KEY",
-        message: "OPENAI key not configured (neither env OPENAI_API_KEY nor AppSettings.globalOpenaiKey set)",
-        step: "config",
-      });
+      return { success: false, status: 503, error: "NO_OPENAI_KEY", message: "OPENAI key not configured", step: "config" };
     }
-    const { email } = req.body || {};
     if (!email || typeof email !== "string" || !email.includes("@")) {
-      return res.status(400).json({
-        success: false,
-        error: "BAD_INPUT",
-        message: "email is required",
-        step: "validate",
-      });
+      return { success: false, status: 400, error: "BAD_INPUT", message: "email is required", step: "validate" };
     }
     const lower = String(email).toLowerCase();
-
-    // 1. Profile
-    const profile = await ProfileModel.findOne({ email: lower }).lean();
+    let profile = await ProfileModel.findOne({ email: lower }).lean();
     if (!profile) {
-      // Some legacy profiles use mixed-case email. Try a case-insensitive match.
-      const fallback = await ProfileModel.findOne({
+      profile = await ProfileModel.findOne({
         email: { $regex: new RegExp(`^${escapeRegex(email)}$`, "i") },
       }).lean();
-      if (!fallback) {
-        return res.status(404).json({
-          success: false,
-          error: "PROFILE_NOT_FOUND",
-          message: `No profile in DB for ${email}`,
-          step: "loading-profile",
-        });
-      }
-      return await runForProfile(fallback, res, effectiveKey);
     }
-    return await runForProfile(profile, res, effectiveKey);
+    if (!profile) {
+      return { success: false, status: 404, error: "PROFILE_NOT_FOUND", message: `No profile in DB for ${email}`, step: "loading-profile" };
+    }
+    return await runForProfileCore(profile, effectiveKey);
   } catch (err) {
-    console.error("BuildAiSummary fatal:", err);
-    return res.status(500).json({
-      success: false,
-      error: "INTERNAL",
-      message: err.message,
-      step: "internal",
-    });
+    console.error("buildSummaryForEmail fatal:", err);
+    return { success: false, status: 500, error: "INTERNAL", message: err.message, step: "internal" };
   }
+}
+
+export default async function BuildAiSummary(req, res) {
+  const { email } = req.body || {};
+  const result = await buildSummaryForEmail(email);
+  const { status = result.success ? 200 : 500, ...payload } = result;
+  return res.status(status).json(payload);
 }
 
 function escapeRegex(s) {
   return String(s).replace(/[-/\\^$*+?.()|[\]{}]/g, "\\$&");
 }
 
-async function runForProfile(profile, res, apiKey) {
+async function runForProfileCore(profile, apiKey) {
   const email = profile.email;
-
-  // 2. Resume (optional)
   const resumeRes = await fetchResume(email);
   const resume = resumeRes.ok ? resumeRes.resume : null;
   const source = resume ? "profile+resume" : "profile-only";
 
-  // 3. OpenAI — pass existing summary when profile was edited so the
-  //    rebuild is incremental (preserves voice, only changes diffs).
   const existingSummary =
     profile?.summaryStale && typeof profile.aiSummary === "string"
       ? profile.aiSummary
       : "";
-  // Compute the structured diff between the snapshot stored at last build
-  // and the current profile. Only meaningful when we have BOTH a previous
-  // summary AND a previous snapshot — otherwise we're building fresh and
-  // the diff would be the whole profile (== noise).
   const prevSnapshot = profile?.aiSummaryMeta?.profileSnapshot || null;
   const profileDiff = existingSummary && prevSnapshot
     ? computeProfileDiff(prevSnapshot, profile)
@@ -509,27 +488,43 @@ async function runForProfile(profile, res, apiKey) {
       profileDiff.map((c) => `${c.field}[+${c.added.length}/-${c.removed.length}]`).join(" "),
     );
   }
-  const ai = await callOpenAI(profile, resume, existingSummary, profileDiff, apiKey);
-  if (!ai.ok) {
-    return res.status(502).json({
-      success: false,
-      error: ai.error,
-      message: ai.message,
-      step: "openai",
+  // Gemini-first: cheaper and fast for 500-word briefs. Falls back to OpenAI
+  // on any Gemini failure (missing creds, Vertex error, empty content) so a
+  // misconfigured GCP project never blocks summary builds.
+  let ai = { ok: false };
+  let usedModel = "";
+  let usedSource = "";
+  if (PREFER_GEMINI && HAS_GEMINI_CREDENTIALS) {
+    const userPrompt = buildUserPrompt(profile, resume, existingSummary, profileDiff);
+    const g = await callGemini({
+      system: SYSTEM_PROMPT,
+      user: userPrompt,
+      temperature: 0.2,
+      json: false,
+      model: GEMINI_SUMMARY_MODEL,
     });
+    if (g.ok) {
+      ai = { ok: true, summary: g.content, usage: g.usage };
+      usedModel = g.model || GEMINI_SUMMARY_MODEL;
+      usedSource = `${source}+gemini`;
+    } else {
+      console.warn(`[BuildAiSummary] Gemini failed (${g.error}: ${g.message}) — falling back to OpenAI`);
+    }
+  }
+  if (!ai.ok) {
+    ai = await callOpenAI(profile, resume, existingSummary, profileDiff, apiKey);
+    usedModel = OPENAI_MODEL;
+    usedSource = `${source}+openai`;
+  }
+  if (!ai.ok) {
+    return { success: false, status: 502, error: ai.error, message: ai.message, step: "openai" };
   }
   const summary = (ai.summary || "").slice(0, MAX_SUMMARY_CHARS);
   if (!summary) {
-    return res.status(502).json({
-      success: false,
-      error: "EMPTY_SUMMARY",
-      message: "OpenAI returned empty content",
-      step: "openai",
-    });
+    return { success: false, status: 502, error: "EMPTY_SUMMARY", message: "OpenAI returned empty content", step: "openai" };
   }
   const wordCount = summary.trim().split(/\s+/).filter(Boolean).length;
 
-  // 4. Persist
   const builtAt = new Date();
   const updated = await ProfileModel.findOneAndUpdate(
     { _id: profile._id },
@@ -538,27 +533,24 @@ async function runForProfile(profile, res, apiKey) {
         aiSummary: summary,
         aiSummaryMeta: {
           builtAt,
-          model: OPENAI_MODEL,
-          source,
+          model: usedModel,
+          source: usedSource || source,
           wordCount,
-          // Snapshot of the SNAPSHOT_FIELDS we just consumed. The next
-          // rebuild diffs against this so the model sees explicit
-          // ADD/REMOVE deltas rather than re-deriving them.
           profileSnapshot: snapshotProfile(profile),
         },
-        // Summary just rebuilt — clear stale flag.
         summaryStale: false,
       },
     },
     { new: true, lean: true },
   );
 
-  return res.json({
+  return {
     success: true,
+    status: 200,
     aiSummary: summary,
     wordCount,
-    source,
-    model: OPENAI_MODEL,
+    source: usedSource || source,
+    model: usedModel,
     builtAt: builtAt.toISOString(),
     resumeFound: !!resume,
     profile: updated
@@ -568,5 +560,5 @@ async function runForProfile(profile, res, apiKey) {
           aiSummaryMeta: updated.aiSummaryMeta,
         }
       : null,
-  });
+  };
 }

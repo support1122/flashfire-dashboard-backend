@@ -21,7 +21,7 @@ export const userSchema = new mongoose.Schema(
       type: String, 
       required: true, 
       default: "Free Trial",
-      enum: ["Free Trial", "Ignite", "Professional", "Executive"]
+      enum: ["Free Trial", "Prime", "Ignite", "Professional", "Executive"]
     },
     joinTime: {
       type: String,

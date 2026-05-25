@@ -1,4 +1,17 @@
 import { ProfileModel } from "../../Schema_Models/ProfileModel.js";
+import { buildSummaryForEmail } from "../BuildAiSummary.js";
+
+function triggerSummaryRebuild(email, reason) {
+  if (!email) return;
+  setImmediate(() => {
+    buildSummaryForEmail(email)
+      .then((r) => {
+        if (r?.success) console.log(`[summary-rebuild:${reason}] ok email=${email} words=${r.wordCount}`);
+        else console.warn(`[summary-rebuild:${reason}] fail email=${email} err=${r?.error}`);
+      })
+      .catch((e) => console.error(`[summary-rebuild:${reason}] threw email=${email}`, e));
+  });
+}
 
 const ALLOWED_FIELDS = new Set([
   // Personal
@@ -113,6 +126,7 @@ export async function extPatchProfile(req, res) {
       { new: true, upsert: true, setDefaultsOnInsert: false, strict: false, runValidators: false }
     ).lean();
 
+    triggerSummaryRebuild(email, "ext-patch");
     return res.status(200).json({ success: true, profile: updated, updated: Object.keys($set) });
   } catch (err) {
     console.error("extPatchProfile error", err);

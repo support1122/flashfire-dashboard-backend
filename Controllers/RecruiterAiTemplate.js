@@ -5,9 +5,14 @@ import { RecruiterEmailTemplate } from "../Schema_Models/RecruiterEmailTemplate.
 import { RecruiterEmailAutomation } from "../Schema_Models/RecruiterEmailAutomation.js";
 import { RecruiterEmailGroup } from "../Schema_Models/RecruiterEmailGroup.js";
 import { getAppSettings } from "../Schema_Models/AppSettings.js";
+import { callGemini, GEMINI_JUDGE_MODEL, HAS_GEMINI_CREDENTIALS } from "../Utils/vertexGeminiJudge.js";
 
 const RESUME_API_URL = process.env.RESUME_API_URL || "http://localhost:5000";
 const OPENAI_MODEL = process.env.OPENAI_RECRUITER_MODEL || "gpt-4o";
+const PREFER_GEMINI = process.env.FF_RECRUITER_PREFER_GEMINI !== "0";
+// Recruiter emails benefit from a stronger Gemini tier than the cheap judge
+// model. Override via env if needed.
+const GEMINI_RECRUITER_MODEL = process.env.GEMINI_RECRUITER_MODEL || "gemini-2.5-flash";
 const DEFAULT_AI_DAILY_LIMIT = 20;
 
 async function findDefaultTechGroup() {
@@ -257,8 +262,13 @@ export async function generateAiRecruiterTemplate(ownerEmail) {
   const owner = String(ownerEmail || "").toLowerCase().trim();
   if (!owner) throw new Error("ownerEmail required");
 
+  // OpenAI key is now optional — only needed for fallback. If Gemini is the
+  // only path available, no key is fine; if both fail to be configured, the
+  // call below will throw.
   const apiKey = await resolveOpenAIKey();
-  if (!apiKey) throw new Error("OPENAI key not configured");
+  if (!apiKey && !(PREFER_GEMINI && HAS_GEMINI_CREDENTIALS)) {
+    throw new Error("No AI provider configured (need OPENAI key or GCP credentials)");
+  }
 
   const [resume, profile, user] = await Promise.all([
     fetchResumeForUser(owner),
@@ -272,40 +282,66 @@ export async function generateAiRecruiterTemplate(ownerEmail) {
 
   const userPrompt = buildUserPrompt({ resume, profile, user, ownerEmail: owner });
 
-  const body = {
-    model: OPENAI_MODEL,
-    messages: [
-      { role: "system", content: SYSTEM_PROMPT },
-      { role: "user", content: userPrompt }
-    ],
-    temperature: 0.4,
-    response_format: { type: "json_object" }
-  };
+  let raw = "";
+  let usedModel = "";
+  let usage = null;
 
-  const res = await axios.post("https://api.openai.com/v1/chat/completions", body, {
-    timeout: 90_000,
-    headers: {
-      "content-type": "application/json",
-      authorization: `Bearer ${apiKey}`
+  // Gemini-first.
+  if (PREFER_GEMINI && HAS_GEMINI_CREDENTIALS) {
+    const g = await callGemini({
+      system: SYSTEM_PROMPT,
+      user: userPrompt,
+      temperature: 0.4,
+      json: true,
+      model: GEMINI_RECRUITER_MODEL,
+    });
+    if (g.ok) {
+      raw = g.content || "";
+      usedModel = g.model || GEMINI_RECRUITER_MODEL;
+      usage = g.usage || null;
+    } else {
+      console.warn(`[RecruiterAiTemplate] Gemini failed (${g.error}: ${g.message}) — falling back to OpenAI`);
     }
-  });
+  }
 
-  const raw = res.data?.choices?.[0]?.message?.content || "";
+  if (!raw) {
+    if (!apiKey) throw new Error("OPENAI key not configured (Gemini failed too)");
+    const body = {
+      model: OPENAI_MODEL,
+      messages: [
+        { role: "system", content: SYSTEM_PROMPT },
+        { role: "user", content: userPrompt }
+      ],
+      temperature: 0.4,
+      response_format: { type: "json_object" }
+    };
+    const res = await axios.post("https://api.openai.com/v1/chat/completions", body, {
+      timeout: 90_000,
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${apiKey}`
+      }
+    });
+    raw = res.data?.choices?.[0]?.message?.content || "";
+    usedModel = OPENAI_MODEL;
+    usage = res.data?.usage || null;
+  }
+
   let parsed;
   try {
     parsed = JSON.parse(raw);
   } catch (e) {
-    throw new Error("openai_response_not_json");
+    throw new Error("ai_response_not_json");
   }
   const subject = sanitizeSubject(parsed.subject || "");
   const bodyText = sanitizeBody(parsed.body || "");
-  if (!subject || !bodyText) throw new Error("openai_response_missing_fields");
+  if (!subject || !bodyText) throw new Error("ai_response_missing_fields");
 
   return {
     subject,
     text: bodyText,
-    model: OPENAI_MODEL,
-    usage: res.data?.usage || null
+    model: usedModel,
+    usage
   };
 }
 
