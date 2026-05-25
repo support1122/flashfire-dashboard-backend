@@ -56,10 +56,43 @@ export function planCapFor(planType) {
     return PLAN_CAPS[normalisePlan(planType)] ?? null;
 }
 
-// readPlanCap(email) → { planType, planCap, planLimitOverride, effectiveCap }.
-// `planLimit` on the user doc overrides the plan default when set > 0.
-// Returns effectiveCap = null when neither resolves — caller treats as
-// uncapped (we don't want missing-plan to bork the push).
+// Referral bonus per plan referred. Mirrors /get-referral-stats:
+//   Professional referral = +200 applications
+//   Executive    referral = +300 applications
+// Stored in UserModel.referrals[] (new path) with legacy single-value
+// UserModel.referralStatus fallback when the array is empty.
+export const REFERRAL_BONUS = {
+    Professional: 200,
+    Executive: 300,
+};
+
+// computeReferralBonus(userDoc) → integer ≥ 0. Sums every entry in
+// referrals[] using REFERRAL_BONUS; falls back to a single bonus from the
+// legacy referralStatus field when the array is empty. Unknown plan strings
+// contribute 0 (never throw).
+export function computeReferralBonus(userDoc) {
+    if (!userDoc) return 0;
+    const arr = Array.isArray(userDoc.referrals) ? userDoc.referrals : [];
+    if (arr.length > 0) {
+        let sum = 0;
+        for (const r of arr) {
+            const bonus = REFERRAL_BONUS[r?.plan];
+            if (Number.isFinite(bonus)) sum += bonus;
+        }
+        return sum;
+    }
+    const legacy = REFERRAL_BONUS[userDoc?.referralStatus];
+    return Number.isFinite(legacy) ? legacy : 0;
+}
+
+// readPlanCap(email) → { planType, planCap, planLimitOverride, referralBonus,
+// referrals, effectiveCap }. `planLimit` on the user doc overrides the plan
+// default when set > 0. `referralBonus` from referrals[] (or legacy
+// referralStatus) is ADDED ON TOP of whichever base cap applies — so a
+// Professional client (500) with one Executive referral (+300) gets 800
+// effective. Returns effectiveCap = null only when there's no base cap at all
+// (unknown plan AND no override). In that case referrals don't apply either
+// — uncapped stays uncapped, don't synthesise a cap from referrals alone.
 export async function readPlanCap(rawEmail) {
     const email = String(rawEmail || "").trim().toLowerCase();
     if (!email || !email.includes("@")) {
@@ -67,17 +100,36 @@ export async function readPlanCap(rawEmail) {
         err.code = "BAD_INPUT";
         throw err;
     }
-    const user = await UserModel.findOne({ email }, { planType: 1, planLimit: 1 }).lean();
+    const user = await UserModel.findOne(
+        { email },
+        { planType: 1, planLimit: 1, referrals: 1, referralStatus: 1 },
+    ).lean();
     const planType = user?.planType || "";
     const planLimitRaw = Number(user?.planLimit);
     const planLimitOverride = Number.isFinite(planLimitRaw) && planLimitRaw > 0 ? planLimitRaw : null;
     const planDefault = planCapFor(planType);
-    const effectiveCap = planLimitOverride ?? planDefault ?? null;
-    return { email, planType, planLimitOverride, planDefault, effectiveCap };
+    const baseCap = planLimitOverride ?? planDefault ?? null;
+    const referralBonus = computeReferralBonus(user);
+    const referrals = Array.isArray(user?.referrals) ? user.referrals : [];
+    const effectiveCap = baseCap == null ? null : baseCap + referralBonus;
+    return {
+        email,
+        planType,
+        planLimitOverride,
+        planDefault,
+        baseCap,
+        referralBonus,
+        referrals,
+        referralCount: referrals.length || (user?.referralStatus ? 1 : 0),
+        effectiveCap,
+    };
 }
 
-// countTotalJobs(email) → number. ALL jobs for this client across all time
-// and all roles (operations + user). Lifetime cap is on the union.
+// countTotalJobs(email) → number. ALL non-removed jobs for this client across
+// all time and all roles (operations + user). Lifetime cap counts ACTIVE
+// applications only — jobs whose currentStatus starts with "deleted" or
+// "removed" (case-insensitive, matches UpdateChanges.isRemovalStatus) are
+// excluded so a client who removed N jobs gets that headroom back.
 export async function countTotalJobs(rawEmail) {
     const email = String(rawEmail || "").trim().toLowerCase();
     if (!email || !email.includes("@")) {
@@ -85,19 +137,42 @@ export async function countTotalJobs(rawEmail) {
         err.code = "BAD_INPUT";
         throw err;
     }
-    return JobModel.countDocuments({ userID: email });
+    return JobModel.countDocuments({
+        userID: email,
+        $or: [
+            { currentStatus: { $exists: false } },
+            { currentStatus: null },
+            { currentStatus: { $not: /^(deleted|removed)/i } },
+        ],
+    });
 }
 
-// checkPlanCap(email) → { allowed, count, cap, planType, reason?, message? }.
-// Returns allowed:true with cap:null when client has no recognisable plan
-// (uncapped, do-no-harm default). Throws on DB error so caller can fail-closed.
+// checkPlanCap(email) → { allowed, count, cap, planType, reason?, message?,
+// baseCap, referralBonus, referralCount }. Returns allowed:true with cap:null
+// when client has no recognisable plan (uncapped, do-no-harm default).
+// Throws on DB error so caller can fail-closed.
 export async function checkPlanCap(rawEmail) {
-    const { email, planType, effectiveCap, planLimitOverride, planDefault } = await readPlanCap(rawEmail);
+    const meta = await readPlanCap(rawEmail);
+    const { email, planType, effectiveCap, planLimitOverride, baseCap, referralBonus, referralCount } = meta;
     if (effectiveCap == null) {
-        return { allowed: true, count: null, cap: null, planType, source: "uncapped" };
+        return {
+            allowed: true,
+            count: null,
+            cap: null,
+            planType,
+            source: "uncapped",
+            baseCap: null,
+            referralBonus,
+            referralCount,
+        };
     }
     const count = await countTotalJobs(email);
     const source = planLimitOverride != null ? "override" : "plan";
+    // Build a clear "500 plan + 300 referral = 800" suffix so ops can audit
+    // why a client has more headroom than the bare plan default suggests.
+    const refSuffix = referralBonus > 0
+        ? ` (base ${baseCap} from ${planLimitOverride != null ? "override" : planType || "plan"} + ${referralBonus} from ${referralCount} referral${referralCount === 1 ? "" : "s"})`
+        : "";
     if (count >= effectiveCap) {
         return {
             allowed: false,
@@ -105,8 +180,11 @@ export async function checkPlanCap(rawEmail) {
             cap: effectiveCap,
             planType,
             source,
+            baseCap,
+            referralBonus,
+            referralCount,
             reason: "PLAN_LIMIT_REACHED",
-            message: `Plan limit reached: ${count}/${effectiveCap} applications for ${planType || "(no plan)"}. No more jobs can be added under this client. Upgrade the plan or raise planLimit to continue.`,
+            message: `Plan limit reached: ${count}/${effectiveCap} applications${refSuffix} for ${planType || "(no plan)"}. No more jobs can be added under this client. Add a referral, upgrade the plan, or raise planLimit to continue.`,
         };
     }
     return {
@@ -115,6 +193,9 @@ export async function checkPlanCap(rawEmail) {
         cap: effectiveCap,
         planType,
         source,
+        baseCap,
+        referralBonus,
+        referralCount,
         remaining: effectiveCap - count,
     };
 }
