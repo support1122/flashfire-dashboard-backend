@@ -765,6 +765,25 @@
 
 import { ProfileModel } from "../Schema_Models/ProfileModel.js";
 import { UserModel } from "../Schema_Models/UserModel.js";
+import { buildSummaryForEmail } from "./BuildAiSummary.js";
+
+// Fire-and-forget AI summary rebuild. Profile create/update should not block
+// on OpenAI latency; the dashboard polls /summaries-overview so the new
+// summary surfaces as soon as the build completes.
+function triggerSummaryRebuild(email, reason) {
+  if (!email) return;
+  setImmediate(() => {
+    buildSummaryForEmail(email)
+      .then((r) => {
+        if (r?.success) {
+          console.log(`[summary-rebuild:${reason}] ok email=${email} words=${r.wordCount} source=${r.source}`);
+        } else {
+          console.warn(`[summary-rebuild:${reason}] fail email=${email} err=${r?.error} msg=${r?.message}`);
+        }
+      })
+      .catch((e) => console.error(`[summary-rebuild:${reason}] threw email=${email}`, e));
+  });
+}
 
 // Allowed employment-type values. Anything outside this set is dropped on
 // save so a typo in the UI can't poison ProfileModel.employmentTypes.
@@ -936,6 +955,7 @@ export default async function Add_Update_Profile(req, res) {
           _id: { $ne: updatedProfile._id } 
         });
 
+        triggerSummaryRebuild(authEmail, "profile-migrate");
         return res.json({
           message: "Profile updated successfully (migrated from old structure)",
           userProfile: updatedProfile,
@@ -997,6 +1017,7 @@ export default async function Add_Update_Profile(req, res) {
         { new: true }
       );
 
+      triggerSummaryRebuild(authEmail, "profile-update");
       return res.json({
         message: "Profile updated successfully",
         userProfile: updatedProfile,
@@ -1050,6 +1071,7 @@ export default async function Add_Update_Profile(req, res) {
 
       const savedProfile = await newProfile.save();
 
+      triggerSummaryRebuild(authEmail, "profile-create");
       return res.json({
         message: "Profile created successfully",
         userProfile: savedProfile,

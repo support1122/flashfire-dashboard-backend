@@ -159,4 +159,49 @@ export async function judgeBatchViaGemini({ system, user, temperature = 0 }) {
     }
 }
 
-export { GEMINI_JUDGE_MODEL };
+// callGemini — generic Gemini completion. Same plumbing as judgeBatchViaGemini
+// but lets callers ask for plain text output (json=false) so non-judge flows
+// (e.g. AI summary builder) can share the Vertex client + credentials check.
+export async function callGemini({ system, user, temperature = 0.2, json = false, model, timeoutMs }) {
+    if (!user || typeof user !== "string") {
+        return { ok: false, error: "BAD_INPUT", message: "user prompt required" };
+    }
+    if (!HAS_GEMINI_CREDENTIALS) {
+        return { ok: false, error: "NO_CREDENTIALS", message: "GCP credentials not configured" };
+    }
+    const startedAt = Date.now();
+    try {
+        const generationConfig = { temperature };
+        if (json) generationConfig.responseMimeType = "application/json";
+        const m = vertexAi.getGenerativeModel({
+            model: model || GEMINI_JUDGE_MODEL,
+            systemInstruction: system
+                ? { role: "system", parts: [{ text: String(system) }] }
+                : undefined,
+            generationConfig,
+        });
+        const resp = await withTimeout(
+            m.generateContent({ contents: [{ role: "user", parts: [{ text: user }] }] }),
+            timeoutMs || VERTEX_CALL_TIMEOUT_MS,
+            "Vertex generateContent",
+        );
+        const content = resp?.response?.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (!content) return { ok: false, error: "EMPTY_RESPONSE", message: "Vertex returned no content" };
+        return {
+            ok: true,
+            content,
+            usage: extractVertexUsage(resp),
+            model: model || GEMINI_JUDGE_MODEL,
+            durationMs: Date.now() - startedAt,
+        };
+    } catch (err) {
+        return {
+            ok: false,
+            error: "VERTEX_ERROR",
+            message: err?.message || String(err),
+            durationMs: Date.now() - startedAt,
+        };
+    }
+}
+
+export { GEMINI_JUDGE_MODEL, HAS_GEMINI_CREDENTIALS };

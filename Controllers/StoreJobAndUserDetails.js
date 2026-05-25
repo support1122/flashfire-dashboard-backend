@@ -9,7 +9,7 @@ import {
     isLocationBlocked,
 } from "../Utils/exclusionLists.js";
 import { sanitizeJobTitle } from "../Utils/jobTitle.js";
-import { checkCap, detectOvershoot } from "../Utils/dailyCapGuard.js";
+import { checkCap, detectOvershoot, checkPlanCap } from "../Utils/dailyCapGuard.js";
 
 /**
  * Normalize job title/company for duplicate check: trim and collapse multiple spaces.
@@ -287,6 +287,47 @@ export async function saveToDashboard(req, res) {
                         status: "failed",
                         error: "BLOCKED_LOCATION",
                         reason: "Location is blocked for this client.",
+                    });
+                    continue;
+                }
+
+                // Lifetime plan cap — TOTAL applications cap per plan.
+                let planCheck;
+                try {
+                    planCheck = await checkPlanCap(userEmail);
+                } catch (e) {
+                    console.error("dailyCapGuard.checkPlanCap failed (saveToDashboard):", e.message);
+                    summary.failedWithError++;
+                    summary.details.push({
+                        user: userEmail,
+                        status: "failed",
+                        error: "PLAN_CAP_CHECK_FAILED",
+                        reason: "Could not verify plan limit (DB unavailable). Try again shortly.",
+                    });
+                    continue;
+                }
+                if (!planCheck.allowed) {
+                    console.log(JSON.stringify({
+                        event: "plan.cap.hit",
+                        path: "saveToDashboard",
+                        client: userEmail,
+                        planType: planCheck.planType,
+                        cap: planCheck.cap,
+                        count: planCheck.count,
+                        source: planCheck.source,
+                        operator: addedByFromCode,
+                        code: rawExtensionCode,
+                        ts: new Date().toISOString(),
+                    }));
+                    summary.failedWithError++;
+                    summary.details.push({
+                        user: userEmail,
+                        status: "failed",
+                        error: planCheck.reason || "PLAN_LIMIT_REACHED",
+                        reason: planCheck.message,
+                        cap: planCheck.cap,
+                        current: planCheck.count,
+                        planType: planCheck.planType,
                     });
                     continue;
                 }

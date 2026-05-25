@@ -4,7 +4,7 @@ import { ProfileModel } from '../Schema_Models/ProfileModel.js';
 import { isClientLocked } from './operations/ClientOperations.js';
 import { getExclusionBlockReason } from '../Utils/exclusionGuard.js';
 import { sanitizeJobTitle } from '../Utils/jobTitle.js';
-import { checkCap, detectOvershoot } from '../Utils/dailyCapGuard.js';
+import { checkCap, detectOvershoot, checkPlanCap } from '../Utils/dailyCapGuard.js';
 
 export default async function AddJob(req, res) {
     let { jobDetails, userDetails, role, operationsEmail, operationsName, extensionCode } = req.body;
@@ -35,6 +35,46 @@ export default async function AddJob(req, res) {
         }
 
         const clientForExclusions = jobDetails?.userID || userDetails?.email;
+
+        // Lifetime PLAN cap. Hard cap on TOTAL applications for this client
+        // across all time, applied to both ops- and user-added jobs. Runs
+        // BEFORE the daily cap so a client at lifetime limit can't push even
+        // if the daily window has room. Skipped silently when no client is
+        // resolvable (existing BAD_INPUT path below catches that for ops).
+        if (clientForExclusions) {
+            let planCheck;
+            try {
+                planCheck = await checkPlanCap(clientForExclusions);
+            } catch (e) {
+                console.error('dailyCapGuard.checkPlanCap failed:', e.message);
+                return res.status(503).json({
+                    success: false,
+                    error: 'PLAN_CAP_CHECK_FAILED',
+                    message: 'Could not verify plan limit (DB unavailable). Push refused — try again shortly.',
+                });
+            }
+            if (!planCheck.allowed) {
+                console.log(JSON.stringify({
+                    event: 'plan.cap.hit',
+                    client: clientForExclusions,
+                    planType: planCheck.planType,
+                    cap: planCheck.cap,
+                    count: planCheck.count,
+                    source: planCheck.source,
+                    operator: operationsName || operationsEmail || (isOpsRole ? 'unknown-ops' : 'user'),
+                    ts: new Date().toISOString(),
+                }));
+                return res.status(403).json({
+                    success: false,
+                    error: planCheck.reason || 'PLAN_LIMIT_REACHED',
+                    message: planCheck.message,
+                    cap: planCheck.cap,
+                    current: planCheck.count,
+                    remaining: 0,
+                    planType: planCheck.planType,
+                });
+            }
+        }
 
         // Daily-cap gate. Production rules (covered by dailyCapGuard.js):
         //   1. Ops pushes MUST resolve a client email — reject up-front
