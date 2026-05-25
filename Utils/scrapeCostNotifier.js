@@ -199,25 +199,44 @@ async function fireDiscord(milestone, costInfo, today) {
     ];
 
     if (costInfo.hasModelSplit) {
+        // Real split reported by the extension. Show Gemini-primary + OpenAI
+        // fallback breakdown.
+        const geminiPrimary = costInfo.gemini.batches > 0;
+        const allOnFallback = costInfo.gemini.batches === 0 && costInfo.openai.batches > 0;
         fields.push(
             {
-                name: `${costInfo.gemini.model} (${costInfo.geminiPct}%)`,
-                value: `${costInfo.gemini.batches.toLocaleString()} batches · $${costInfo.gemini.usd.toFixed(4)}`,
+                name: `🟢 ${costInfo.gemini.model} (primary, ${costInfo.geminiPct}%)`,
+                value: geminiPrimary
+                    ? `${costInfo.gemini.batches.toLocaleString()} batches · $${costInfo.gemini.usd.toFixed(4)}`
+                    : `0 batches · ⚠️ Gemini not used today`,
                 inline: true,
             },
             {
-                name: `${costInfo.openai.model} (fallback)`,
-                value: `${costInfo.openai.batches.toLocaleString()} batches · $${costInfo.openai.usd.toFixed(4)}`,
+                name: `🟡 ${costInfo.openai.model} (fallback)`,
+                value: allOnFallback
+                    ? `${costInfo.openai.batches.toLocaleString()} batches · $${costInfo.openai.usd.toFixed(4)} · ⚠️ ALL on fallback`
+                    : `${costInfo.openai.batches.toLocaleString()} batches · $${costInfo.openai.usd.toFixed(4)}`,
                 inline: true,
             },
             {
                 name: "Gemini errors → OpenAI",
-                value: `${costInfo.geminiErrors.toLocaleString()}`,
+                value: `${costInfo.geminiErrors.toLocaleString()}${costInfo.geminiErrors > 0 ? "  ⚠️" : ""}`,
                 inline: true,
             },
         );
     } else {
-        fields.push({ name: "Model", value: `\`${costInfo.openai.model}\``, inline: true });
+        // No modelStats reported by any session today. This means either the
+        // deployed extension is an old build (no Gemini routing / no tally) or
+        // not a single session has ended yet. Make that explicit so ops know
+        // the cost is an estimate priced at OpenAI rates, NOT proof Gemini
+        // was bypassed.
+        fields.push(
+            {
+                name: "⚠️ Model split unknown",
+                value: `Extension did not report modelStats. Priced as OpenAI estimate (\`${costInfo.openai.model}\`). Gemini is configured as PRIMARY; if you see this, the deployed extension is likely an old build — repackage + reinstall to get the real Gemini/OpenAI split.`,
+                inline: false,
+            },
+        );
     }
 
     fields.push(
@@ -229,12 +248,19 @@ async function fireDiscord(milestone, costInfo, today) {
     );
 
     const footer = costInfo.hasModelSplit
-        ? `Gemini $${GEMINI_INPUT_PER_M}/1M in · $${GEMINI_OUTPUT_PER_M}/1M out — OpenAI $${OPENAI_INPUT_PER_M}/1M in · $${OPENAI_OUTPUT_PER_M}/1M out`
-        : `Rate: $${OPENAI_INPUT_PER_M}/1M in · $${OPENAI_OUTPUT_PER_M}/1M out · ${TOKENS_PER_BATCH_IN}/${TOKENS_PER_BATCH_OUT} tokens per batch`;
+        ? `Routing: Gemini-first → OpenAI fallback · Gemini $${GEMINI_INPUT_PER_M}/1M in · $${GEMINI_OUTPUT_PER_M}/1M out — OpenAI $${OPENAI_INPUT_PER_M}/1M in · $${OPENAI_OUTPUT_PER_M}/1M out`
+        : `Routing: Gemini-first → OpenAI fallback (no modelStats yet — costs estimated at OpenAI rates) · ${TOKENS_PER_BATCH_IN}/${TOKENS_PER_BATCH_OUT} tokens per batch`;
 
+    // Routing summary line in the description so the model story is the
+    // first thing ops see, not buried in fields.
+    const routingLine = costInfo.hasModelSplit
+        ? (costInfo.gemini.batches > 0
+            ? `🟢 Routing: **Gemini ${costInfo.geminiPct}%** primary · OpenAI ${(100 - costInfo.geminiPct).toFixed(1)}% fallback${costInfo.geminiErrors ? ` · ${costInfo.geminiErrors} Gemini error(s) fell back to OpenAI` : ""}`
+            : `🟡 Routing: **0% Gemini** · 100% OpenAI fallback · ${costInfo.geminiErrors} Gemini error(s) — Vertex appears down or extension misconfigured`)
+        : `⚠️ Routing: **unknown** — extension did not report modelStats. Configured as Gemini-first; deployed build may be old.`;
     const embed = {
         title: `📈 Scrape milestone: ${milestone.toLocaleString()} jobs today`,
-        description: `Today (${today} IST) the JR-Direct extension has captured **${milestone.toLocaleString()}** jobs across all operators.`,
+        description: `Today (${today} IST) the JR-Direct extension has captured **${milestone.toLocaleString()}** jobs across all operators.\n\n${routingLine}`,
         color: 0x10b981,
         fields,
         footer: { text: footer },
