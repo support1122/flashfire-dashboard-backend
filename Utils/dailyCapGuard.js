@@ -32,6 +32,7 @@
 import { JobModel } from "../Schema_Models/JobModel.js";
 import { ProfileModel } from "../Schema_Models/ProfileModel.js";
 import { UserModel } from "../Schema_Models/UserModel.js";
+import { ClientTrackingModel, computeAddonBonus } from "../Schema_Models/ClientTrackingModel.js";
 
 export const DEFAULT_DAILY_CAP = 30;
 
@@ -100,10 +101,17 @@ export async function readPlanCap(rawEmail) {
         err.code = "BAD_INPUT";
         throw err;
     }
-    const user = await UserModel.findOne(
-        { email },
-        { planType: 1, planLimit: 1, referrals: 1, referralStatus: 1 },
-    ).lean();
+    // Parallel reads — UserModel for plan/referrals, ClientTrackingModel for
+    // addons (lives in a separate collection owned by applications-monitor).
+    // Both share the same Mongo URI. Tracking doc may be missing for legacy
+    // clients → addonBonus falls back to 0.
+    const [user, tracking] = await Promise.all([
+        UserModel.findOne(
+            { email },
+            { planType: 1, planLimit: 1, referrals: 1, referralStatus: 1 },
+        ).lean(),
+        ClientTrackingModel.findOne({ email }, { addons: 1 }).lean(),
+    ]);
     const planType = user?.planType || "";
     const planLimitRaw = Number(user?.planLimit);
     const planLimitOverride = Number.isFinite(planLimitRaw) && planLimitRaw > 0 ? planLimitRaw : null;
@@ -111,7 +119,11 @@ export async function readPlanCap(rawEmail) {
     const baseCap = planLimitOverride ?? planDefault ?? null;
     const referralBonus = computeReferralBonus(user);
     const referrals = Array.isArray(user?.referrals) ? user.referrals : [];
-    const effectiveCap = baseCap == null ? null : baseCap + referralBonus;
+    const addonBonus = computeAddonBonus(tracking);
+    const addons = Array.isArray(tracking?.addons) ? tracking.addons : [];
+    // Addons + referrals both stack on top of baseCap. Uncapped (no baseCap)
+    // stays uncapped — don't synthesise a cap from bonuses alone.
+    const effectiveCap = baseCap == null ? null : baseCap + referralBonus + addonBonus;
     return {
         email,
         planType,
@@ -121,6 +133,9 @@ export async function readPlanCap(rawEmail) {
         referralBonus,
         referrals,
         referralCount: referrals.length || (user?.referralStatus ? 1 : 0),
+        addonBonus,
+        addons,
+        addonCount: addons.length,
         effectiveCap,
     };
 }
@@ -153,7 +168,10 @@ export async function countTotalJobs(rawEmail) {
 // Throws on DB error so caller can fail-closed.
 export async function checkPlanCap(rawEmail) {
     const meta = await readPlanCap(rawEmail);
-    const { email, planType, effectiveCap, planLimitOverride, baseCap, referralBonus, referralCount } = meta;
+    const {
+        email, planType, effectiveCap, planLimitOverride, baseCap,
+        referralBonus, referralCount, addonBonus, addonCount,
+    } = meta;
     if (effectiveCap == null) {
         return {
             allowed: true,
@@ -164,15 +182,18 @@ export async function checkPlanCap(rawEmail) {
             baseCap: null,
             referralBonus,
             referralCount,
+            addonBonus,
+            addonCount,
         };
     }
     const count = await countTotalJobs(email);
     const source = planLimitOverride != null ? "override" : "plan";
-    // Build a clear "500 plan + 300 referral = 800" suffix so ops can audit
-    // why a client has more headroom than the bare plan default suggests.
-    const refSuffix = referralBonus > 0
-        ? ` (base ${baseCap} from ${planLimitOverride != null ? "override" : planType || "plan"} + ${referralBonus} from ${referralCount} referral${referralCount === 1 ? "" : "s"})`
-        : "";
+    // Compose "base X + Y refs + Z addons = total" suffix so ops audit-trail
+    // shows every piece of the cap.
+    const parts = [`base ${baseCap} from ${planLimitOverride != null ? "override" : planType || "plan"}`];
+    if (referralBonus > 0) parts.push(`+${referralBonus} from ${referralCount} referral${referralCount === 1 ? "" : "s"}`);
+    if (addonBonus > 0) parts.push(`+${addonBonus} from ${addonCount} addon${addonCount === 1 ? "" : "s"}`);
+    const breakdown = parts.length > 1 ? ` (${parts.join(" ")})` : "";
     if (count >= effectiveCap) {
         return {
             allowed: false,
@@ -183,8 +204,10 @@ export async function checkPlanCap(rawEmail) {
             baseCap,
             referralBonus,
             referralCount,
+            addonBonus,
+            addonCount,
             reason: "PLAN_LIMIT_REACHED",
-            message: `Plan limit reached: ${count}/${effectiveCap} applications${refSuffix} for ${planType || "(no plan)"}. No more jobs can be added under this client. Add a referral, upgrade the plan, or raise planLimit to continue.`,
+            message: `Plan limit reached: ${count}/${effectiveCap} applications${breakdown} for ${planType || "(no plan)"}. No more jobs can be added under this client. Add an addon/referral, upgrade the plan, or raise planLimit to continue.`,
         };
     }
     return {
@@ -196,6 +219,8 @@ export async function checkPlanCap(rawEmail) {
         baseCap,
         referralBonus,
         referralCount,
+        addonBonus,
+        addonCount,
         remaining: effectiveCap - count,
     };
 }
