@@ -316,6 +316,8 @@ export async function saveToDashboard(req, res) {
                         baseCap: planCheck.baseCap,
                         referralBonus: planCheck.referralBonus,
                         referralCount: planCheck.referralCount,
+                        addonBonus: planCheck.addonBonus,
+                        addonCount: planCheck.addonCount,
                         count: planCheck.count,
                         source: planCheck.source,
                         operator: addedByFromCode,
@@ -332,6 +334,8 @@ export async function saveToDashboard(req, res) {
                         baseCap: planCheck.baseCap,
                         referralBonus: planCheck.referralBonus,
                         referralCount: planCheck.referralCount,
+                        addonBonus: planCheck.addonBonus,
+                        addonCount: planCheck.addonCount,
                         current: planCheck.count,
                         planType: planCheck.planType,
                     });
