@@ -154,6 +154,7 @@ import cron from "node-cron";
 import connectDB from "./Utils/ConnectDB.js";
 import Routes from "./Routes.js";
 import { runRecruiterAutomationDailyJob } from "./Controllers/GmailRouter.js";
+import { startSummarySweepWorker } from "./src/services/summarySweepWorker.js";
 import { startAutoOptimizationWorker } from "./src/services/autoOptimizationWorker.js";
 
 dotenv.config();
@@ -333,8 +334,13 @@ app.use((err, req, res, next) => {
     const instanceId = process.env.NODE_APP_INSTANCE || '0';
     if (instanceId === '0') {
       startAutoOptimizationWorker();
+      // Summary sweep: every 30 min, rebuild stale + missing summaries so the
+      // grader is never working off an outdated brief. Tagged source field
+      // [auto:cron-sweep] so AI Summaries UI shows the auto origin.
+      startSummarySweepWorker();
     } else {
       console.log(`[AutoOptWorker] Skipping on cluster instance ${instanceId}`);
+      console.log(`[summary-sweep] Skipping on cluster instance ${instanceId}`);
     }
 
     cron.schedule(

@@ -423,7 +423,7 @@ async function callOpenAI(profile, resume, existingSummary, profileDiff, apiKey)
 // Core build pipeline — no req/res. Returns a { success, ... } object so it
 // can be called both from the HTTP handler AND fire-and-forget from profile
 // create/update controllers to auto-rebuild summaries.
-export async function buildSummaryForEmail(email) {
+export async function buildSummaryForEmail(email, reasonTag = "manual") {
   try {
     let effectiveKey = OPENAI_API_KEY;
     if (!effectiveKey) {
@@ -450,7 +450,7 @@ export async function buildSummaryForEmail(email) {
     if (!profile) {
       return { success: false, status: 404, error: "PROFILE_NOT_FOUND", message: `No profile in DB for ${email}`, step: "loading-profile" };
     }
-    return await runForProfileCore(profile, effectiveKey);
+    return await runForProfileCore(profile, effectiveKey, reasonTag);
   } catch (err) {
     console.error("buildSummaryForEmail fatal:", err);
     return { success: false, status: 500, error: "INTERNAL", message: err.message, step: "internal" };
@@ -468,7 +468,7 @@ function escapeRegex(s) {
   return String(s).replace(/[-/\\^$*+?.()|[\]{}]/g, "\\$&");
 }
 
-async function runForProfileCore(profile, apiKey) {
+async function runForProfileCore(profile, apiKey, reasonTag = "manual") {
   const email = profile.email;
   const resumeRes = await fetchResume(email);
   const resume = resumeRes.ok ? resumeRes.resume : null;
@@ -515,6 +515,14 @@ async function runForProfileCore(profile, apiKey) {
     ai = await callOpenAI(profile, resume, existingSummary, profileDiff, apiKey);
     usedModel = OPENAI_MODEL;
     usedSource = `${source}+openai`;
+  }
+  // Append the trigger origin so the AI Summaries dashboard / logs show whether
+  // this build was manual or auto-fired by profile-update / resume-attach /
+  // cron-sweep / new-client-create.
+  if (reasonTag && reasonTag !== "manual") {
+    usedSource = `${usedSource} [auto:${reasonTag}]`;
+  } else if (reasonTag === "manual") {
+    usedSource = `${usedSource} [manual]`;
   }
   if (!ai.ok) {
     return { success: false, status: 502, error: ai.error, message: ai.message, step: "openai" };

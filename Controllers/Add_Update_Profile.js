@@ -773,7 +773,7 @@ import { buildSummaryForEmail } from "./BuildAiSummary.js";
 function triggerSummaryRebuild(email, reason) {
   if (!email) return;
   setImmediate(() => {
-    buildSummaryForEmail(email)
+    buildSummaryForEmail(email, reason)
       .then((r) => {
         if (r?.success) {
           console.log(`[summary-rebuild:${reason}] ok email=${email} words=${r.wordCount} source=${r.source}`);

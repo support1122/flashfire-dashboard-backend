@@ -2,9 +2,22 @@ import multer from "multer";
 import { uploadFile } from "../Utils/storageService.js";
 import { ProfileModel } from "../Schema_Models/ProfileModel.js";
 import { UserModel } from "../Schema_Models/UserModel.js";
+import { buildSummaryForEmail } from "./BuildAiSummary.js";
 import dotenv from "dotenv";
 
 dotenv.config();
+
+function triggerSummaryRebuild(email, reason) {
+  if (!email) return;
+  setImmediate(() => {
+    buildSummaryForEmail(email, reason)
+      .then((r) => {
+        if (r?.success) console.log(`[summary-rebuild:${reason}] ok email=${email} model=${r.model}`);
+        else console.warn(`[summary-rebuild:${reason}] fail email=${email} err=${r?.error}`);
+      })
+      .catch((e) => console.error(`[summary-rebuild:${reason}] threw email=${email}`, e));
+  });
+}
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -130,6 +143,16 @@ export const uploadClientDocument = async (req, res) => {
         body: JSON.stringify({ email: email.toLowerCase(), documentType, url: fileUrl, fileName }),
         signal: AbortSignal.timeout(5000),
       }).catch((err) => console.warn('[sync-document-upload]', err.message));
+    }
+
+    // Resume change → mark summary stale and fire-and-forget rebuild so the
+    // grader sees the new resume content without admin intervention.
+    if (documentType === 'resume') {
+      ProfileModel.findOneAndUpdate(
+        { email: email.toLowerCase() },
+        { $set: { summaryStale: true } },
+      ).catch((e) => console.warn(`[resume-upload] flag stale failed ${email}:`, e.message));
+      triggerSummaryRebuild(email.toLowerCase(), 'resume-upload');
     }
 
     res.json({
