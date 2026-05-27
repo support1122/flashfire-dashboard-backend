@@ -13,7 +13,7 @@ const PREFER_GEMINI = process.env.FF_RECRUITER_PREFER_GEMINI !== "0";
 // Recruiter emails benefit from a stronger Gemini tier than the cheap judge
 // model. Override via env if needed.
 const GEMINI_RECRUITER_MODEL = process.env.GEMINI_RECRUITER_MODEL || "gemini-2.5-flash";
-const DEFAULT_AI_DAILY_LIMIT = 20;
+const DEFAULT_AI_DAILY_LIMIT = 5;
 
 async function findDefaultTechGroup() {
   return RecruiterEmailGroup.findOne({
