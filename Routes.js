@@ -31,6 +31,7 @@ import { getJobById, getJobDescription, getJobDescriptionByUrl, saveChangedSessi
 import { migrateResumeDataToR2, getMigrationStatus } from "./Controllers/Optimizer/migrateToR2.js";
 import GetJobDescription, { GetJobDescriptionByUrl } from "./Controllers/GetJobDescription.js";
 import { updateBaseResume } from "./Controllers/Admin/SetBaseResume.js";
+import GetBaseResumeData from "./Controllers/GetBaseResumeData.js";
 import { assignUserToOperations } from "./Controllers/Admin/AssignUserToOperatios.js";
 import { listOperations, removeManagedUser, removeOperationUser, listAllUsers, listAllOperations, updateOperation } from "./Controllers/Admin/ListOperations.js";
 import AssignResumeToUser from "./Controllers/Admin/AssignResumeToUser.js";
@@ -232,6 +233,10 @@ app.post("/update-ai-summary", UpdateAiSummary);
 // Server-side candidate brief builder. Consumers (JR-direct extension)
 // just POST { email } — backend pulls profile + resume + calls OpenAI.
 app.post("/build-ai-summary", BuildAiSummary);
+// Base resume structured JSON for the Documents → Base Resume preview.
+// Proxies gemini-resume's /api/resume-by-email and reshapes into the
+// same envelope ResumePreview already consumes for optimized resumes.
+app.post("/get-base-resume-data", GetBaseResumeData);
 // Per-client target job count — enforced by /addjob.
 app.post("/update-target-jobs", UpdateTargetJobs);
 app.post("/update-openai-key", UpdateOpenaiKey);

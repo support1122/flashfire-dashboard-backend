@@ -460,6 +460,10 @@ export const profileSchema = new mongoose.Schema({
     // can strip stale references — without this the model often retains old
     // wording even when the new profile contradicts it.
     profileSnapshot: { type: Object, required: false, default: null },
+    // Timestamp of last build attempt (success OR failure). Used by the
+    // cron sweeper to skip recently-failed profiles, avoiding wasted
+    // OpenAI/Gemini calls on broken profiles every 30 min.
+    lastAttemptAt: { type: Date, required: false, default: null },
   },
   // True when the profile has changed since the last summary build.
   // Set true by Add_Update_Profile.js / file-upload paths; reset to false

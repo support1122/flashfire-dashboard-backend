@@ -1,5 +1,25 @@
 import { UserModel } from "../../Schema_Models/UserModel.js";
+import { ProfileModel } from "../../Schema_Models/ProfileModel.js";
+import { buildSummaryForEmail } from "../BuildAiSummary.js";
 import mongoose from "mongoose";
+
+function triggerResumeAttachRebuild(email, reason) {
+    if (!email) return;
+    // Flip summaryStale so the AI Summaries dashboard banner reflects the
+    // pending rebuild even if OpenAI is slow / down.
+    ProfileModel.findOneAndUpdate(
+        { email: String(email).toLowerCase() },
+        { $set: { summaryStale: true } },
+    ).catch((e) => console.warn(`[resume-attach] flag stale failed ${email}:`, e.message));
+    setImmediate(() => {
+        buildSummaryForEmail(email, reason)
+            .then((r) => {
+                if (r?.success) console.log(`[summary-rebuild:${reason}] ok email=${email} model=${r.model} source=${r.source}`);
+                else console.warn(`[summary-rebuild:${reason}] fail email=${email} err=${r?.error}`);
+            })
+            .catch((e) => console.error(`[summary-rebuild:${reason}] threw email=${email}`, e));
+    });
+}
 
 export default async function AssignResumeToUser(req, res) {
     try {
@@ -51,6 +71,7 @@ export default async function AssignResumeToUser(req, res) {
             });
         }
 
+        triggerResumeAttachRebuild(userEmail, "resume-assign");
         return res.status(200).json({
             success: true,
             message: existingResumeId 
