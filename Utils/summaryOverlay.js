@@ -150,6 +150,94 @@ export function mergeOverlay(freshText, overlayText) {
     return stitchSections(fresh);
 }
 
+// mergeWithLocks: full merge that respects operator section locks.
+//   freshText      — AI output.
+//   overlayText    — operator's saved snapshot.
+//   lockedSections — array of header strings to replace verbatim.
+// For each locked header: overlay's section body REPLACES fresh's section
+// body entirely. Locked sections are authoritative — no AI override.
+// Unlocked sections: run mergeOverlay (sticky bullets appended).
+export function mergeWithLocks(freshText, overlayText, lockedSections = []) {
+    if (!overlayText || typeof overlayText !== "string" || !overlayText.trim()) {
+        return freshText;
+    }
+    if (!freshText || typeof freshText !== "string" || !freshText.trim()) {
+        return freshText;
+    }
+    const lockedSet = new Set(
+        (Array.isArray(lockedSections) ? lockedSections : [])
+            .map((h) => String(h || "").trim())
+            .filter(Boolean),
+    );
+    if (lockedSet.size === 0) {
+        return mergeOverlay(freshText, overlayText);
+    }
+    const fresh = parseSections(freshText);
+    const overlay = parseSections(overlayText);
+    for (const header of lockedSet) {
+        if (overlay.sections[header]) {
+            const overlaySec = overlay.sections[header];
+            fresh.sections[header] = {
+                bullets: [...overlaySec.bullets],
+                prose: [...overlaySec.prose],
+            };
+            if (!fresh.order.includes(header)) fresh.order.push(header);
+        }
+    }
+    const stitched = stitchSections(fresh);
+    return mergeOverlay(stitched, overlayText);
+}
+
+// PROVENANCE_RE matches a trailing source marker on a bullet/prose line.
+// The model emits ` [R]` (resume), ` [P]` (profile), ` [RP]` (both), or
+// ` [I]` (inferred from inputs). Tolerates `[r]/[p]/[rp]/[i]` casing + extra
+// whitespace before the closing bracket.
+const PROVENANCE_RE = /\s*\[(R|P|RP|I)\]\s*$/i;
+
+function normProvCode(code) {
+    const u = String(code || "").toUpperCase();
+    if (u === "RP" || u === "PR") return "RP";
+    if (u === "R" || u === "P" || u === "I") return u;
+    return "I";
+}
+
+// extractProvenance: strip [R]/[P]/[RP]/[I] markers off bullet + prose lines
+// and return both the clean text + a per-section index of source codes.
+//   text — raw AI output with markers.
+// Returns { cleanText, provenance: { [header]: { bullets: [code...], prose: [code...] } } }.
+// Lines with NO marker get "I" (inferred) so the UI can render neutral.
+// `noResume:true` flag forces every marker to "P" since a profile-only build
+// cannot legitimately cite the resume — useful as a guard after the strip.
+export function extractProvenance(text, { noResume = false } = {}) {
+    if (typeof text !== "string" || !text.trim()) {
+        return { cleanText: text || "", provenance: {} };
+    }
+    const lines = text.split(/\r?\n/);
+    const provenance = {};
+    let current = "__preamble";
+    provenance[current] = { bullets: [], prose: [] };
+    const cleanLines = [];
+    for (const raw of lines) {
+        const headerMatch = raw.match(HEADER_RE);
+        if (headerMatch) {
+            current = headerMatch[1].trim();
+            if (!provenance[current]) provenance[current] = { bullets: [], prose: [] };
+            cleanLines.push(raw);
+            continue;
+        }
+        const bulletMatch = raw.match(BULLET_RE);
+        const provMatch = raw.match(PROVENANCE_RE);
+        let code = provMatch ? normProvCode(provMatch[1]) : "I";
+        if (noResume && code === "R") code = "P";
+        if (noResume && code === "RP") code = "P";
+        const cleaned = provMatch ? raw.replace(PROVENANCE_RE, "") : raw;
+        if (bulletMatch) provenance[current].bullets.push(code);
+        else if (raw.trim()) provenance[current].prose.push(code);
+        cleanLines.push(cleaned);
+    }
+    return { cleanText: cleanLines.join("\n"), provenance };
+}
+
 // countOverlayBullets: count operator additions per section relative to the
 // current `aiSummary` text. Used by the UI to show "+3 sticky lines".
 //   overlayText — saved overlay snapshot.

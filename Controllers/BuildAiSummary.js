@@ -21,7 +21,7 @@ import axios from "axios";
 import { ProfileModel } from "../Schema_Models/ProfileModel.js";
 import { getAppSettings } from "../Schema_Models/AppSettings.js";
 import { callGemini, GEMINI_JUDGE_MODEL, HAS_GEMINI_CREDENTIALS } from "../Utils/vertexGeminiJudge.js";
-import { mergeOverlay, countOverlayBullets } from "../Utils/summaryOverlay.js";
+import { mergeOverlay, mergeWithLocks, countOverlayBullets, parseSections, extractProvenance } from "../Utils/summaryOverlay.js";
 
 const RESUME_API_URL = process.env.RESUME_API_URL || "http://localhost:5000";
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
@@ -47,6 +47,22 @@ will be cited back as a pick or skip reason.
    and - bullets. No bold, italics, tables, or code fences.
 5. Use these EXACT section headers in this EXACT order. Do not rename, do
    not skip, do not add new sections.
+6. PROVENANCE MARKERS — at the END of every bullet line AND every prose
+   sentence under # Candidate Summary, append exactly ONE of these tags:
+     [R]  — fact comes from the parsed resume
+     [P]  — fact comes from the onboarding profile
+     [RP] — both sources confirm
+     [I]  — inferred from the inputs (no single source cites it directly)
+   Example: "- Python — 5 years building data pipelines [R]"
+   Example: "- Locations accepted: NYC, Remote [P]"
+   Example: "- Seniority band: senior [RP]"
+   The 48-hour age bullet under Hard Disqualifiers + every Employment-type
+   bullet from the rules block get [P] (those come from operator config).
+   If a resume was NOT provided (the input section is "(no resume found...)"),
+   every line must be [P] or [I] — never [R] or [RP].
+   These markers are stripped by the server before the brief is persisted.
+   Their only job is to drive the UI's per-bullet color coding so the
+   operator can see at a glance which facts came from where.
 
 # Candidate Summary
 2–3 sentences. State: current title, total years of experience, primary
@@ -250,7 +266,32 @@ function renderDiffBlock(changes) {
     .join("\n\n");
 }
 
-function buildUserPrompt(profile, resume, existingSummary, profileDiff) {
+// renderLockedSectionsBlock: extract the operator-locked sections from the
+// saved overlay text + emit a "DO NOT REGENERATE" block. The merge layer
+// will overwrite these sections post-output regardless, but telling the
+// model up-front keeps surrounding sections consistent (avoids the model
+// claiming "Senior" elsewhere when the locked Target Roles says "Mid").
+function renderLockedSectionsBlock(overlay) {
+    if (!overlay?.enabled || !overlay.savedText || !Array.isArray(overlay.lockedSections) || !overlay.lockedSections.length) {
+        return "";
+    }
+    const parsed = parseSections(overlay.savedText);
+    const blocks = [];
+    for (const header of overlay.lockedSections) {
+        const sec = parsed.sections[header];
+        if (!sec) continue;
+        const lines = [];
+        if (sec.prose.length) lines.push(sec.prose.join("\n").replace(/\n{3,}/g, "\n\n").trim());
+        for (const b of sec.bullets) lines.push(`- ${b}`);
+        const body = lines.join("\n").trim();
+        if (body) blocks.push(`### ${header}\n${body}`);
+    }
+    if (!blocks.length) return "";
+    return `\n\n## LOCKED SECTIONS (operator marked these "do not touch" — output the body VERBATIM, character-for-character; do not paraphrase, do not reorder bullets, do not add or remove lines; treat the locked text as authoritative and make sure surrounding sections do not contradict it)
+${blocks.join("\n\n")}`;
+}
+
+function buildUserPrompt(profile, resume, existingSummary, profileDiff, overlay = null) {
   const profileBlob = JSON.stringify(profile || {}, null, 2).slice(0, 12_000);
   // Split positive vs negative role clauses up-front so the model sees an
   // explicit "EXCLUDED ROLES" block rather than having to detect "Do not
@@ -389,14 +430,14 @@ updated profile. Hard rules:
    supplied wording verbatim.${removalGuard}${empFlipGuard}
 
 Output the FULL updated summary in the same format as before — do not
-output a diff or a list of changes.`;
+output a diff or a list of changes.${renderLockedSectionsBlock(overlay)}`;
   }
   return `## Onboarding profile
 ${profileBlob}
 ${rolesBlock}
 
 ## Parsed resume
-${resumeBlob}`;
+${resumeBlob}${renderLockedSectionsBlock(overlay)}`;
 }
 
 async function fetchResume(email) {
@@ -420,12 +461,12 @@ async function fetchResume(email) {
   }
 }
 
-async function callOpenAI(profile, resume, existingSummary, profileDiff, apiKey) {
+async function callOpenAI(profile, resume, existingSummary, profileDiff, apiKey, overlay = null) {
   const body = {
     model: OPENAI_MODEL,
     messages: [
       { role: "system", content: SYSTEM_PROMPT },
-      { role: "user", content: buildUserPrompt(profile, resume, existingSummary, profileDiff) },
+      { role: "user", content: buildUserPrompt(profile, resume, existingSummary, profileDiff, overlay) },
     ],
     temperature: 0.2,
   };
@@ -527,8 +568,9 @@ async function runForProfileCore(profile, apiKey, reasonTag = "manual") {
   let ai = { ok: false };
   let usedModel = "";
   let usedSource = "";
+  const overlayForPrompt = profile?.aiSummaryOverlay || null;
   if (PREFER_GEMINI && HAS_GEMINI_CREDENTIALS) {
-    const userPrompt = buildUserPrompt(profile, resume, existingSummary, profileDiff);
+    const userPrompt = buildUserPrompt(profile, resume, existingSummary, profileDiff, overlayForPrompt);
     const g = await callGemini({
       system: SYSTEM_PROMPT,
       user: userPrompt,
@@ -545,7 +587,7 @@ async function runForProfileCore(profile, apiKey, reasonTag = "manual") {
     }
   }
   if (!ai.ok) {
-    ai = await callOpenAI(profile, resume, existingSummary, profileDiff, apiKey);
+    ai = await callOpenAI(profile, resume, existingSummary, profileDiff, apiKey, overlayForPrompt);
     usedModel = OPENAI_MODEL;
     usedSource = `${source}+openai`;
   }
@@ -564,20 +606,37 @@ async function runForProfileCore(profile, apiKey, reasonTag = "manual") {
   if (!summary) {
     return { success: false, status: 502, error: "EMPTY_SUMMARY", message: "OpenAI returned empty content", step: "openai" };
   }
+  // Strip [R]/[P]/[RP]/[I] markers off every bullet + prose line and build the
+  // provenance map BEFORE overlay merging (overlay snapshot has no markers, so
+  // we must extract while the AI output is still annotated). cleanText becomes
+  // what we persist + merge + ship to the grader. provenance lands on
+  // aiSummaryMeta so the UI can colour-tint each line by source.
+  const provExtract = extractProvenance(summary, { noResume: !resume });
+  summary = provExtract.cleanText;
+  let aiProvenance = provExtract.provenance;
   // Apply operator's saved format overlay: if enabled, re-inject any bullets
-  // the operator added on top of the previous build. Pure AI output if no
-  // overlay or overlay disabled. Trims to MAX_SUMMARY_CHARS after merge so
-  // a long overlay can't bust the doc size cap.
+  // the operator added on top of the previous build + replace any
+  // locked-section bodies verbatim. Pure AI output if no overlay or overlay
+  // disabled. Trims to MAX_SUMMARY_CHARS after merge so a long overlay can't
+  // bust the doc size cap.
   const overlay = profile?.aiSummaryOverlay || {};
   let overlayStats = null;
+  let lockCount = 0;
   if (overlay.enabled && overlay.savedText) {
-    const merged = mergeOverlay(summary, overlay.savedText);
+    const locks = Array.isArray(overlay.lockedSections) ? overlay.lockedSections : [];
+    lockCount = locks.length;
+    const merged = locks.length
+      ? mergeWithLocks(summary, overlay.savedText, locks)
+      : mergeOverlay(summary, overlay.savedText);
     if (typeof merged === "string" && merged.trim().length) {
       summary = merged.slice(0, MAX_SUMMARY_CHARS);
       overlayStats = countOverlayBullets(overlay.savedText, summary);
-      if (overlayStats.total) {
-        usedSource = `${usedSource} +overlay:${overlayStats.total}`;
-        console.log(`[BuildAiSummary] overlay applied email=${profile.email} extras=${overlayStats.total}`);
+      const tagParts = [];
+      if (overlayStats.total) tagParts.push(`+overlay:${overlayStats.total}`);
+      if (lockCount) tagParts.push(`+locks:${lockCount}`);
+      if (tagParts.length) {
+        usedSource = `${usedSource} ${tagParts.join(" ")}`;
+        console.log(`[BuildAiSummary] overlay applied email=${profile.email} extras=${overlayStats?.total || 0} locks=${lockCount}`);
       }
     }
   }
@@ -595,6 +654,7 @@ async function runForProfileCore(profile, apiKey, reasonTag = "manual") {
           source: usedSource || source,
           wordCount,
           profileSnapshot: snapshotProfile(profile),
+          provenance: aiProvenance || null,
         },
         summaryStale: false,
       },
