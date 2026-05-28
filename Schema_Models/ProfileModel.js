@@ -464,6 +464,13 @@ export const profileSchema = new mongoose.Schema({
     // cron sweeper to skip recently-failed profiles, avoiding wasted
     // OpenAI/Gemini calls on broken profiles every 30 min.
     lastAttemptAt: { type: Date, required: false, default: null },
+    // Per-bullet provenance map from the AI build. Each # section header
+    // maps to two parallel arrays of source codes — one per bullet, one per
+    // prose line — in document order. Codes: "R" = resume, "P" = profile,
+    // "RP" = both, "I" = inferred. Used by the UI to color-tint each line
+    // so operators can see at a glance which facts came from where. Stripped
+    // of inline markers before the summary string is persisted.
+    provenance: { type: Object, required: false, default: null },
   },
   // True when the profile has changed since the last summary build.
   // Set true by Add_Update_Profile.js / file-upload paths; reset to false
@@ -485,6 +492,10 @@ export const profileSchema = new mongoose.Schema({
     savedText: { type: String, required: false, default: "" },
     savedAt: { type: Date, required: false, default: null },
     enabled: { type: Boolean, required: false, default: false },
+    // Section headers the operator marked "do not touch". On every rebuild the
+    // saved text for each locked header replaces the AI's freshly-generated
+    // section. Unlocked sections merge via mergeOverlay (sticky bullets only).
+    lockedSections: { type: [String], required: false, default: [] },
   },
   // Operator's per-client OpenAI API key. Used by the JR-direct extension's
   // SW to call api.openai.com directly for the auto-judge step. Stored as

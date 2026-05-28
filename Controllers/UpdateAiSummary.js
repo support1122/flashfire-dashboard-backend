@@ -42,6 +42,9 @@ export default async function UpdateAiSummary(req, res) {
         model: String(model || "").slice(0, 80),
         source: String(source || "").slice(0, 60),
         wordCount,
+        // Manual edits are operator-authored — no [R]/[P] markers to extract.
+        // Drop provenance so the UI renders manual lines as neutral (user).
+        provenance: null,
       },
       // Manual edit counts as up-to-date — clear the rebuild banner.
       summaryStale: false,
