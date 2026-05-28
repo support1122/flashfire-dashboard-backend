@@ -471,6 +471,19 @@ export const profileSchema = new mongoose.Schema({
     // so operators can see at a glance which facts came from where. Stripped
     // of inline markers before the summary string is persisted.
     provenance: { type: Object, required: false, default: null },
+    // Which inputs actually fed this build — { notes:bool, resume:bool,
+    // profile:bool }. The UI renders this as input-source pills next to
+    // the model name so operators can confirm the notes / resume actually
+    // reached the model.
+    builtInputs: {
+      notes: { type: Boolean, required: false, default: false },
+      resume: { type: Boolean, required: false, default: false },
+      profile: { type: Boolean, required: false, default: true },
+    },
+    // Sampling temperature used for this build. Surfaced in the UI so
+    // operators can tell whether a brief was generated with the strict
+    // 0.15 setting or an experimental tuning.
+    temperature: { type: Number, required: false, default: 0 },
   },
   // True when the profile has changed since the last summary build.
   // Set true by Add_Update_Profile.js / file-upload paths; reset to false

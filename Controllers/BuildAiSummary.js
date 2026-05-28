@@ -20,16 +20,15 @@
 import axios from "axios";
 import { ProfileModel } from "../Schema_Models/ProfileModel.js";
 import { getAppSettings } from "../Schema_Models/AppSettings.js";
-import { callGemini, GEMINI_JUDGE_MODEL, HAS_GEMINI_CREDENTIALS } from "../Utils/vertexGeminiJudge.js";
 import { mergeOverlay, mergeWithLocks, countOverlayBullets, parseSections, extractProvenance } from "../Utils/summaryOverlay.js";
 
 const RESUME_API_URL = process.env.RESUME_API_URL || "http://localhost:5000";
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
 const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4o-mini";
-// Gemini-first switch for summary builds. Set FF_SUMMARY_PREFER_GEMINI=0 to
-// force OpenAI path. Default on — cheaper + same JSON-free output works.
-const PREFER_GEMINI = process.env.FF_SUMMARY_PREFER_GEMINI !== "0";
-const GEMINI_SUMMARY_MODEL = process.env.GEMINI_SUMMARY_MODEL || GEMINI_JUDGE_MODEL;
+// Summary builds use gpt-4o-mini exclusively. Gemini path removed after it
+// repeatedly miscategorised operator-notes directives. To restore Gemini,
+// revert this commit — do not add an env switch back; the routing rules
+// in the prompt are tuned for gpt-4o-mini's instruction-following.
 const MAX_SUMMARY_CHARS = 8000;
 
 const SYSTEM_PROMPT = `You write a single candidate brief that an automated job-fit grader reads
@@ -301,9 +300,64 @@ function renderAiNotesBlock(profile) {
         ? new Date(profile.aiNotes.updatedAt).toISOString().slice(0, 10)
         : "";
     const who = profile?.aiNotes?.updatedBy || "ops";
-    return `## OPERATOR NOTES (HIGHEST PRIORITY — overrides every other inference; do NOT ignore)
-These are direct instructions from the operator about this candidate, written ${when}${who ? ` by ${who}` : ""}. Treat them as authoritative facts about the candidate's intent. If they contradict the profile or resume, the notes win. Incorporate every point in the appropriate # section (Target Roles / Hard Constraints / Strong Signals / Hard Disqualifiers / Notes for Grader). Quote phrases verbatim where useful.
+    return `## OPERATOR NOTES (DIRECTIVES — HIGHEST PRIORITY)
+The text below is from the operator (${when}${who ? ` · ${who}` : ""}). These are DIRECTIVES, NOT data to be summarised. Every directive must alter the OUTPUT of the appropriate # section, distributed throughout the brief — never collapsed into a single "Notes for Grader" bullet.
 
+ROUTING RULES (apply mechanically — do NOT improvise):
+
+1. "Do not scrap X" / "do not pick X" / "exclude X" / "never X" / "skip X"
+   → Hard Disqualifiers gets ONE bullet per item: "X — excluded per operator note".
+   → NEVER include X in Strong Signals or Target Roles.
+
+2. "Prioritise X" / "focus on X" / "scrap more X" / "we want X"
+   → Strong Signals gets ONE bullet per item: "X — operator priority".
+   → NEVER include X in Hard Disqualifiers.
+
+3. "Also scrap Y" / "include Y" / "Y is fine too"
+   → Target Roles bullets grow to include Y (when Y is a role).
+   → Strong Signals grows to include Y (when Y is a company / tech / skill).
+   → NEVER include Y in Hard Disqualifiers.
+
+4. Company names called out for exclusion ("do not scrap from Acme", "skip Foo")
+   → Hard Disqualifiers: "Acme jobs — excluded per operator note".
+   → NEVER list these under Hard Constraints "Excluded industries" (they are companies, not industries).
+   → NEVER list these as Strong Signals.
+
+5. Company / industry categories prioritised ("prioritise H1B sponsors", "prefer fintech")
+   → Strong Signals: "H1B sponsors — operator priority", "Fintech — operator priority".
+   → NEVER as Hard Disqualifiers.
+
+6. The "Notes for Grader" section gets ONLY meta-guidance about how to WEIGH conflicts — never restates the routed directives.
+
+WORKED EXAMPLES:
+
+Operator note: "DO NOT scrap at all staffing/consulting companies."
+  ✓ Hard Disqualifiers gets: "Staffing or consulting companies — excluded per operator note"
+  ✗ Strong Signals must NOT contain "Staffing/Consulting companies"
+  ✗ Hard Constraints must NOT contain "Excluded industries: Staffing"
+
+Operator note: "Prioritise companies that provide H1B sponsorship."
+  ✓ Strong Signals gets: "Companies that sponsor H1B — operator priority"
+  ✗ Hard Disqualifiers must NOT contain "Companies that provide H1B sponsorship"
+
+Operator note: "Do not scrap roles from Humana or JP Morgan Chase."
+  ✓ Hard Disqualifiers gets two bullets:
+       "Humana jobs — excluded per operator note"
+       "JP Morgan Chase jobs — excluded per operator note"
+  ✗ Hard Constraints "Excluded industries" must NOT list these (they are companies, not industries)
+
+Operator note: "Can scrap Data Engineer roles as well."
+  ✓ Target Roles bullet list grows to include "Data Engineer"
+  ✓ Strong Signals gets: "Data Engineer titles — operator allows"
+  ✗ Hard Disqualifiers must NOT contain "Data Engineer"
+
+SELF-CHECK BEFORE OUTPUT:
+- For every directive in the notes, did you put it in the CORRECT section?
+- Did you accidentally drop an "excluded" item into Strong Signals?
+- Did you accidentally drop a "prioritised" item into Hard Disqualifiers?
+If yes to either of the last two: rewrite that section before returning.
+
+OPERATOR NOTES TEXT:
 ${text}
 
 (End of operator notes. Continue with the normal inputs below.)
@@ -453,12 +507,21 @@ Output the FULL updated summary in the same format as before — do not
 output a diff or a list of changes.${renderLockedSectionsBlock(overlay)}`;
     return `${renderAiNotesBlock(profile)}${diffPathBody}`;
   }
-  const freshBody = `## Onboarding profile
-${profileBlob}
-${rolesBlock}
+  // Priority order in the prompt body: Notes (rendered above by
+  // renderAiNotesBlock) > Resume > Profile. When the resume conflicts with
+  // the profile, the resume wins (resume = ground truth of what the
+  // candidate actually did; profile = self-reported preferences).
+  const freshBody = `## INPUT PRIORITY (for any conflict, higher beats lower)
+1. Operator notes (above) — DIRECTIVES, always win
+2. Parsed resume (below) — ground truth of actual experience
+3. Onboarding profile (below) — self-reported preferences / exclusions / work auth
 
-## Parsed resume
-${resumeBlob}${renderLockedSectionsBlock(overlay)}`;
+## Parsed resume (PRIORITY 2 — ground truth of experience; cite YOE, titles, companies, skills from here)
+${resumeBlob}
+
+## Onboarding profile (PRIORITY 3 — preference signals; use for preferredRoles, preferredLocations, work auth, target/excluded companies)
+${profileBlob}
+${rolesBlock}${renderLockedSectionsBlock(overlay)}`;
   return `${renderAiNotesBlock(profile)}${freshBody}`;
 }
 
@@ -483,6 +546,15 @@ async function fetchResume(email) {
   }
 }
 
+// SUMMARY_TEMPERATURE — tuned for the structured-brief task. 0.15 was tested
+// against the operator-notes routing examples (do-not-scrap / prioritise
+// H1B / company exclusions) and produces consistent placement across reruns
+// without flattening into a single template. 0 = too deterministic (model
+// over-mirrors prompt wording); 0.4+ = drifts into hallucinated bullets.
+const SUMMARY_TEMPERATURE = Number.isFinite(Number(process.env.FF_SUMMARY_TEMPERATURE))
+  ? Number(process.env.FF_SUMMARY_TEMPERATURE)
+  : 0.15;
+
 async function callOpenAI(profile, resume, existingSummary, profileDiff, apiKey, overlay = null) {
   const body = {
     model: OPENAI_MODEL,
@@ -490,7 +562,7 @@ async function callOpenAI(profile, resume, existingSummary, profileDiff, apiKey,
       { role: "system", content: SYSTEM_PROMPT },
       { role: "user", content: buildUserPrompt(profile, resume, existingSummary, profileDiff, overlay) },
     ],
-    temperature: 0.2,
+    temperature: SUMMARY_TEMPERATURE,
   };
   try {
     const res = await axios.post("https://api.openai.com/v1/chat/completions", body, {
@@ -570,49 +642,31 @@ async function runForProfileCore(profile, apiKey, reasonTag = "manual") {
   const resume = resumeRes.ok ? resumeRes.resume : null;
   const source = resume ? "profile+resume" : "profile-only";
 
-  const existingSummary =
-    profile?.summaryStale && typeof profile.aiSummary === "string"
-      ? profile.aiSummary
-      : "";
-  const prevSnapshot = profile?.aiSummaryMeta?.profileSnapshot || null;
-  const profileDiff = existingSummary && prevSnapshot
-    ? computeProfileDiff(prevSnapshot, profile)
-    : [];
-  if (profileDiff.length) {
-    console.log(
-      "BuildAiSummary diff:",
-      profileDiff.map((c) => `${c.field}[+${c.added.length}/-${c.removed.length}]`).join(" "),
-    );
-  }
-  // Gemini-first: cheaper and fast for 500-word briefs. Falls back to OpenAI
-  // on any Gemini failure (missing creds, Vertex error, empty content) so a
-  // misconfigured GCP project never blocks summary builds.
-  let ai = { ok: false };
-  let usedModel = "";
-  let usedSource = "";
+  // FRESH BUILD EVERY TIME — never feed the previous summary back into the
+  // prompt. Old behaviour was diff-aware ("preserve voice, only edit
+  // changed fields") which made every rebuild carry stale wording forward.
+  // Now every Rebuild starts from scratch using: operator notes (highest)
+  // > resume > profile. This is what the operator wants — every change
+  // anywhere in those three inputs reflects across the WHOLE summary, not
+  // just the diffed bullets.
+  const existingSummary = "";
+  const profileDiff = [];
+  // Track which inputs actually fed this build so the UI can show "Built
+  // from: 💬 Notes + 📄 Resume + 👤 Profile" pills + model + temperature.
+  const builtInputs = {
+    notes: !!(profile?.aiNotes?.text && profile.aiNotes.text.trim()),
+    resume: !!resume,
+    profile: true,
+  };
+  // OpenAI gpt-4o-mini is the sole summary builder. Gemini path removed —
+  // it repeatedly miscategorised operator-notes directives (excluded
+  // companies → Strong Signals, "prioritise H1B" → Hard Disqualifiers).
+  // No fallback; if OpenAI fails the build fails loudly so the operator
+  // knows to fix the key / retry, instead of silently degrading.
   const overlayForPrompt = profile?.aiSummaryOverlay || null;
-  if (PREFER_GEMINI && HAS_GEMINI_CREDENTIALS) {
-    const userPrompt = buildUserPrompt(profile, resume, existingSummary, profileDiff, overlayForPrompt);
-    const g = await callGemini({
-      system: SYSTEM_PROMPT,
-      user: userPrompt,
-      temperature: 0.2,
-      json: false,
-      model: GEMINI_SUMMARY_MODEL,
-    });
-    if (g.ok) {
-      ai = { ok: true, summary: g.content, usage: g.usage };
-      usedModel = g.model || GEMINI_SUMMARY_MODEL;
-      usedSource = `${source}+gemini`;
-    } else {
-      console.warn(`[BuildAiSummary] Gemini failed (${g.error}: ${g.message}) — falling back to OpenAI`);
-    }
-  }
-  if (!ai.ok) {
-    ai = await callOpenAI(profile, resume, existingSummary, profileDiff, apiKey, overlayForPrompt);
-    usedModel = OPENAI_MODEL;
-    usedSource = `${source}+openai`;
-  }
+  const ai = await callOpenAI(profile, resume, existingSummary, profileDiff, apiKey, overlayForPrompt);
+  const usedModel = OPENAI_MODEL;
+  let usedSource = `${source}+openai`;
   // Append the trigger origin so the AI Summaries dashboard / logs show whether
   // this build was manual or auto-fired by profile-update / resume-attach /
   // cron-sweep / new-client-create.
@@ -677,6 +731,8 @@ async function runForProfileCore(profile, apiKey, reasonTag = "manual") {
           wordCount,
           profileSnapshot: snapshotProfile(profile),
           provenance: aiProvenance || null,
+          builtInputs,
+          temperature: SUMMARY_TEMPERATURE,
         },
         summaryStale: false,
       },
