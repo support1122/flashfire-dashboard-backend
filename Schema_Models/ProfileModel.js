@@ -497,6 +497,16 @@ export const profileSchema = new mongoose.Schema({
     // section. Unlocked sections merge via mergeOverlay (sticky bullets only).
     lockedSections: { type: [String], required: false, default: [] },
   },
+  // Operator-authored "Notes to AI" — free-text block injected into every
+  // BuildAiSummary prompt as authoritative context. Use for client-specific
+  // guidance the structured profile can't capture (e.g. "candidate wants ML
+  // research roles only, not infra"; "skip recruiters outside Bay Area";
+  // "exclude any company on the 'avoid' list circulated by ops").
+  aiNotes: {
+    text: { type: String, required: false, default: "" },
+    updatedAt: { type: Date, required: false, default: null },
+    updatedBy: { type: String, required: false, default: "" },
+  },
   // Operator's per-client OpenAI API key. Used by the JR-direct extension's
   // SW to call api.openai.com directly for the auto-judge step. Stored as
   // plain text per ops decision — extension fetches it on /extension/clientLogin
