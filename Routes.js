@@ -67,6 +67,7 @@ import {
   ClearSummaryOverlay,
   GetSummaryOverlay,
 } from "./Controllers/SaveSummaryOverlay.js";
+import { SaveAiNotes, GetAiNotes } from "./Controllers/SaveAiNotes.js";
 import UpdateTargetJobs from "./Controllers/UpdateTargetJobs.js";
 import UpdateOpenaiKey from "./Controllers/UpdateOpenaiKey.js";
 import { GetGlobalOpenaiKey, SetGlobalOpenaiKey } from "./Controllers/GlobalOpenaiKey.js";
@@ -244,6 +245,10 @@ app.post("/build-ai-summary", BuildAiSummary);
 app.post("/save-summary-overlay", SaveSummaryOverlay);
 app.post("/clear-summary-overlay", ClearSummaryOverlay);
 app.get("/summary-overlay", GetSummaryOverlay);
+// Per-client "Notes to AI" — free-text operator guidance injected into every
+// BuildAiSummary prompt as authoritative context.
+app.post("/save-ai-notes", SaveAiNotes);
+app.get("/ai-notes", GetAiNotes);
 // Base resume structured JSON for the Documents → Base Resume preview.
 // Proxies gemini-resume's /api/resume-by-email and reshapes into the
 // same envelope ResumePreview already consumes for optimized resumes.

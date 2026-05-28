@@ -291,6 +291,26 @@ function renderLockedSectionsBlock(overlay) {
 ${blocks.join("\n\n")}`;
 }
 
+// renderAiNotesBlock: top-priority operator guidance. Sits ABOVE every other
+// block in the user prompt so the model treats it as authoritative when
+// composing the brief. Empty / missing notes → empty string (no block).
+function renderAiNotesBlock(profile) {
+    const text = (profile?.aiNotes?.text || "").trim();
+    if (!text) return "";
+    const when = profile?.aiNotes?.updatedAt
+        ? new Date(profile.aiNotes.updatedAt).toISOString().slice(0, 10)
+        : "";
+    const who = profile?.aiNotes?.updatedBy || "ops";
+    return `## OPERATOR NOTES (HIGHEST PRIORITY — overrides every other inference; do NOT ignore)
+These are direct instructions from the operator about this candidate, written ${when}${who ? ` by ${who}` : ""}. Treat them as authoritative facts about the candidate's intent. If they contradict the profile or resume, the notes win. Incorporate every point in the appropriate # section (Target Roles / Hard Constraints / Strong Signals / Hard Disqualifiers / Notes for Grader). Quote phrases verbatim where useful.
+
+${text}
+
+(End of operator notes. Continue with the normal inputs below.)
+
+`;
+}
+
 function buildUserPrompt(profile, resume, existingSummary, profileDiff, overlay = null) {
   const profileBlob = JSON.stringify(profile || {}, null, 2).slice(0, 12_000);
   // Split positive vs negative role clauses up-front so the model sees an
@@ -391,7 +411,7 @@ ${removedAll.map((v) => `  • "${v}"`).join("\n")}`
         empFlipGuard = `\n\nEMPLOYMENT TYPE FLIPS (CRITICAL — overrides the existing summary):\n${flips.join("\n")}`;
       }
     }
-    return `## Existing summary (built from a profile snapshot that is now out of date)
+    const diffPathBody = `## Existing summary (built from a profile snapshot that is now out of date)
 ${existingSummary.trim().slice(0, 6_000)}
 
 ## Field-level diff since last build (AUTHORITATIVE — applies on top of existing summary)
@@ -431,13 +451,15 @@ updated profile. Hard rules:
 
 Output the FULL updated summary in the same format as before — do not
 output a diff or a list of changes.${renderLockedSectionsBlock(overlay)}`;
+    return `${renderAiNotesBlock(profile)}${diffPathBody}`;
   }
-  return `## Onboarding profile
+  const freshBody = `## Onboarding profile
 ${profileBlob}
 ${rolesBlock}
 
 ## Parsed resume
 ${resumeBlob}${renderLockedSectionsBlock(overlay)}`;
+  return `${renderAiNotesBlock(profile)}${freshBody}`;
 }
 
 async function fetchResume(email) {
