@@ -196,10 +196,13 @@ export const saveAutomationConfig = async (req, res) => {
     if (!groupId || !templateId) {
       return res.status(400).json({ error: "groupId and templateId are required" });
     }
-    const limitNumber = Number(dailyLimit || 0);
-    if (!Number.isFinite(limitNumber) || limitNumber <= 0) {
+    const rawLimit = Number(dailyLimit || 0);
+    if (!Number.isFinite(rawLimit) || rawLimit <= 0) {
       return res.status(400).json({ error: "dailyLimit must be greater than zero" });
     }
+    // Hard cap at 5 — Gmail bounces past that on the workflow sender.
+    const MAX_AUTOMATION_DAILY_LIMIT = 5;
+    const limitNumber = Math.min(Math.floor(rawLimit), MAX_AUTOMATION_DAILY_LIMIT);
     const groupExists = await RecruiterEmailGroup.exists({ _id: groupId });
     if (!groupExists) {
       return res.status(400).json({ error: "Invalid groupId" });

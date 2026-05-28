@@ -14,6 +14,16 @@ const PREFER_GEMINI = process.env.FF_RECRUITER_PREFER_GEMINI !== "0";
 // model. Override via env if needed.
 const GEMINI_RECRUITER_MODEL = process.env.GEMINI_RECRUITER_MODEL || "gemini-2.5-flash";
 const DEFAULT_AI_DAILY_LIMIT = 5;
+// Hard ceiling — Gmail's free-tier bounces ("You have reached a limit for
+// sending mail") fire around the 5-recipient mark when sending one-by-one
+// through the workflow account. Clamp every read/write to MAX so an old
+// doc with dailyLimit=20 in Mongo never floods the queue.
+export const MAX_AI_DAILY_LIMIT = 5;
+export const clampDailyLimit = (n) => {
+  const v = Math.floor(Number(n) || 0);
+  if (!Number.isFinite(v) || v <= 0) return DEFAULT_AI_DAILY_LIMIT;
+  return Math.min(v, MAX_AI_DAILY_LIMIT);
+};
 
 async function findDefaultTechGroup() {
   return RecruiterEmailGroup.findOne({
@@ -176,7 +186,7 @@ STYLE RULES (strict — violation is failure):
   4. Blank line, then the lead-in line exactly: "In my recent roles, I have:"
   5. Blank line, then 5 to 6 bullet points of concrete achievements pulled directly from the resume's work experience. Each bullet starts with a bullet character "•" followed by a single space. Each bullet should be a FULL, detailed sentence of 30 to 55 words: state the achievement AND the method / context / tools that produced it (e.g. "...through workflow optimization and automation initiatives", "...to support strategic decision-making and business planning"). Do not write terse bullets. The last bullet should describe cross-functional collaboration or stakeholder work if the resume supports it.
   6. Blank line, then a closing paragraph (1-2 sentences) about education and work authorization.
-  7. Blank line, then a final line offering to connect, exactly in this spirit: "I've attached my resume and would welcome the opportunity to discuss how my <discipline> experience can contribute to your team and business goals."
+  7. Blank line, then a final line offering to connect, exactly in this spirit: "I would welcome the opportunity to discuss how my <discipline> experience can contribute to your team and business goals." DO NOT mention any attached resume, attachment, or file — the automated workflow does not attach resumes, so claiming an attachment misleads recipients.
 - Signature block exactly:
   Best regards,
   <Full Name>
@@ -207,7 +217,7 @@ In my recent roles, I have:
 
 I am currently pursuing a Master of Science in Engineering Management at the University of Southern California and am on F1 OPT status in the United States.
 
-I've attached my resume and would welcome the opportunity to discuss how my analytical and strategic experience can contribute to your team and business goals.
+I would welcome the opportunity to discuss how my analytical and strategic experience can contribute to your team and business goals.
 
 Best regards,
 Aaditi Jayesh Shah
@@ -401,7 +411,7 @@ export async function ensureAiTemplateForOwner(ownerEmail) {
         ownerEmail: owner,
         group: groupId,
         template: tpl._id,
-        dailyLimit: auto?.dailyLimit > 0 ? auto.dailyLimit : DEFAULT_AI_DAILY_LIMIT,
+        dailyLimit: clampDailyLimit(auto?.dailyLimit),
         enabled: true
       },
       { upsert: true, new: true, setDefaultsOnInsert: true }
@@ -435,7 +445,7 @@ export async function aiGenerateTemplateHandler(req, res) {
             ownerEmail: owner,
             group: groupId,
             template: tpl._id,
-            dailyLimit: existing?.dailyLimit > 0 ? existing.dailyLimit : DEFAULT_AI_DAILY_LIMIT,
+            dailyLimit: clampDailyLimit(existing?.dailyLimit),
             enabled: true
           },
           { upsert: true, new: true, setDefaultsOnInsert: true }

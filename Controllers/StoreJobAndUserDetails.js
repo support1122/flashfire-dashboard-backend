@@ -9,7 +9,7 @@ import {
     isLocationBlocked,
 } from "../Utils/exclusionLists.js";
 import { sanitizeJobTitle } from "../Utils/jobTitle.js";
-import { checkCap, detectOvershoot, checkPlanCap } from "../Utils/dailyCapGuard.js";
+import { checkCap, detectOvershoot, checkPlanCap, enforcePlanCapPostInsert } from "../Utils/dailyCapGuard.js";
 
 /**
  * Normalize job title/company for duplicate check: trim and collapse multiple spaces.
@@ -444,7 +444,33 @@ export async function saveToDashboard(req, res) {
                 }
 
                 const newJob = await JobModel.create(payload);
-                // Post-insert overshoot detection (concurrent push race).
+
+                // HARD plan-cap rollback for concurrent races — re-count
+                // post-insert and delete this job if it pushed past the
+                // lifetime cap. Other concurrent inserts roll back their own.
+                let rolledBack = false;
+                try {
+                    const enforce = await enforcePlanCapPostInsert(userEmail, newJob._id);
+                    if (!enforce.kept) {
+                        rolledBack = true;
+                        summary.failedWithError++;
+                        summary.details.push({
+                            user: userEmail,
+                            status: "failed",
+                            error: "PLAN_LIMIT_REACHED",
+                            reason: `Plan limit reached during race (${enforce.count}/${enforce.cap}) — job rolled back.`,
+                            cap: enforce.cap,
+                            current: enforce.count,
+                            planType: enforce.planType,
+                            rolledBack: enforce.deleted,
+                        });
+                    }
+                } catch (e) {
+                    console.error("enforcePlanCapPostInsert failed (saveToDashboard):", e.message);
+                }
+                if (rolledBack) continue;
+
+                // Post-insert daily-cap overshoot detection (non-blocking).
                 detectOvershoot(userEmail, capCheck.cap).catch(() => {});
                 summary.saved++;
                 summary.details.push({

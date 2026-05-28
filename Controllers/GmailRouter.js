@@ -491,10 +491,14 @@ router.post("/automation/config", async (req, res) => {
     if (!groupId || !templateId) {
       return res.status(400).json({ error: "groupId and templateId are required" });
     }
-    const limitNumber = Number(dailyLimit || 0);
-    if (!Number.isFinite(limitNumber) || limitNumber <= 0) {
+    const rawLimit = Number(dailyLimit || 0);
+    if (!Number.isFinite(rawLimit) || rawLimit <= 0) {
       return res.status(400).json({ error: "dailyLimit must be greater than zero" });
     }
+    // Hard cap at 5 — Gmail rate-limit bounces past that on the workflow
+    // account. Clamp silently so old UIs sending 20 still save 5.
+    const MAX_AUTOMATION_DAILY_LIMIT = 5;
+    const limitNumber = Math.min(Math.floor(rawLimit), MAX_AUTOMATION_DAILY_LIMIT);
     const groupExists = await RecruiterEmailGroup.exists({ _id: groupId });
     if (!groupExists) {
       return res.status(400).json({ error: "Invalid groupId" });
@@ -693,11 +697,16 @@ export async function runRecruiterAutomationDailyJob() {
     );
     let pool = normalizedAll.filter((email) => !alreadySentSet.has(email));
     let resetHistory = false;
-    if (pool.length < automation.dailyLimit) {
+    // Defense-in-depth: cap the per-tick send at 5 even if Mongo doc still
+    // carries the old dailyLimit:20 value. Saving via the UI clamps on
+    // write, but existing docs predating the clamp must not flood Gmail.
+    const HARD_DAILY_CAP = 5;
+    const effectiveDailyLimit = Math.min(automation.dailyLimit || 0, HARD_DAILY_CAP);
+    if (pool.length < effectiveDailyLimit) {
       pool = normalizedAll;
       resetHistory = true;
     }
-    const limit = Math.min(automation.dailyLimit, pool.length);
+    const limit = Math.min(effectiveDailyLimit, pool.length);
     const selected = [];
     const poolCopy = [...pool];
     while (selected.length < limit && poolCopy.length > 0) {
