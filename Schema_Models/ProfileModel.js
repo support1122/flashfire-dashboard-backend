@@ -474,6 +474,18 @@ export const profileSchema = new mongoose.Schema({
     required: false,
     default: true,
   },
+  // Operator-saved "format overlay". When enabled, every future
+  // BuildAiSummary rebuild re-injects the bullets the operator added on top
+  // of the AI's output (per # section). Set via POST /save-summary-overlay
+  // from the clients-tracking AI Summary editor.
+  //   savedText   — full edited summary the operator clicked "Save format" on.
+  //   savedAt     — timestamp of the save.
+  //   enabled     — toggle so clear-overlay can disable without losing the text.
+  aiSummaryOverlay: {
+    savedText: { type: String, required: false, default: "" },
+    savedAt: { type: Date, required: false, default: null },
+    enabled: { type: Boolean, required: false, default: false },
+  },
   // Operator's per-client OpenAI API key. Used by the JR-direct extension's
   // SW to call api.openai.com directly for the auto-judge step. Stored as
   // plain text per ops decision — extension fetches it on /extension/clientLogin

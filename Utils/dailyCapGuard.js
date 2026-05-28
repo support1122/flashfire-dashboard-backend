@@ -304,6 +304,61 @@ export async function checkCap(rawEmail) {
     };
 }
 
+// enforcePlanCapPostInsert(email, insertedJobId): atomic-ish post-insert
+// guard for the lifetime plan cap. Concurrent /addjob + /saveToDashboard
+// requests can both pass the pre-check at cap-1 and BOTH insert (race), so
+// we re-check total AFTER insert and HARD-DELETE the freshly-created job
+// when the total exceeds the effective plan cap. Caller treats deletion as
+// "push refused" — same as a pre-check rejection.
+//
+// Returns:
+//   { kept: true,  count, cap }              — within cap
+//   { kept: false, count, cap, deleted: id } — rolled back the inserted job
+//   { kept: true,  count: null, cap: null }  — uncapped client
+//
+// Throws on DB error so the caller can convert to 503.
+export async function enforcePlanCapPostInsert(rawEmail, insertedJobId) {
+    const meta = await readPlanCap(rawEmail);
+    if (meta.effectiveCap == null) {
+        return { kept: true, count: null, cap: null, planType: meta.planType, baseCap: null, referralBonus: meta.referralBonus, addonBonus: meta.addonBonus };
+    }
+    const count = await countTotalJobs(meta.email);
+    if (count <= meta.effectiveCap) {
+        return { kept: true, count, cap: meta.effectiveCap, planType: meta.planType, baseCap: meta.baseCap, referralBonus: meta.referralBonus, addonBonus: meta.addonBonus };
+    }
+    // Over cap. Delete the job WE just inserted (identified by insertedJobId)
+    // — never touch other inserts in the race window, even when they also
+    // contributed to the overshoot (their handler will rollback its own).
+    let deleted = null;
+    if (insertedJobId) {
+        try {
+            const res = await JobModel.deleteOne({ _id: insertedJobId });
+            if (res?.deletedCount > 0) deleted = String(insertedJobId);
+        } catch (e) {
+            console.warn(`enforcePlanCapPostInsert delete failed for ${insertedJobId}:`, e.message);
+        }
+    }
+    console.warn(JSON.stringify({
+        event: "plan.cap.rollback",
+        client: meta.email,
+        planType: meta.planType,
+        cap: meta.effectiveCap,
+        actual: count,
+        deletedJob: deleted,
+        ts: new Date().toISOString(),
+    }));
+    return {
+        kept: false,
+        count,
+        cap: meta.effectiveCap,
+        planType: meta.planType,
+        baseCap: meta.baseCap,
+        referralBonus: meta.referralBonus,
+        addonBonus: meta.addonBonus,
+        deleted,
+    };
+}
+
 // detectOvershoot(email, capInfo): post-insert sanity check. Logs a structured
 // warning when concurrent pushes raced past the cap. Idempotent + non-throwing
 // — never blocks the response path. Returns the post-insert count for callers

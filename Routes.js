@@ -62,6 +62,11 @@ import CheckProfile from "./Controllers/CheckProfile.js";
 import GetProfile from "./Controllers/GetProfile.js";
 import UpdateAiSummary from "./Controllers/UpdateAiSummary.js";
 import BuildAiSummary from "./Controllers/BuildAiSummary.js";
+import {
+  SaveSummaryOverlay,
+  ClearSummaryOverlay,
+  GetSummaryOverlay,
+} from "./Controllers/SaveSummaryOverlay.js";
 import UpdateTargetJobs from "./Controllers/UpdateTargetJobs.js";
 import UpdateOpenaiKey from "./Controllers/UpdateOpenaiKey.js";
 import { GetGlobalOpenaiKey, SetGlobalOpenaiKey } from "./Controllers/GlobalOpenaiKey.js";
@@ -233,6 +238,12 @@ app.post("/update-ai-summary", UpdateAiSummary);
 // Server-side candidate brief builder. Consumers (JR-direct extension)
 // just POST { email } — backend pulls profile + resume + calls OpenAI.
 app.post("/build-ai-summary", BuildAiSummary);
+// Summary format overlay: operator-saved "format snapshot" so future rebuilds
+// re-inject operator-added bullets. Save = enable + write snapshot.
+// Clear = disable (snapshot retained). Get = read current state + stats.
+app.post("/save-summary-overlay", SaveSummaryOverlay);
+app.post("/clear-summary-overlay", ClearSummaryOverlay);
+app.get("/summary-overlay", GetSummaryOverlay);
 // Base resume structured JSON for the Documents → Base Resume preview.
 // Proxies gemini-resume's /api/resume-by-email and reshapes into the
 // same envelope ResumePreview already consumes for optimized resumes.

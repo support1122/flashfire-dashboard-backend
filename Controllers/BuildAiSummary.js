@@ -21,6 +21,7 @@ import axios from "axios";
 import { ProfileModel } from "../Schema_Models/ProfileModel.js";
 import { getAppSettings } from "../Schema_Models/AppSettings.js";
 import { callGemini, GEMINI_JUDGE_MODEL, HAS_GEMINI_CREDENTIALS } from "../Utils/vertexGeminiJudge.js";
+import { mergeOverlay, countOverlayBullets } from "../Utils/summaryOverlay.js";
 
 const RESUME_API_URL = process.env.RESUME_API_URL || "http://localhost:5000";
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
@@ -31,70 +32,101 @@ const PREFER_GEMINI = process.env.FF_SUMMARY_PREFER_GEMINI !== "0";
 const GEMINI_SUMMARY_MODEL = process.env.GEMINI_SUMMARY_MODEL || GEMINI_JUDGE_MODEL;
 const MAX_SUMMARY_CHARS = 8000;
 
-const SYSTEM_PROMPT = `You are a senior recruiter writing a candidate brief.
-You receive a candidate's onboarding profile + parsed resume. You produce a single
-"candidate summary" used by an automated job-fit grader.
+const SYSTEM_PROMPT = `You write a single candidate brief that an automated job-fit grader reads
+on every job. The grader trusts this brief verbatim — every claim you make
+will be cited back as a pick or skip reason.
 
-Goals:
-1. Make later grading reliable by surfacing the SIGNALS that determine fit.
-2. Stay under 500 words.
-3. Be specific and grounded — quote real titles, years, technologies, locations from
-   the inputs. Never invent.
-
-Required structure (use these exact section headers):
+# Core rules (apply to every section)
+1. Ground every line in the onboarding profile or parsed resume. If a fact
+   is missing from BOTH, write "not specified" — never guess, never infer.
+2. Quote profile strings VERBATIM where the section instructs. The grader
+   pattern-matches on these literals; paraphrasing breaks pick reasons.
+3. No marketing language. No filler adjectives ("strong communicator",
+   "fast learner", "passionate"). Every sentence carries a fact.
+4. Total length: 380–500 words. Plain text. Markdown limited to # headers
+   and - bullets. No bold, italics, tables, or code fences.
+5. Use these EXACT section headers in this EXACT order. Do not rename, do
+   not skip, do not add new sections.
 
 # Candidate Summary
-- 2-3 sentence overview (current title, total YOE, primary discipline).
+2–3 sentences. State: current title, total years of experience, primary
+discipline (e.g. "back-end distributed-systems engineer", "pediatric
+oncology nurse", "commercial real-estate paralegal"). Cite specifics from
+the resume (last role + company + duration if available).
 
 # Target Roles
-- FIRST line: list every POSITIVE entry from profile.preferredRoles VERBATIM,
-  comma-separated, prefixed with "Preferred roles (verbatim from profile): ".
-  Do not paraphrase or rename. The downstream grader cites these strings
-  literally in pick reasons.
-- SECOND line (only if profile.preferredRoles contains negative clauses like
-  "Do not add Technician roles", "no QA", "exclude manager positions"): list
-  the cleaned excluded role names VERBATIM, comma-separated, prefixed with
-  "Excluded roles (verbatim from profile, do NOT pick these): ". Omit this
-  line entirely when there are no negative clauses.
-- Then bullet list of role titles the candidate wants, grouping same-family roles
-  (e.g. "Software Engineer / Backend Engineer / Platform Engineer" — one bullet).
-- Note seniority band (intern / entry / mid / senior / lead / exec).
+Line 1 (always present): "Preferred roles (verbatim from profile): " followed
+by every POSITIVE entry from profile.preferredRoles, comma-separated, copied
+character-for-character. Do not rename "BE" to "Backend Engineer". Do not
+collapse duplicates. Do not reorder.
+
+Line 2 (only if profile.preferredRoles contains negative clauses like
+"Do not add Technician roles", "no QA", "exclude manager positions"):
+"Excluded roles (verbatim from profile, do NOT pick these): " followed by
+the cleaned excluded role names verbatim, comma-separated. Omit this line
+entirely when no negative clauses exist.
+
+Then a bullet list grouping same-family roles on one line
+(e.g. "Software Engineer / Backend Engineer / Platform Engineer"). One
+bullet per family.
+
+Final bullet: seniority band — one of intern | entry | mid | senior | lead | exec.
+Derive from experienceLevel + resume YOE.
 
 # Hard Constraints
-- Locations they will accept (cities + remote/hybrid policy).
-- Work authorisation (citizen / GC / H1B / OPT / needs sponsorship).
-- Salary floor if profile states one.
-- Industries / company stages excluded if any.
-- Employment types accepted: take VERBATIM from the "Employment type rules"
-  block in the user prompt. That block enumerates each of Full-time / Part-time
-  / Contract / Internship as either ACCEPT or REJECT and supplies the exact
-  Hard Constraints + Hard Disqualifiers wording to use. Do NOT invent
-  rejections or skip-bullets for any type marked ACCEPT, even if you would
-  default to skipping it. Do NOT omit rejections for types marked REJECT.
+- Locations: list cities + remote/hybrid policy. If profile says remote-only,
+  say so. If onsite-only in specific cities, list them.
+- Work authorisation: one short clause (e.g. "US Citizen", "H1B — on F1
+  OPT until 2027", "Green Card holder", "Needs sponsorship now").
+- Salary floor: USD figure if the profile states one. Else "not specified".
+- Excluded industries / company stages: only if profile names them.
+- Employment types: copy the EXACT wording supplied in the "Employment type
+  rules" block in the user prompt. That block enumerates Full-time /
+  Part-time / Contract / Internship as ACCEPT or REJECT and gives the exact
+  sentence to use for each. Do NOT add a skip bullet for any type marked
+  ACCEPT. Do NOT omit the skip bullet for any type marked REJECT.
 
 # Strong Signals (auto-PICK if matched)
-- Keywords / role titles / skills that indicate a strong fit when seen on a job.
+Bullets of keywords, role titles, technologies, certifications, or
+industries that, when seen on a job posting, indicate a strong fit. Pull
+from the resume (skills, recent titles, projects) and from profile
+preferences. Each bullet is one short phrase, not a sentence.
 
 # Hard Disqualifiers (auto-SKIP if matched)
-- Specific factors that must reject a job (e.g. "anything requiring active
-  US security clearance — candidate does not have it").
-- INCLUDE every excluded role from the "Excluded roles" line above as its
-  own disqualifier bullet, with the exact wording the candidate used
-  (e.g. "Technician roles — candidate explicitly opted out").
-- ALWAYS include this exact bullet verbatim, for every candidate, no
-  exceptions: "Job posting age — skip any job posted more than 48 hours
-  ago. Only postings from the last 48 hours are in scope."
+ABSOLUTE RULE: every bullet here MUST trace to an EXPLICIT signal in the
+inputs (Excluded roles line, profile field that names an industry to skip,
+profile-stated lack of clearance, employment-type marked REJECT, etc.).
+Never infer a disqualifier. Never add "candidate explicitly opted out" for
+any role that appears in the Preferred (positive) line — that would
+contradict the candidate.
+
+Permitted bullet sources (in priority order):
+1. The "Excluded (negative)" line in the role classifier — emit ONE bullet
+   per excluded role using the exact candidate wording. Example:
+   "Technician roles — candidate explicitly opted out". If the Excluded
+   line is "(none)", emit ZERO role-level disqualifier bullets. Do not
+   invent any.
+2. Employment-type REJECT bullets from the Employment type rules block —
+   use the supplied wording verbatim.
+3. Work-authorisation gaps the profile names (e.g. profile says "needs
+   sponsorship" → "US citizen only — candidate needs sponsorship";
+   profile says "no clearance" → "Active US security clearance required").
+4. Industries or companies the profile explicitly tells us to exclude.
+5. ALWAYS include this exact bullet verbatim, for every candidate, no
+   exceptions: "Job posting age — skip any job posted more than 48 hours
+   ago. Only postings from the last 48 hours are in scope."
+
+Do NOT add: seniority-mismatch bullets, role variants the profile didn't
+exclude, industries the profile didn't call out, or any speculative skip
+reason. If there is no signal, there is no bullet.
 
 # Notes for Grader
-- 2-4 sentences of nuance: how to weight role family vs seniority vs location.
-  E.g. "Candidate is open to PM and APM roles but not SVP or Director — too senior."
-
-Rules:
-- Total length: 380-500 words.
-- No fluff, no marketing, no generic ("strong communicator").
-- Every bullet must be derivable from the inputs. If profile is missing a fact,
-  say "not specified".
-- Plain text, no markdown beyond the # headers and - bullets.`;
+2–4 sentences of nuance on how to weight conflicts. Examples: "Role family
+trumps title cosmetics — pick 'Software Developer' even when preferred says
+'Software Engineer'." / "Location flexibility: candidate prefers NYC but
+will take remote anywhere in US." / "Seniority cap: open to APM and PM but
+not Director — too senior." Be specific to THIS candidate — no generic
+guidance.`;
 
 // Fields that materially affect the summary's grader-facing content. We
 // snapshot only these (not the entire mongo doc) so the diff is small,
@@ -258,8 +290,9 @@ Accepted employment types: ${employmentTypes.join(", ")}
 Rejected employment types: ${excludedEmp.length ? excludedEmp.join(", ") : "(none — accepts all)"}
 Rules:
 - Use ONLY the Preferred list on the "Preferred roles (verbatim from profile)" line.
-- Render the Excluded list on the "Excluded roles (verbatim from profile, do NOT pick these)" line and add a matching bullet under Hard Disqualifiers.
-- NEVER include any excluded role under Strong Signals or Target Roles bullets.
+- If the Excluded list is "(none)": OMIT the "Excluded roles" line entirely AND emit ZERO role-level bullets under Hard Disqualifiers. Do not generate any "<Role> — candidate explicitly opted out" bullet. Do not infer exclusions from seniority, role family, or anything else.
+- If the Excluded list has entries: render them on the "Excluded roles (verbatim from profile, do NOT pick these)" line and add ONE matching disqualifier bullet per entry, using the candidate's exact wording.
+- NEVER include any role from the Preferred list under Hard Disqualifiers, Strong Signals exclusions, or any negative section. Preferred = wanted; emitting a Preferred role as a disqualifier directly contradicts the candidate.
 
 ## Employment type rules (AUTHORITATIVE — overrides every other instruction)
 For each employment type below, use EXACTLY the wording given. Do not invent
@@ -527,9 +560,26 @@ async function runForProfileCore(profile, apiKey, reasonTag = "manual") {
   if (!ai.ok) {
     return { success: false, status: 502, error: ai.error, message: ai.message, step: "openai" };
   }
-  const summary = (ai.summary || "").slice(0, MAX_SUMMARY_CHARS);
+  let summary = (ai.summary || "").slice(0, MAX_SUMMARY_CHARS);
   if (!summary) {
     return { success: false, status: 502, error: "EMPTY_SUMMARY", message: "OpenAI returned empty content", step: "openai" };
+  }
+  // Apply operator's saved format overlay: if enabled, re-inject any bullets
+  // the operator added on top of the previous build. Pure AI output if no
+  // overlay or overlay disabled. Trims to MAX_SUMMARY_CHARS after merge so
+  // a long overlay can't bust the doc size cap.
+  const overlay = profile?.aiSummaryOverlay || {};
+  let overlayStats = null;
+  if (overlay.enabled && overlay.savedText) {
+    const merged = mergeOverlay(summary, overlay.savedText);
+    if (typeof merged === "string" && merged.trim().length) {
+      summary = merged.slice(0, MAX_SUMMARY_CHARS);
+      overlayStats = countOverlayBullets(overlay.savedText, summary);
+      if (overlayStats.total) {
+        usedSource = `${usedSource} +overlay:${overlayStats.total}`;
+        console.log(`[BuildAiSummary] overlay applied email=${profile.email} extras=${overlayStats.total}`);
+      }
+    }
   }
   const wordCount = summary.trim().split(/\s+/).filter(Boolean).length;
 

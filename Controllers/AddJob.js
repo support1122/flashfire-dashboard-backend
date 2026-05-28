@@ -4,7 +4,7 @@ import { ProfileModel } from '../Schema_Models/ProfileModel.js';
 import { isClientLocked } from './operations/ClientOperations.js';
 import { getExclusionBlockReason } from '../Utils/exclusionGuard.js';
 import { sanitizeJobTitle } from '../Utils/jobTitle.js';
-import { checkCap, detectOvershoot, checkPlanCap } from '../Utils/dailyCapGuard.js';
+import { checkCap, detectOvershoot, checkPlanCap, enforcePlanCapPostInsert } from '../Utils/dailyCapGuard.js';
 
 export default async function AddJob(req, res) {
     let { jobDetails, userDetails, role, operationsEmail, operationsName, extensionCode } = req.body;
@@ -199,9 +199,38 @@ export default async function AddJob(req, res) {
 
         const createdJob = await JobModel.create(jobDetails);
 
-        // Post-insert overshoot detection. Concurrent /addjob requests can
-        // both pass the pre-check at cap-1 and both insert. Log structured
-        // warning so ops can audit. Non-blocking, fire-and-forget.
+        // HARD plan-cap enforcement post-insert. Concurrent requests can each
+        // pass the pre-check at cap-1 and BOTH insert (e.g. 1200 cap → 1202).
+        // Re-count here; if the inserted job pushed us over the lifetime
+        // cap, delete it and return 403 — same outcome as a pre-check reject.
+        if (clientForExclusions) {
+            try {
+                const enforce = await enforcePlanCapPostInsert(clientForExclusions, createdJob._id);
+                if (!enforce.kept) {
+                    return res.status(403).json({
+                        success: false,
+                        error: 'PLAN_LIMIT_REACHED',
+                        message: `Plan limit reached during race (${enforce.count}/${enforce.cap}). Push refused — this job was rolled back.`,
+                        cap: enforce.cap,
+                        baseCap: enforce.baseCap,
+                        referralBonus: enforce.referralBonus,
+                        addonBonus: enforce.addonBonus,
+                        current: enforce.count,
+                        remaining: 0,
+                        planType: enforce.planType,
+                        rolledBack: enforce.deleted,
+                    });
+                }
+            } catch (e) {
+                // Don't surface the rollback-check failure to the client —
+                // job is already inserted, log loudly so ops can audit.
+                console.error('enforcePlanCapPostInsert failed:', e.message, e.stack);
+            }
+        }
+
+        // Post-insert DAILY-cap overshoot detection. Concurrent /addjob
+        // requests can both pass pre-check at cap-1 and both insert. Log
+        // structured warning so ops can audit. Non-blocking.
         if (req._capSnapshot && clientForExclusions) {
             detectOvershoot(clientForExclusions, req._capSnapshot.cap).catch((err) => {
                 console.warn('detectOvershoot threw:', err?.message);

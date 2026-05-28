@@ -1071,7 +1071,10 @@ export default async function Add_Update_Profile(req, res) {
 
       const savedProfile = await newProfile.save();
 
-      triggerSummaryRebuild(authEmail, "profile-create");
+      // First-time profile create: skip summary auto-build. Onboarding profile
+      // is often skeletal (no resume linked yet, preferredRoles unparsed) so a
+      // build here produces a brief the grader can't use. Summary will fire
+      // on the next resume-link or profile-edit event.
       return res.json({
         message: "Profile created successfully",
         userProfile: savedProfile,
