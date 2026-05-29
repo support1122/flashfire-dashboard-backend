@@ -62,6 +62,11 @@ will be cited back as a pick or skip reason.
    These markers are stripped by the server before the brief is persisted.
    Their only job is to drive the UI's per-bullet color coding so the
    operator can see at a glance which facts came from where.
+7. TERMINOLOGY: the verb "scrap" in operator notes or profile fields means
+   SCRAPE = APPLY TO = TARGET a job. It is POSITIVE. It does NOT mean discard
+   or exclude. Only a negation ("do not scrap", "don't scrap", "never scrap")
+   turns it into an exclusion. A role the operator says to "scrap" is WANTED
+   and must never be placed in Hard Disqualifiers as excluded.
 
 # Candidate Summary
 2–3 sentences. State: current title, total years of experience, primary
@@ -127,7 +132,13 @@ Permitted bullet sources (in priority order):
    sponsorship" → "US citizen only — candidate needs sponsorship";
    profile says "no clearance" → "Active US security clearance required").
 4. Industries or companies the profile explicitly tells us to exclude.
-5. ALWAYS include this exact bullet verbatim, for every candidate, no
+5. Operator-notes directives routed here per the OPERATOR NOTES block:
+   explicit "do not scrap"/exclusion bullets, AND the whitelist catch-all
+   bullet ("Skip all roles other than X.") when the operator said to
+   "scrap only X". Write these as plain "Skip <X>." bullets with NO
+   "excluded per operator note" or other attribution suffix. Never place a
+   whitelisted/targeted role X itself here.
+6. ALWAYS include this exact bullet verbatim, for every candidate, no
    exceptions: "Job posting age — skip any job posted more than 48 hours
    ago. Only postings from the last 48 hours are in scope."
 
@@ -303,78 +314,119 @@ function renderAiNotesBlock(profile) {
     return `## OPERATOR NOTES (DIRECTIVES — HIGHEST PRIORITY · ZERO TOLERANCE FOR MISSED ITEMS)
 The text below is from the operator (${when}${who ? ` · ${who}` : ""}). These are DIRECTIVES, NOT data to be summarised.
 
+╔═══════════════════════════════════════════════════════════════════════╗
+║ TERMINOLOGY — READ FIRST. THIS OVERRIDES YOUR DICTIONARY INTUITION.    ║
+║                                                                       ║
+║ In this company's jargon, "scrap" means SCRAPE = APPLY TO = TARGET a  ║
+║ job. It is a POSITIVE action. It does NOT mean discard, junk, drop,   ║
+║ or exclude — ignore the everyday English meaning of the word.         ║
+║                                                                       ║
+║   "scrap X"               = APPLY TO X   → X is a TARGET / wanted role ║
+║   "scrap only X"          = apply to X and NOTHING ELSE (WHITELIST)    ║
+║   "strictly scrap only X" = WHITELIST X, skip every other role        ║
+║   "also scrap Y"          = add Y to the targets                      ║
+║   "prioritise / prefer X" = X is a strong-fit signal                  ║
+║                                                                       ║
+║   "do NOT scrap X" / "don't scrap X" / "never scrap X" = EXCLUDE X     ║
+║   ONLY a NEGATION word (not/don't/never/no/skip/exclude) next to      ║
+║   "scrap" flips it to an exclusion. Bare "scrap X" is ALWAYS a target.║
+║                                                                       ║
+║ FATAL MISTAKE TO AVOID: putting a role the operator told you to       ║
+║ "scrap" (i.e. apply to) into Hard Disqualifiers as "excluded". That   ║
+║ is the exact OPPOSITE of the instruction. Never do it.                ║
+╚═══════════════════════════════════════════════════════════════════════╝
+
 CRITICAL CONTRACT — read before writing anything:
 A. Split the notes text into a numbered list of distinct directives in your head. A directive = one sentence or one bullet expressing ONE intent.
-B. Every directive MUST produce at least one corresponding bullet in the brief, in the section dictated by the ROUTING RULES below.
-C. After writing the brief, walk the directive list a second time and verify each is reflected. If even one is missing or in the wrong section, REWRITE before output. A missed directive is a CRITICAL FAILURE.
-D. The "— operator priority" suffix is RESERVED for items that come FROM operator notes. Items derived from the resume or profile MUST NOT carry this suffix. Do not blanket-tag every Strong Signal bullet.
+B. For each directive, FIRST decide its polarity: is there a negation word (not/don't/never/no/skip/exclude) attached to "scrap"? If NO negation → it is a TARGET/INCLUDE directive. If negation present → it is an EXCLUDE directive. Get polarity right before routing.
+C. Every directive MUST produce at least one corresponding bullet in the brief, in the section dictated by the ROUTING RULES below.
+D. After writing the brief, walk the directive list a second time and verify each is reflected with the CORRECT polarity. If even one is missing, in the wrong section, or has flipped polarity, REWRITE before output. A flipped or missed directive is a CRITICAL FAILURE.
+E. The "— operator priority" suffix is RESERVED for items that come FROM operator notes. Items derived from the resume or profile MUST NOT carry this suffix. Do not blanket-tag every Strong Signal bullet.
 
 ROUTING RULES (apply mechanically — do NOT improvise):
 
-R1. "Do not scrap X" / "do not pick X" / "exclude X" / "never X" / "skip X" / "no X"
-    → Hard Disqualifiers: ONE bullet per X, exactly "X — excluded per operator note".
+R0. WHITELIST — "scrap only X" / "only scrap X" / "strictly scrap only X" / "scrap X only" / "scrap X exclusively" (X = one or more role titles, NO negation word):
+    → This RESTRICTS scope to X. X is WANTED.
+    → Target Roles: the bullet list becomes EXACTLY X (the whitelisted roles), replacing/narrowing the family list. Keep the verbatim "Preferred roles (verbatim from profile)" line as-is.
+    → Strong Signals: ONE bullet per whitelisted role, "X — operator priority".
+    → Hard Disqualifiers: add ONE bullet, exactly: "Skip all roles other than <list of X>.".
+    → ABSOLUTE: NEVER put any whitelisted role X itself into Hard Disqualifiers. The candidate WANTS X. Only the catch-all "all roles other than X" bullet goes there.
+
+R1. NEGATED scrap / explicit exclusion — "Do NOT scrap X" / "don't scrap X" / "never scrap X" / "do not pick X" / "exclude X" / "skip X" / "no X" (negation word REQUIRED):
+    → Hard Disqualifiers: ONE bullet per X, exactly "Skip <X>." (e.g. "Skip QA roles.").
+    → Do NOT append "excluded per operator note" or any operator-attribution suffix — keep the bullet clean, same style as the other disqualifier bullets.
     → NEVER include X in Strong Signals or Target Roles.
     → NEVER summarise multiple X's into one bullet; emit one bullet per item.
 
-R2. "Prioritise X" / "focus on X" / "scrap more X" / "we want X" / "prefer X"
+R2. Priority — "Prioritise X" / "focus on X" / "scrap more X" / "we want X" / "prefer X" (NO negation):
     → Strong Signals: ONE bullet per X, exactly "X — operator priority".
     → NEVER include X in Hard Disqualifiers.
 
-R3. "Also scrap Y" / "include Y" / "Y is fine too" / "can scrap Y as well"
+R3. Additive target — "Also scrap Y" / "include Y" / "Y is fine too" / "can scrap Y as well" (NO negation):
     → Target Roles bullet list grows to include Y (when Y is a role title).
     → Strong Signals adds: "Y — operator allows" (when Y is a role/tech/skill).
     → NEVER include Y in Hard Disqualifiers, even if Y looks like an "off-discipline" role.
 
-R4. Company-name exclusions ("do not scrap from Acme", "skip Foo Inc")
-    → Hard Disqualifiers: one bullet per company, exactly "<Company> jobs — excluded per operator note".
+R4. Company-name exclusions — "do NOT scrap from Acme" / "don't scrap Foo Inc" / "skip Foo Inc" (negation REQUIRED):
+    → Hard Disqualifiers: one bullet per company, exactly "Skip <Company> jobs." — no attribution suffix.
     → NEVER list these under Hard Constraints "Excluded industries" — companies are not industries.
     → NEVER list these in Strong Signals.
+    NOTE: "scrap from Acme" WITHOUT a negation = apply to Acme (priority), NOT an exclusion → Strong Signals "<Company> — operator priority".
 
-R5. Company / industry category exclusions ("no staffing", "skip consulting firms", "no recruitment agencies")
-    → Hard Disqualifiers: "<Category> companies — excluded per operator note".
+R5. Company / industry category exclusions — "do NOT scrap staffing" / "no staffing" / "skip consulting firms" (negation REQUIRED):
+    → Hard Disqualifiers: "Skip <category> companies." — no attribution suffix.
     → NEVER as Strong Signals. NEVER as Hard Constraints "Excluded industries" — keep them as their own bullets in Hard Disqualifiers.
 
-R6. Company / industry category priorities ("prioritise H1B sponsors", "prefer fintech")
+R6. Company / industry category priorities — "prioritise H1B sponsors" / "prefer fintech" / "scrap H1B sponsors" (NO negation):
     → Strong Signals: "<Category> — operator priority".
     → NEVER as Hard Disqualifiers.
 
-R7. Operational instructions that are NOT about job content ("scrap 35-40 daily", "build twice a week")
-    → IGNORE — these are workflow instructions, not candidate signals. Do NOT echo them anywhere in the brief. Do NOT include them in Target Roles, Strong Signals, or Notes for Grader.
+R7. Operational instructions that are NOT about job content ("scrap 35-40 daily", "build twice a week"):
+    → IGNORE — these are workflow instructions, not candidate signals. Do NOT echo them anywhere in the brief. (A bare number/quota next to "scrap" = workflow, not a role.)
 
 R8. The "Notes for Grader" section gets ONLY meta-guidance on how to WEIGH conflicts. NEVER restates the routed directives.
 
 WORKED EXAMPLES (use these for the current candidate too):
 
+Operator note: "strictly scrap only Data Engineer or data analyst positions"
+  → POLARITY: no negation → TARGET/WHITELIST (R0). Candidate WANTS these two roles only.
+  ✓ Target Roles bullet list MUST be exactly: "Data Engineer", "Data Analyst"
+  ✓ Strong Signals MUST contain: "Data Engineer — operator priority", "Data Analyst — operator priority"
+  ✓ Hard Disqualifiers MUST contain: "Skip all roles other than Data Engineer / Data Analyst."
+  ✗ Hard Disqualifiers must NOT contain "Data Engineer roles — excluded" or "Data Analyst roles — excluded" — that flips the directive and is a CRITICAL FAILURE
+
 Operator note: "DO NOT scrap at all staffing/consulting companies."
-  ✓ Hard Disqualifiers MUST contain: "Staffing or consulting companies — excluded per operator note"
+  → POLARITY: "DO NOT" → EXCLUDE (R5).
+  ✓ Hard Disqualifiers MUST contain: "Skip staffing or consulting companies."
   ✗ Strong Signals must NOT contain "Staffing/Consulting companies"
-  ✗ Hard Constraints must NOT contain "Excluded industries: Staffing"
 
 Operator note: "Prioritize and scrap companies that provide H1B sponsorship."
+  → POLARITY: no negation → PRIORITY (R6).
   ✓ Strong Signals MUST contain: "Companies that sponsor H1B — operator priority"
   ✗ Hard Disqualifiers must NOT contain "Companies that provide H1B sponsorship"
 
 Operator note: "Do not scrap roles from Humana or JP Morgan Chase."
+  → POLARITY: "Do not" → EXCLUDE (R4).
   ✓ Hard Disqualifiers MUST contain TWO bullets:
-       "Humana jobs — excluded per operator note"
-       "JP Morgan Chase jobs — excluded per operator note"
-  ✗ Hard Constraints "Excluded industries" must NOT list these
+       "Skip Humana jobs."
+       "Skip JP Morgan Chase jobs."
   ✗ A single combined bullet like "Humana and JP Morgan Chase" is NOT acceptable — emit two
 
 Operator note: "Can scrap Data Engineer roles as well."
+  → POLARITY: no negation → ADDITIVE TARGET (R3).
   ✓ Target Roles bullet list MUST grow to include "Data Engineer"
   ✓ Strong Signals MUST add: "Data Engineer — operator allows"
   ✗ Hard Disqualifiers must NOT contain "Data Engineer"
 
 Operator note: "Scrap 35-40 Daily"
-  → IGNORE — workflow instruction, not candidate signal. Do not echo anywhere.
+  → IGNORE — workflow instruction (bare quota), not candidate signal. Do not echo anywhere.
 
 SELF-CHECK BEFORE FINAL OUTPUT (mandatory):
-1. List every directive in the notes (R1–R7 categories).
+1. List every directive in the notes and tag each with its polarity (TARGET vs EXCLUDE) using the negation-word test from contract step B.
 2. For each, locate the section it should land in per the ROUTING RULES.
-3. Open your draft and confirm the bullet exists in that section, with the correct suffix ("excluded per operator note" / "operator priority" / "operator allows").
-4. Confirm no excluded item appears in Strong Signals. Confirm no priority item appears in Hard Disqualifiers. Confirm no Preferred role appears as a disqualifier.
-5. Confirm "— operator priority" / "— operator allows" / "— excluded per operator note" suffixes appear ONLY on notes-derived items, never on resume/profile-derived items.
+3. Open your draft and confirm the bullet exists in the right section. Exclusions read as a clean "Skip <X>." with NO attribution suffix. Strong-Signal note items carry "— operator priority" / "— operator allows".
+4. POLARITY AUDIT: for every role/company the operator said to "scrap" (no negation), confirm it appears as a TARGET/priority and does NOT appear as a "Skip ..." disqualifier anywhere. For every "do not scrap" item, confirm it appears ONLY as a "Skip ..." disqualifier. A single flipped item = REWRITE.
+5. Confirm no Preferred role appears as a disqualifier. Confirm NO disqualifier bullet contains "excluded per operator note" or any attribution suffix. Confirm "— operator priority" / "— operator allows" appear ONLY on notes-derived Strong-Signal items.
 If any check fails: REWRITE the affected section(s) before outputting.
 
 OPERATOR NOTES TEXT (treat this entire block as the directive source — every sentence is a directive):
