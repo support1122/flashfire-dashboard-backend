@@ -300,64 +300,84 @@ function renderAiNotesBlock(profile) {
         ? new Date(profile.aiNotes.updatedAt).toISOString().slice(0, 10)
         : "";
     const who = profile?.aiNotes?.updatedBy || "ops";
-    return `## OPERATOR NOTES (DIRECTIVES — HIGHEST PRIORITY)
-The text below is from the operator (${when}${who ? ` · ${who}` : ""}). These are DIRECTIVES, NOT data to be summarised. Every directive must alter the OUTPUT of the appropriate # section, distributed throughout the brief — never collapsed into a single "Notes for Grader" bullet.
+    return `## OPERATOR NOTES (DIRECTIVES — HIGHEST PRIORITY · ZERO TOLERANCE FOR MISSED ITEMS)
+The text below is from the operator (${when}${who ? ` · ${who}` : ""}). These are DIRECTIVES, NOT data to be summarised.
+
+CRITICAL CONTRACT — read before writing anything:
+A. Split the notes text into a numbered list of distinct directives in your head. A directive = one sentence or one bullet expressing ONE intent.
+B. Every directive MUST produce at least one corresponding bullet in the brief, in the section dictated by the ROUTING RULES below.
+C. After writing the brief, walk the directive list a second time and verify each is reflected. If even one is missing or in the wrong section, REWRITE before output. A missed directive is a CRITICAL FAILURE.
+D. The "— operator priority" suffix is RESERVED for items that come FROM operator notes. Items derived from the resume or profile MUST NOT carry this suffix. Do not blanket-tag every Strong Signal bullet.
 
 ROUTING RULES (apply mechanically — do NOT improvise):
 
-1. "Do not scrap X" / "do not pick X" / "exclude X" / "never X" / "skip X"
-   → Hard Disqualifiers gets ONE bullet per item: "X — excluded per operator note".
-   → NEVER include X in Strong Signals or Target Roles.
+R1. "Do not scrap X" / "do not pick X" / "exclude X" / "never X" / "skip X" / "no X"
+    → Hard Disqualifiers: ONE bullet per X, exactly "X — excluded per operator note".
+    → NEVER include X in Strong Signals or Target Roles.
+    → NEVER summarise multiple X's into one bullet; emit one bullet per item.
 
-2. "Prioritise X" / "focus on X" / "scrap more X" / "we want X"
-   → Strong Signals gets ONE bullet per item: "X — operator priority".
-   → NEVER include X in Hard Disqualifiers.
+R2. "Prioritise X" / "focus on X" / "scrap more X" / "we want X" / "prefer X"
+    → Strong Signals: ONE bullet per X, exactly "X — operator priority".
+    → NEVER include X in Hard Disqualifiers.
 
-3. "Also scrap Y" / "include Y" / "Y is fine too"
-   → Target Roles bullets grow to include Y (when Y is a role).
-   → Strong Signals grows to include Y (when Y is a company / tech / skill).
-   → NEVER include Y in Hard Disqualifiers.
+R3. "Also scrap Y" / "include Y" / "Y is fine too" / "can scrap Y as well"
+    → Target Roles bullet list grows to include Y (when Y is a role title).
+    → Strong Signals adds: "Y — operator allows" (when Y is a role/tech/skill).
+    → NEVER include Y in Hard Disqualifiers, even if Y looks like an "off-discipline" role.
 
-4. Company names called out for exclusion ("do not scrap from Acme", "skip Foo")
-   → Hard Disqualifiers: "Acme jobs — excluded per operator note".
-   → NEVER list these under Hard Constraints "Excluded industries" (they are companies, not industries).
-   → NEVER list these as Strong Signals.
+R4. Company-name exclusions ("do not scrap from Acme", "skip Foo Inc")
+    → Hard Disqualifiers: one bullet per company, exactly "<Company> jobs — excluded per operator note".
+    → NEVER list these under Hard Constraints "Excluded industries" — companies are not industries.
+    → NEVER list these in Strong Signals.
 
-5. Company / industry categories prioritised ("prioritise H1B sponsors", "prefer fintech")
-   → Strong Signals: "H1B sponsors — operator priority", "Fintech — operator priority".
-   → NEVER as Hard Disqualifiers.
+R5. Company / industry category exclusions ("no staffing", "skip consulting firms", "no recruitment agencies")
+    → Hard Disqualifiers: "<Category> companies — excluded per operator note".
+    → NEVER as Strong Signals. NEVER as Hard Constraints "Excluded industries" — keep them as their own bullets in Hard Disqualifiers.
 
-6. The "Notes for Grader" section gets ONLY meta-guidance about how to WEIGH conflicts — never restates the routed directives.
+R6. Company / industry category priorities ("prioritise H1B sponsors", "prefer fintech")
+    → Strong Signals: "<Category> — operator priority".
+    → NEVER as Hard Disqualifiers.
 
-WORKED EXAMPLES:
+R7. Operational instructions that are NOT about job content ("scrap 35-40 daily", "build twice a week")
+    → IGNORE — these are workflow instructions, not candidate signals. Do NOT echo them anywhere in the brief. Do NOT include them in Target Roles, Strong Signals, or Notes for Grader.
+
+R8. The "Notes for Grader" section gets ONLY meta-guidance on how to WEIGH conflicts. NEVER restates the routed directives.
+
+WORKED EXAMPLES (use these for the current candidate too):
 
 Operator note: "DO NOT scrap at all staffing/consulting companies."
-  ✓ Hard Disqualifiers gets: "Staffing or consulting companies — excluded per operator note"
+  ✓ Hard Disqualifiers MUST contain: "Staffing or consulting companies — excluded per operator note"
   ✗ Strong Signals must NOT contain "Staffing/Consulting companies"
   ✗ Hard Constraints must NOT contain "Excluded industries: Staffing"
 
-Operator note: "Prioritise companies that provide H1B sponsorship."
-  ✓ Strong Signals gets: "Companies that sponsor H1B — operator priority"
+Operator note: "Prioritize and scrap companies that provide H1B sponsorship."
+  ✓ Strong Signals MUST contain: "Companies that sponsor H1B — operator priority"
   ✗ Hard Disqualifiers must NOT contain "Companies that provide H1B sponsorship"
 
 Operator note: "Do not scrap roles from Humana or JP Morgan Chase."
-  ✓ Hard Disqualifiers gets two bullets:
+  ✓ Hard Disqualifiers MUST contain TWO bullets:
        "Humana jobs — excluded per operator note"
        "JP Morgan Chase jobs — excluded per operator note"
-  ✗ Hard Constraints "Excluded industries" must NOT list these (they are companies, not industries)
+  ✗ Hard Constraints "Excluded industries" must NOT list these
+  ✗ A single combined bullet like "Humana and JP Morgan Chase" is NOT acceptable — emit two
 
 Operator note: "Can scrap Data Engineer roles as well."
-  ✓ Target Roles bullet list grows to include "Data Engineer"
-  ✓ Strong Signals gets: "Data Engineer titles — operator allows"
+  ✓ Target Roles bullet list MUST grow to include "Data Engineer"
+  ✓ Strong Signals MUST add: "Data Engineer — operator allows"
   ✗ Hard Disqualifiers must NOT contain "Data Engineer"
 
-SELF-CHECK BEFORE OUTPUT:
-- For every directive in the notes, did you put it in the CORRECT section?
-- Did you accidentally drop an "excluded" item into Strong Signals?
-- Did you accidentally drop a "prioritised" item into Hard Disqualifiers?
-If yes to either of the last two: rewrite that section before returning.
+Operator note: "Scrap 35-40 Daily"
+  → IGNORE — workflow instruction, not candidate signal. Do not echo anywhere.
 
-OPERATOR NOTES TEXT:
+SELF-CHECK BEFORE FINAL OUTPUT (mandatory):
+1. List every directive in the notes (R1–R7 categories).
+2. For each, locate the section it should land in per the ROUTING RULES.
+3. Open your draft and confirm the bullet exists in that section, with the correct suffix ("excluded per operator note" / "operator priority" / "operator allows").
+4. Confirm no excluded item appears in Strong Signals. Confirm no priority item appears in Hard Disqualifiers. Confirm no Preferred role appears as a disqualifier.
+5. Confirm "— operator priority" / "— operator allows" / "— excluded per operator note" suffixes appear ONLY on notes-derived items, never on resume/profile-derived items.
+If any check fails: REWRITE the affected section(s) before outputting.
+
+OPERATOR NOTES TEXT (treat this entire block as the directive source — every sentence is a directive):
 ${text}
 
 (End of operator notes. Continue with the normal inputs below.)
@@ -546,14 +566,15 @@ async function fetchResume(email) {
   }
 }
 
-// SUMMARY_TEMPERATURE — tuned for the structured-brief task. 0.15 was tested
-// against the operator-notes routing examples (do-not-scrap / prioritise
-// H1B / company exclusions) and produces consistent placement across reruns
-// without flattening into a single template. 0 = too deterministic (model
-// over-mirrors prompt wording); 0.4+ = drifts into hallucinated bullets.
+// SUMMARY_TEMPERATURE — tuned for the structured-brief task. 0.05 (near
+// greedy decoding) is required to make the operator-notes routing rules
+// stick: at 0.15 the model occasionally dropped a "do not scrap from <co>"
+// directive or mis-suffixed Strong Signals. Lower temp = stricter prompt
+// adherence at the cost of slightly more repetitive phrasing — acceptable
+// because the brief is read by a grader, not a human reader.
 const SUMMARY_TEMPERATURE = Number.isFinite(Number(process.env.FF_SUMMARY_TEMPERATURE))
   ? Number(process.env.FF_SUMMARY_TEMPERATURE)
-  : 0.15;
+  : 0.05;
 
 async function callOpenAI(profile, resume, existingSummary, profileDiff, apiKey, overlay = null) {
   const body = {
