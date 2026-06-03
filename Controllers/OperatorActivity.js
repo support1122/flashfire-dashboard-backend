@@ -60,6 +60,9 @@ export default async function OperatorActivity(req, res) {
                     otherSkip:         { $sum: { $ifNull: ["$skipsRollup.other", 0] } },
                     sessions:          { $sum: 1 },
                     lastSessionAt:     { $max: "$endedAt" },
+                    // Distinct clients this code worked that day — drives the
+                    // "Avg" column (jobs pushed / clients served).
+                    clientsSet:        { $addToSet: "$clientEmail" },
                 },
             },
             {
@@ -74,6 +77,7 @@ export default async function OperatorActivity(req, res) {
                     roleMismatch: 1, seniorityMismatch: 1, locationMismatch: 1,
                     authMismatch: 1, threshold: 1, companyBlocked: 1, otherSkip: 1,
                     sessions: 1, lastSessionAt: 1,
+                    clientCount: { $size: { $ifNull: ["$clientsSet", []] } },
                 },
             },
             { $sort: { date: -1, pushed: -1, captures: -1 } },
