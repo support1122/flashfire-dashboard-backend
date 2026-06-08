@@ -132,13 +132,19 @@ Permitted bullet sources (in priority order):
    sponsorship" → "US citizen only — candidate needs sponsorship";
    profile says "no clearance" → "Active US security clearance required").
 4. Industries or companies the profile explicitly tells us to exclude.
-5. Operator-notes directives routed here per the OPERATOR NOTES block:
+5. The candidate's OWN current/previous employers. The user prompt supplies an
+   AUTHORITATIVE "Candidate's own employers" block listing the companies from
+   the resume work history. Emit ONE bullet per company, exactly
+   "Skip <Company> jobs." with NO attribution suffix — the candidate must NEVER
+   be shown a job at a company they already work(ed) at. If that block says
+   "(none)", emit zero employer bullets. Never merge companies into one bullet.
+6. Operator-notes directives routed here per the OPERATOR NOTES block:
    explicit "do not scrap"/exclusion bullets, AND the whitelist catch-all
    bullet ("Skip all roles other than X.") when the operator said to
    "scrap only X". Write these as plain "Skip <X>." bullets with NO
    "excluded per operator note" or other attribution suffix. Never place a
    whitelisted/targeted role X itself here.
-6. ALWAYS include this exact bullet verbatim, for every candidate, no
+7. ALWAYS include this exact bullet verbatim, for every candidate, no
    exceptions: "Job posting age — skip any job posted more than 48 hours
    ago. Only postings from the last 48 hours are in scope."
 
@@ -215,6 +221,49 @@ function splitPreferredRoles(input) {
     }
   }
   return { preferred, excluded };
+}
+
+// extractResumeEmployers: pull the companies the candidate currently/previously
+// worked at out of the parsed resume workExperience. These become MANDATORY
+// Hard Disqualifiers — we never surface a candidate a job at their own
+// (current or past) employer. Done server-side + deterministically so the
+// model never has to infer which JSON entries are employers; we hand it the
+// exact list. Returns display-cased unique names (first spelling wins), deduped
+// case-insensitively. Tolerates the field-name variants seen across resume
+// schemas. Never throws.
+function extractResumeEmployers(resume) {
+  if (!resume || typeof resume !== "object") return [];
+  const buckets = [
+    resume.workExperience,
+    resume.work_experience,
+    resume.experience,
+    resume.employment,
+  ];
+  const seen = new Set();
+  const out = [];
+  for (const bucket of buckets) {
+    if (!Array.isArray(bucket)) continue;
+    for (const entry of bucket) {
+      if (!entry || typeof entry !== "object") continue;
+      const name = String(
+        entry.company ||
+          entry.companyName ||
+          entry.employer ||
+          entry.organization ||
+          entry.organisation ||
+          "",
+      )
+        .replace(/\s+/g, " ")
+        .trim();
+      // Drop 1-char noise; keep short real names like "HP", "GE", "3M".
+      if (name.length < 2) continue;
+      const key = name.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(name);
+    }
+  }
+  return out;
 }
 
 function snapshotProfile(profile) {
@@ -502,6 +551,20 @@ ${empPerType}`;
         2,
       ).slice(0, 16_000)
     : "(no resume found for this candidate — work from profile only)";
+  // Candidate's own employers (current + previous) → mandatory exclusions.
+  // Extracted deterministically from resume.workExperience so the model gets
+  // an explicit, authoritative list rather than having to guess which resume
+  // entries are employers. Drives one "Skip <Company> jobs." Hard Disqualifier
+  // per company. Empty when no resume / no work history.
+  const ownEmployers = extractResumeEmployers(resume);
+  const employersBlock = `\n\n## Candidate's own employers (AUTHORITATIVE — current + previous, from resume work history)
+NEVER surface the candidate a job at a company they currently work at or have
+previously worked at. For EACH company listed below, add ONE bullet under Hard
+Disqualifiers, exactly: "Skip <Company> jobs." — no attribution suffix, same
+clean style as the other disqualifier bullets. One bullet per company; never
+merge multiple companies into a single bullet. These are grounded in the resume
+work history, so mark each with the [R] provenance tag.
+Companies: ${ownEmployers.length ? ownEmployers.map((c) => `"${c}"`).join(", ") : "(none — emit zero employer bullets)"}`;
   // Diff-aware path: when a previous summary exists and the profile was
   // edited (summaryStale=true), preserve the existing summary's voice +
   // structure and only revise the parts that no longer match the inputs.
@@ -542,7 +605,7 @@ ${existingSummary.trim().slice(0, 6_000)}
 
 ## Field-level diff since last build (AUTHORITATIVE — applies on top of existing summary)
 ${diffBlock}
-${rolesBlock}
+${rolesBlock}${employersBlock}
 
 ## Updated onboarding profile (full current state)
 ${profileBlob}
@@ -593,7 +656,7 @@ ${resumeBlob}
 
 ## Onboarding profile (PRIORITY 3 — preference signals; use for preferredRoles, preferredLocations, work auth, target/excluded companies)
 ${profileBlob}
-${rolesBlock}${renderLockedSectionsBlock(overlay)}`;
+${rolesBlock}${employersBlock}${renderLockedSectionsBlock(overlay)}`;
   return `${renderAiNotesBlock(profile)}${freshBody}`;
 }
 
