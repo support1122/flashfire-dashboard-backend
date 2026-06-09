@@ -54,12 +54,13 @@ const isRemovalStatus = (status) => {
 
 const checkRemovalLimit = async (userEmail, status, role) => {
   if (isRemovalStatus(status) && !isOperationsUser(role)) {
-    const user = await UserModel.findOne({ email: userEmail }).select('removedJobsCount').lean();
-    if (user && user.removedJobsCount >= REMOVAL_LIMIT) {
+    const user = await UserModel.findOne({ email: userEmail }).select('removedJobsCount extraRemovalLimit').lean();
+    const effectiveLimit = REMOVAL_LIMIT + (user?.extraRemovalLimit || 0);
+    if (user && user.removedJobsCount >= effectiveLimit) {
       throw {
         status: 400,
         message: "Removal limit exceeded",
-        error: `You have reached the maximum limit of ${REMOVAL_LIMIT} job removals. Please contact support if you need to remove more jobs.`
+        error: `You have reached the maximum limit of ${effectiveLimit} job removals. Please contact support if you need to remove more jobs.`
       };
     }
     return user;

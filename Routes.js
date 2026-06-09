@@ -136,7 +136,7 @@ app.post('/get-removed-jobs-count', async (req, res) => {
       });
     }
 
-    const user = await UserModel.findOne({ email }).select('name email removedJobsCount');
+    const user = await UserModel.findOne({ email }).select('name email removedJobsCount extraRemovalLimit');
     if (!user) {
       return res.status(404).json({
         success: false,
@@ -145,11 +145,15 @@ app.post('/get-removed-jobs-count', async (req, res) => {
       });
     }
 
+    const extraRemovalLimit = user.extraRemovalLimit ?? 0;
     return res.status(200).json({
       success: true,
       name: user.name,
       email: user.email,
-      removedJobsCount: user.removedJobsCount ?? 0
+      removedJobsCount: user.removedJobsCount ?? 0,
+      extraRemovalLimit,
+      // Effective cap = global base limit (100) + operator-granted bonus.
+      removalLimit: 100 + extraRemovalLimit
     });
   } catch (error) {
     console.log(error);
@@ -157,6 +161,62 @@ app.post('/get-removed-jobs-count', async (req, res) => {
       success: false,
       error: "Server error",
       message: "Failed to fetch removed jobs count"
+    });
+  }
+});
+
+// Operator-only: grant a user extra job removals on top of the global limit (100).
+// Body: { email, extraRemovalLimit }. extraRemovalLimit is the BONUS (not total cap).
+app.post('/update-removal-limit', async (req, res) => {
+  try {
+    const { email, extraRemovalLimit } = req.body || {};
+
+    if (!email) {
+      return res.status(400).json({
+        success: false,
+        error: "Email is required",
+        message: "Please provide a user email to update the removal limit"
+      });
+    }
+
+    const bonus = Number(extraRemovalLimit);
+    if (!Number.isFinite(bonus) || bonus < 0) {
+      return res.status(400).json({
+        success: false,
+        error: "Invalid value",
+        message: "extraRemovalLimit must be a non-negative number"
+      });
+    }
+
+    const user = await UserModel.findOneAndUpdate(
+      { email },
+      { $set: { extraRemovalLimit: Math.floor(bonus) } },
+      { new: true }
+    ).select('name email removedJobsCount extraRemovalLimit');
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        error: "User not found",
+        message: "No user found with the provided email"
+      });
+    }
+
+    const updatedExtra = user.extraRemovalLimit ?? 0;
+    return res.status(200).json({
+      success: true,
+      name: user.name,
+      email: user.email,
+      removedJobsCount: user.removedJobsCount ?? 0,
+      extraRemovalLimit: updatedExtra,
+      removalLimit: 100 + updatedExtra
+    });
+  } catch (error) {
+    console.log(error);
+    return res.status(500).json({
+      success: false,
+      error: "Server error",
+      message: "Failed to update removal limit"
     });
   }
 });
