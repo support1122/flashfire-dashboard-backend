@@ -144,7 +144,14 @@ Permitted bullet sources (in priority order):
    "scrap only X". Write these as plain "Skip <X>." bullets with NO
    "excluded per operator note" or other attribution suffix. Never place a
    whitelisted/targeted role X itself here.
-7. ALWAYS include this exact bullet verbatim, for every candidate, no
+7. Operator-notes GEOGRAPHIC / REGION / LANGUAGE skip directives (routed
+   here per R9 in the OPERATOR NOTES block). When the operator says to skip
+   roles whose title signals a non-US country, region, or foreign-language
+   market, emit the SINGLE consolidated conditional bullet exactly as R9
+   dictates — it MUST name the operator's example tokens verbatim AND keep
+   the "unless the posting clearly confirms a US location" exception clause.
+   Never drop the conditional clause and never split it into many bullets.
+8. ALWAYS include this exact bullet verbatim, for every candidate, no
    exceptions: "Job posting age — skip any job posted more than 48 hours
    ago. Only postings from the last 48 hours are in scope."
 
@@ -433,7 +440,15 @@ R6. Company / industry category priorities — "prioritise H1B sponsors" / "pref
 R7. Operational instructions that are NOT about job content ("scrap 35-40 daily", "build twice a week"):
     → IGNORE — these are workflow instructions, not candidate signals. Do NOT echo them anywhere in the brief. (A bare number/quota next to "scrap" = workflow, not a role.)
 
-R8. The "Notes for Grader" section gets ONLY meta-guidance on how to WEIGH conflicts. NEVER restates the routed directives.
+R9. GEOGRAPHIC / REGION / LANGUAGE market skips — directives saying to skip roles whose TITLE signals a non-US country, region, or foreign-language market (e.g. "skip Japanese-speaking roles", "skip APAC/EMEA analyst", "skip UK/Canada market roles", "no non-US region titles unless the job is in the USA", or a list of example titles like "Research Analyst – Japanese Speaking", "Japan Market Analyst", "APAC Analyst", "EMEA Analyst", "UK Market Associate", "Canada Operations Analyst"):
+    → This is a CONDITIONAL skip. Do NOT split the example titles into one "Skip X." bullet each, and do NOT drop the "unless ... US location" exception.
+    → Hard Disqualifiers: emit EXACTLY ONE consolidated bullet in this shape:
+      "Skip roles whose title signals a non-US country, region, or language market (e.g. <verbatim example titles/keywords from the note>) unless the posting clearly confirms a US location."
+      List the operator's example tokens/titles verbatim inside the parentheses, comma-separated.
+    → Notes for Grader: add ONE sentence: treat an unconfirmed (non-US or unknown) location on such titles as a SKIP; keep the role only when the posting confirms a US or Remote-US location.
+    → NEVER place these titles in Strong Signals or Target Roles. NEVER omit the bullet — a missed geographic directive is a CRITICAL FAILURE just like a missed exclusion.
+
+R8. The "Notes for Grader" section gets ONLY meta-guidance on how to WEIGH conflicts. NEVER restates the routed directives (except the single geographic-policy sentence required by R9).
 
 WORKED EXAMPLES (use these for the current candidate too):
 
@@ -469,6 +484,13 @@ Operator note: "Can scrap Data Engineer roles as well."
 
 Operator note: "Scrap 35-40 Daily"
   → IGNORE — workflow instruction (bare quota), not candidate signal. Do not echo anywhere.
+
+Operator note: "Skip jobs like 'Research Analyst – Japanese Speaking'. Roles with non-U.S. language, country, or region keywords should not be scraped unless the job page clearly says the location is in the USA. Skip titles like: Research Analyst – Japanese Speaking, Japanese Speaking Analyst, Japan Market Analyst, APAC Analyst, EMEA Analyst, UK Market Associate, Canada Operations Analyst. Rule: If the title sounds country/region-specific and the USA location is not 100% confirmed, skip it."
+  → POLARITY: "Skip" → EXCLUDE, but CONDITIONAL on location (R9, geographic/region/language).
+  ✓ Hard Disqualifiers MUST contain EXACTLY ONE bullet: "Skip roles whose title signals a non-US country, region, or language market (e.g. Japanese Speaking, Japan Market Analyst, APAC Analyst, EMEA Analyst, UK Market Associate, Canada Operations Analyst) unless the posting clearly confirms a US location."
+  ✓ Notes for Grader MUST contain: "For any title with a non-US country/region/language keyword, treat an unconfirmed or non-US location as a skip; keep it only when the posting confirms a US or Remote-US location."
+  ✗ Do NOT emit one "Skip ..." bullet per example title (that loses the US-location exception and over-skips US bilingual roles).
+  ✗ Do NOT drop the directive entirely (a multi-line/conditional note is STILL a directive — missing it is a CRITICAL FAILURE).
 
 SELF-CHECK BEFORE FINAL OUTPUT (mandatory):
 1. List every directive in the notes and tag each with its polarity (TARGET vs EXCLUDE) using the negation-word test from contract step B.

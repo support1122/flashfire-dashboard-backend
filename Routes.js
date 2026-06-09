@@ -69,6 +69,7 @@ import {
 } from "./Controllers/SaveSummaryOverlay.js";
 import { SaveAiNotes, GetAiNotes } from "./Controllers/SaveAiNotes.js";
 import UpdateTargetJobs from "./Controllers/UpdateTargetJobs.js";
+import UpdateScrapeSources from "./Controllers/UpdateScrapeSources.js";
 import UpdateOpenaiKey from "./Controllers/UpdateOpenaiKey.js";
 import { GetGlobalOpenaiKey, SetGlobalOpenaiKey } from "./Controllers/GlobalOpenaiKey.js";
 import PushHistory from "./Controllers/PushHistory.js";
@@ -255,6 +256,7 @@ app.get("/ai-notes", GetAiNotes);
 app.post("/get-base-resume-data", GetBaseResumeData);
 // Per-client target job count — enforced by /addjob.
 app.post("/update-target-jobs", UpdateTargetJobs);
+app.post("/update-scrape-sources", UpdateScrapeSources);
 app.post("/update-openai-key", UpdateOpenaiKey);
 app.get("/admin/global-openai-key", GetGlobalOpenaiKey);
 app.post("/admin/global-openai-key", SetGlobalOpenaiKey);

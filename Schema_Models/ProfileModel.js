@@ -520,6 +520,17 @@ export const profileSchema = new mongoose.Schema({
     updatedAt: { type: Date, required: false, default: null },
     updatedBy: { type: String, required: false, default: "" },
   },
+  // Per-client scrape-source allowlist for the JR-direct extension. Values are
+  // site slugs: "jobright" and/or "indeed" (ca.indeed.com). The extension only
+  // captures cards from sites in this list for the selected client. Empty/unset
+  // → defaults to ["jobright"] (JobRight-only) on the extension side, so a
+  // client is never scraped from a site ops didn't enable. Set in
+  // clients-tracking → AI Summary tab → "Scrape sources".
+  scrapeSources: {
+    type: [String],
+    required: false,
+    default: ["jobright"],
+  },
   // Operator's per-client OpenAI API key. Used by the JR-direct extension's
   // SW to call api.openai.com directly for the auto-judge step. Stored as
   // plain text per ops decision — extension fetches it on /extension/clientLogin
