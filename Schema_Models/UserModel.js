@@ -33,6 +33,9 @@ export const userSchema = new mongoose.Schema(
     userType:  { type: String, default: "User" },
     dashboardManager: { type: String, required: false, default: "" },
     removedJobsCount: { type: Number, default: 0 },
+    // Extra job removals granted by an operator on top of the global REMOVAL_LIMIT (100).
+    // Effective cap = REMOVAL_LIMIT + extraRemovalLimit. 0 = no bonus.
+    extraRemovalLimit: { type: Number, default: 0 },
     assignedResumeId: { type: String, default: null },
     referralStatus: {
       type: String,
