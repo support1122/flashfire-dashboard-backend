@@ -385,6 +385,34 @@ function renderLockedSectionsBlock(overlay) {
 ${blocks.join("\n\n")}`;
 }
 
+// renderSystemNotesDirective: the operator's "Notes to AI" text, appended
+// VERBATIM to the SYSTEM message (not just the user message). The user-message
+// renderAiNotesBlock carries the full routing rules; this puts the raw
+// directives at system level so the model treats them as authoritative
+// instructions that OVERRIDE profile/resume signals — not as data to
+// summarise. Empty / missing notes → empty string (no append).
+function renderSystemNotesDirective(profile) {
+  const text = (profile?.aiNotes?.text || "").trim();
+  if (!text) return "";
+  const who = profile?.aiNotes?.updatedBy || "ops";
+  return `
+
+═══════════════════════════════════════════════════════════════════════
+ACTIVE CLIENT DIRECTIVES — operator "Notes to AI" (from ${who}).
+TREAT EVERY LINE BELOW AS A SYSTEM-LEVEL INSTRUCTION, not as data to be
+summarised. These directives OVERRIDE any conflicting profile or resume
+signal. Each one MUST be reflected in the brief with the correct polarity
+per the ROUTING RULES given in the user message (e.g. "do not scrap X" /
+"skip X" → a clean "Skip X." bullet under # Hard Disqualifiers). A directive
+that is missed, dropped, or polarity-flipped is a CRITICAL FAILURE — re-read
+this block and self-check before you output.
+
+<<<OPERATOR NOTES — VERBATIM>>>
+${text}
+<<<END OPERATOR NOTES>>>
+═══════════════════════════════════════════════════════════════════════`;
+}
+
 // renderAiNotesBlock: top-priority operator guidance. Sits ABOVE every other
 // block in the user prompt so the model treats it as authoritative when
 // composing the brief. Empty / missing notes → empty string (no block).
@@ -746,7 +774,10 @@ async function callOpenAI(profile, resume, existingSummary, profileDiff, apiKey,
   const body = {
     model: OPENAI_MODEL,
     messages: [
-      { role: "system", content: SYSTEM_PROMPT },
+      // Operator notes are appended to the SYSTEM message (verbatim) so the
+      // model treats them as authoritative instructions, on top of the
+      // detailed routing rules carried in the user message.
+      { role: "system", content: SYSTEM_PROMPT + renderSystemNotesDirective(profile) },
       { role: "user", content: buildUserPrompt(profile, resume, existingSummary, profileDiff, overlay) },
     ],
     temperature: SUMMARY_TEMPERATURE,
