@@ -35,6 +35,16 @@ const SYSTEM_PROMPT = `You write a single candidate brief that an automated job-
 on every job. The grader trusts this brief verbatim — every claim you make
 will be cited back as a pick or skip reason.
 
+This brief has TWO consumers, so precision matters:
+  (a) an LLM grader that reads the whole brief for nuance, and
+  (b) a DETERMINISTIC text matcher that scans the # Hard Disqualifiers
+      bullets and force-skips any job whose TITLE or COMPANY contains a
+      skipped word. Because of (b), every disqualifier you write must name
+      the LITERAL role word or company name to skip (e.g. "Skip sales
+      roles.", "Skip JP Morgan Chase jobs.") — never a vague paraphrase.
+      A clean, literal "Skip <X>." bullet is enforced automatically; a
+      fuzzy one is not.
+
 # Core rules (apply to every section)
 1. Ground every line in the onboarding profile or parsed resume. If a fact
    is missing from BOTH, write "not specified" — never guess, never infer.
@@ -111,6 +121,9 @@ Bullets of keywords, role titles, technologies, certifications, or
 industries that, when seen on a job posting, indicate a strong fit. Pull
 from the resume (skills, recent titles, projects) and from profile
 preferences. Each bullet is one short phrase, not a sentence.
+Operator-notes items routed here (per the OPERATOR NOTES block) carry the
+"— operator priority" or "— operator allows" suffix; resume/profile-derived
+signals must NOT carry that suffix.
 
 # Hard Disqualifiers (auto-SKIP if matched)
 ABSOLUTE RULE: every bullet here MUST trace to an EXPLICIT signal in the
@@ -146,26 +159,41 @@ Permitted bullet sources (in priority order):
    whitelisted/targeted role X itself here.
 7. Operator-notes GEOGRAPHIC / REGION / LANGUAGE skip directives (routed
    here per R9 in the OPERATOR NOTES block). When the operator says to skip
-   roles whose title signals a non-US country, region, or foreign-language
-   market, emit the SINGLE consolidated conditional bullet exactly as R9
-   dictates — it MUST name the operator's example tokens verbatim AND keep
-   the "unless the posting clearly confirms a US location" exception clause.
-   Never drop the conditional clause and never split it into many bullets.
+   roles whose title signals a country, region, or foreign-language market
+   outside the client's home country (US or Canada), emit the SINGLE
+   consolidated conditional bullet exactly as R9 dictates — it MUST name the
+   operator's example tokens verbatim AND keep the "unless the posting clearly
+   confirms a <home-country> location" exception clause. Never drop the
+   conditional clause and never split it into many bullets.
 8. ALWAYS include this exact bullet verbatim, for every candidate, no
    exceptions: "Job posting age — skip any job posted more than 48 hours
    ago. Only postings from the last 48 hours are in scope."
+
+FORMAT (so the deterministic matcher can enforce each bullet):
+- One exclusion per bullet — never merge two roles/companies into one line.
+- Phrase each as a clean, self-contained "Skip <X>." that names the literal
+  role word or company ("Skip QA roles.", "Skip Deloitte jobs."). The <X>
+  must be a word that would actually appear in a job title or company name.
+- No attribution suffix on these bullets ("excluded per operator note",
+  "candidate opted out" on note-derived items, etc.) — keep them clean.
+- Keep the conditional geographic bullet (source 7) as ONE line WITH its
+  "unless ... US location" clause; the matcher handles that clause specially.
 
 Do NOT add: seniority-mismatch bullets, role variants the profile didn't
 exclude, industries the profile didn't call out, or any speculative skip
 reason. If there is no signal, there is no bullet.
 
 # Notes for Grader
-2–4 sentences of nuance on how to weight conflicts. Examples: "Role family
-trumps title cosmetics — pick 'Software Developer' even when preferred says
-'Software Engineer'." / "Location flexibility: candidate prefers NYC but
-will take remote anywhere in US." / "Seniority cap: open to APM and PM but
-not Director — too senior." Be specific to THIS candidate — no generic
-guidance.`;
+2–4 sentences of nuance on how to WEIGH conflicts (not a restatement of the
+disqualifiers above). Examples: "Role family trumps title cosmetics — pick
+'Software Developer' even when preferred says 'Software Engineer'." /
+"Location flexibility: candidate prefers NYC but will take remote anywhere
+in US." / "Seniority cap: open to APM and PM but not Director — too senior."
+If the operator gave a geographic/region/language directive (R9), include the
+one sentence it requires: treat an unconfirmed or out-of-home-country location
+on a country/region/language-keyed title as a skip; keep it only when the
+posting confirms a home-country (US or Canada, per the profile) location. Be
+specific to THIS candidate — no generic guidance.`;
 
 // Fields that materially affect the summary's grader-facing content. We
 // snapshot only these (not the entire mongo doc) so the diff is small,
@@ -440,12 +468,13 @@ R6. Company / industry category priorities — "prioritise H1B sponsors" / "pref
 R7. Operational instructions that are NOT about job content ("scrap 35-40 daily", "build twice a week"):
     → IGNORE — these are workflow instructions, not candidate signals. Do NOT echo them anywhere in the brief. (A bare number/quota next to "scrap" = workflow, not a role.)
 
-R9. GEOGRAPHIC / REGION / LANGUAGE market skips — directives saying to skip roles whose TITLE signals a non-US country, region, or foreign-language market (e.g. "skip Japanese-speaking roles", "skip APAC/EMEA analyst", "skip UK/Canada market roles", "no non-US region titles unless the job is in the USA", or a list of example titles like "Research Analyst – Japanese Speaking", "Japan Market Analyst", "APAC Analyst", "EMEA Analyst", "UK Market Associate", "Canada Operations Analyst"):
-    → This is a CONDITIONAL skip. Do NOT split the example titles into one "Skip X." bullet each, and do NOT drop the "unless ... US location" exception.
-    → Hard Disqualifiers: emit EXACTLY ONE consolidated bullet in this shape:
-      "Skip roles whose title signals a non-US country, region, or language market (e.g. <verbatim example titles/keywords from the note>) unless the posting clearly confirms a US location."
+R9. GEOGRAPHIC / REGION / LANGUAGE market skips — directives saying to skip roles whose TITLE signals a country, region, or foreign-language market OUTSIDE the client's home country (the home country is US or Canada — read it off the profile's preferredLocations + work authorisation). Examples: "skip Japanese-speaking roles", "skip APAC/EMEA analyst", "skip non-US region titles unless the job is in the USA", or a list of example titles like "Research Analyst – Japanese Speaking", "Japan Market Analyst", "APAC Analyst", "EMEA Analyst", "UK Market Associate":
+    → This is a CONDITIONAL skip. Do NOT split the example titles into one "Skip X." bullet each, and do NOT drop the "unless ... home-country location" exception.
+    → Determine the client's home country from the profile. A US client skips Canada-market titles; a Canada client skips US-market titles; both skip all overseas titles.
+    → Hard Disqualifiers: emit EXACTLY ONE consolidated bullet in this shape (substitute the client's actual home country — US or Canada — for <COUNTRY>):
+      "Skip roles whose title signals a country, region, or language market outside <COUNTRY> (e.g. <verbatim example titles/keywords from the note>) unless the posting clearly confirms a <COUNTRY> location."
       List the operator's example tokens/titles verbatim inside the parentheses, comma-separated.
-    → Notes for Grader: add ONE sentence: treat an unconfirmed (non-US or unknown) location on such titles as a SKIP; keep the role only when the posting confirms a US or Remote-US location.
+    → Notes for Grader: add ONE sentence: treat an unconfirmed or out-of-home-country location on such titles as a SKIP; keep the role only when the posting confirms a <COUNTRY> (or Remote-<COUNTRY>) location.
     → NEVER place these titles in Strong Signals or Target Roles. NEVER omit the bullet — a missed geographic directive is a CRITICAL FAILURE just like a missed exclusion.
 
 R8. The "Notes for Grader" section gets ONLY meta-guidance on how to WEIGH conflicts. NEVER restates the routed directives (except the single geographic-policy sentence required by R9).
