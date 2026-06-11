@@ -19,6 +19,17 @@ export default async function AddJob(req, res) {
             });
         }
 
+        // Indeed links are not allowed — the dashboard needs the original
+        // employer apply URL, not an indeed.com redirect. Reject defensively
+        // (the extension also filters these before pushing).
+        if (/indeed\.com/i.test(String(jobDetails?.joblink || ''))) {
+            return res.status(403).json({
+                success: false,
+                error: 'BLOCKED_SOURCE',
+                message: 'Indeed job links are not allowed — provide the original employer apply URL.'
+            });
+        }
+
         const isOpsRole = role === 'operations' || role === 'operator';
         const isOperations =
             isOpsRole ||
