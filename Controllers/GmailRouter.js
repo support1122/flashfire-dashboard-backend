@@ -449,7 +449,8 @@ router.post("/automation/config/get", async (req, res) => {
         templateId: doc.template ? String(doc.template._id) : null,
         templateName: doc.template ? doc.template.name : null,
         dailyLimit: doc.dailyLimit,
-        enabled: doc.enabled
+        enabled: doc.enabled,
+        skipThreshold: !!doc.skipThreshold
       }
     });
   } catch (error) {
@@ -459,13 +460,21 @@ router.post("/automation/config/get", async (req, res) => {
 
 router.patch("/automation/config", async (req, res) => {
   try {
-    const { ownerEmail, enabled } = req.body || {};
+    const { ownerEmail, enabled, skipThreshold } = req.body || {};
     if (!ownerEmail || !ownerEmail.trim()) {
       return res.status(400).json({ error: "ownerEmail is required" });
     }
+    // Only update the fields actually provided so the enabled toggle and the
+    // "Skip 200 limit" toggle can be flipped independently.
+    const updates = {};
+    if (typeof enabled !== "undefined") updates.enabled = !!enabled;
+    if (typeof skipThreshold !== "undefined") updates.skipThreshold = !!skipThreshold;
+    if (!Object.keys(updates).length) {
+      return res.status(400).json({ error: "Nothing to update" });
+    }
     const doc = await RecruiterEmailAutomation.findOneAndUpdate(
       { ownerEmail: ownerEmail.toLowerCase().trim() },
-      { $set: { enabled: !!enabled } },
+      { $set: updates },
       { new: true }
     );
     if (!doc) {
@@ -474,7 +483,8 @@ router.patch("/automation/config", async (req, res) => {
     res.json({
       config: {
         id: String(doc._id),
-        enabled: doc.enabled
+        enabled: doc.enabled,
+        skipThreshold: !!doc.skipThreshold
       }
     });
   } catch (error) {
@@ -672,9 +682,12 @@ export async function runRecruiterAutomationDailyJob() {
       continue;
     }
     const pipelineCount = await JobModel.countDocuments(pipelineCountFilter(ownerEmailLc));
-    if (pipelineCount < EXECUTIVE_AUTOMATION_THRESHOLD) {
+    if (!automation.skipThreshold && pipelineCount < EXECUTIVE_AUTOMATION_THRESHOLD) {
       console.log(`[RecruiterAutomation] skip ${ownerEmailLc}: pipeline=${pipelineCount} < ${EXECUTIVE_AUTOMATION_THRESHOLD}`);
       continue;
+    }
+    if (automation.skipThreshold && pipelineCount < EXECUTIVE_AUTOMATION_THRESHOLD) {
+      console.log(`[RecruiterAutomation] ${ownerEmailLc}: skipThreshold ON — sending despite pipeline=${pipelineCount} < ${EXECUTIVE_AUTOMATION_THRESHOLD}`);
     }
     const allEmails = Array.isArray(automation.group.emails) ? automation.group.emails : [];
     if (!allEmails.length) {
