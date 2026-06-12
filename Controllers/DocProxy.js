@@ -5,13 +5,16 @@
 // the raw Cloudinary public_id.
 
 // Only allow proxying from trusted asset hosts (avoid SSRF / open proxy).
-const ALLOWED_HOSTS = new Set([
-  "res.cloudinary.com",
-  "res-1.cloudinary.com",
-  "res-2.cloudinary.com",
-  "res-3.cloudinary.com",
-  "res-4.cloudinary.com",
-]);
+// Documents live on either Cloudinary or Cloudflare R2 (public r2.dev bucket or
+// the S3-style r2.cloudflarestorage.com endpoint).
+function isAllowedHost(hostname) {
+  return (
+    hostname === "res.cloudinary.com" ||
+    /^res-\d+\.cloudinary\.com$/.test(hostname) ||
+    hostname.endsWith(".r2.dev") ||
+    hostname.endsWith(".r2.cloudflarestorage.com")
+  );
+}
 
 // Make a label safe to drop into a Content-Disposition header (no quotes,
 // no path separators, no control chars). Keeps it readable.
@@ -46,7 +49,7 @@ export const serveDocProxy = async (req, res) => {
     } catch {
       return res.status(400).json({ success: false, message: "Invalid url" });
     }
-    if (parsed.protocol !== "https:" || !ALLOWED_HOSTS.has(parsed.hostname)) {
+    if (parsed.protocol !== "https:" || !isAllowedHost(parsed.hostname)) {
       return res.status(400).json({ success: false, message: "URL host not allowed" });
     }
 
