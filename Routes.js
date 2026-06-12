@@ -18,6 +18,7 @@ import { uploadProfileFile, upload } from "./Controllers/UploadProfileFile.js";
 import { uploadSingleFile, uploadBase64File, uploadOnboardingAttachment, upload as uploadMiddleware } from "./Controllers/UploadFile.js";
 import { uploadClientDocument, getClientDocuments, updateClientOptimizationStatus, upload as internalUpload } from "./Controllers/InternalClientUpload.js";
 import { serveCachedImage, getCacheStats, clearCache } from "./Controllers/ImageProxy.js";
+import { serveDocProxy } from "./Controllers/DocProxy.js";
 import LocalTokenValidator from "./Middlewares/LocalTokenValidator.js";
 import RegisterVerify from "./Middlewares/RegisterVerify.js";
 import ProfileCheck from "./Middlewares/ProfileCheck.js";
@@ -345,6 +346,9 @@ app.put("/api/internal/client-optimization/:email", updateClientOptimizationStat
 
 // Image caching and proxy routes
 app.get("/image-proxy", serveCachedImage);
+// PDF proxy — serves documents with a friendly Content-Disposition filename so
+// the inline PDF viewer's download button uses the client name, not the raw id.
+app.get("/doc-proxy", serveDocProxy);
 app.get("/cache-stats", getCacheStats);
 app.post("/clear-cache", clearCache);
 
