@@ -29,7 +29,13 @@ function sanitizeFileName(name) {
 
 export const serveDocProxy = async (req, res) => {
   try {
-    const { url, name, dl } = req.query;
+    const { url, name, dl, probe } = req.query;
+    // Cheap availability check used by the frontend to decide whether to route
+    // previews through this proxy (named downloads) or fall back to the direct
+    // Cloudinary URL. Lets older backends without this route degrade gracefully.
+    if (probe) {
+      return res.json({ ok: true });
+    }
     if (!url) {
       return res.status(400).json({ success: false, message: "url is required" });
     }
