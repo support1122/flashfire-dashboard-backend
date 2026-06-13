@@ -543,6 +543,149 @@ router.post("/automation/config", async (req, res) => {
   }
 });
 
+// Manually trigger "today's" recruiter emails for ONE user, right now, instead
+// of waiting for the 11 PM IST cron. Idempotent: enforces one batch per IST day
+// (atomic claim inside processAutomation), so repeat clicks / cron won't double-send.
+router.post("/automation/run-now", async (req, res) => {
+  try {
+    const { ownerEmail } = req.body || {};
+    if (!ownerEmail || !ownerEmail.trim()) {
+      return res.status(400).json({ error: "ownerEmail is required" });
+    }
+    const automation = await RecruiterEmailAutomation.findOne({
+      ownerEmail: ownerEmail.toLowerCase().trim()
+    })
+      .populate("group")
+      .populate("template");
+    if (!automation) {
+      return res.status(404).json({ error: "No automation config found. Save group, template and limit first." });
+    }
+    if (!automation.enabled) {
+      return res.status(400).json({ error: "Automation is off for this user. Turn it on first." });
+    }
+
+    const result = await processAutomation(automation, { force: false });
+
+    const messages = {
+      missing_group_template: "Select a recruiter group and a template, then save settings first.",
+      no_user: "User not found.",
+      not_executive: "User is not on the Executive plan.",
+      below_threshold: `User hasn't reached ${EXECUTIVE_AUTOMATION_THRESHOLD} applications. Turn on "Skip 200 limit" to send anyway.`,
+      no_emails: "The selected recruiter group has no emails.",
+      no_recipients: "No new recipients available to send to.",
+      no_gmail: "No Gmail account is connected for this user."
+    };
+
+    if (result.status === "sent") {
+      return res.json({
+        ok: true,
+        status: "sent",
+        sent: result.sent,
+        failed: result.failed,
+        recipients: result.recipients
+      });
+    }
+    if (result.status === "already_sent_today") {
+      return res.json({
+        ok: false,
+        status: "already_sent_today",
+        message: "Today's emails were already sent for this user.",
+        lastRunAt: result.lastRunAt
+      });
+    }
+    return res.status(400).json({
+      ok: false,
+      status: result.status,
+      error: messages[result.status] || "Could not send today's emails."
+    });
+  } catch (error) {
+    console.error("run-now error:", error);
+    return res.status(500).json({ error: "Failed to send today's emails" });
+  }
+});
+
+// Retry a single failed (or any) send-log entry. The body isn't stored on the
+// log, so we rebuild it from the user's current automation template and re-send
+// to the same recipient from the same Gmail account (falling back to any
+// connected account). A fresh log row records the retry outcome.
+router.post("/automation/resend", async (req, res) => {
+  try {
+    const { logId } = req.body || {};
+    if (!logId) {
+      return res.status(400).json({ error: "logId is required" });
+    }
+    const log = await GmailSendLog.findById(logId);
+    if (!log) {
+      return res.status(404).json({ error: "Log entry not found" });
+    }
+    const ownerEmailLc = log.ownerEmail.toLowerCase();
+
+    const automation = await RecruiterEmailAutomation.findOne({ ownerEmail: ownerEmailLc })
+      .populate("template");
+    if (!automation || !automation.template) {
+      return res.status(400).json({ error: "No template configured for this user — cannot resend." });
+    }
+
+    // Prefer the original sending account; otherwise any connected one.
+    let gmailUser = await GmailUser.findOne({ ownerEmail: ownerEmailLc, email: log.fromEmail });
+    if (!gmailUser) {
+      gmailUser = await GmailUser.findOne({ ownerEmail: ownerEmailLc });
+    }
+    if (!gmailUser) {
+      return res.status(400).json({ error: "No Gmail account connected for this user." });
+    }
+
+    let attachment = null;
+    if (automation.template.attachment && automation.template.attachment.content) {
+      const bufferContent = Buffer.isBuffer(automation.template.attachment.content)
+        ? automation.template.attachment.content
+        : Buffer.from(
+            automation.template.attachment.content.buffer || automation.template.attachment.content
+          );
+      attachment = {
+        filename: automation.template.attachment.filename,
+        mimetype: automation.template.attachment.mimetype,
+        content: bufferContent
+      };
+    }
+    const subject = normalizeEmailSubject(automation.template.subject || log.subject);
+
+    try {
+      await sendGmail(gmailUser, {
+        to: log.toEmail,
+        subject,
+        text: automation.template.text,
+        attachment
+      });
+      await createSendLog({
+        ownerEmail: log.ownerEmail,
+        fromEmail: gmailUser.email,
+        toEmail: log.toEmail,
+        subject,
+        status: "success",
+        source: log.source
+      });
+      return res.json({ ok: true, status: "sent", toEmail: log.toEmail });
+    } catch (error) {
+      const message = error && error.message ? error.message : "Unknown error";
+      console.error(`Resend error to ${log.toEmail}: ${message}`);
+      await createSendLog({
+        ownerEmail: log.ownerEmail,
+        fromEmail: gmailUser.email,
+        toEmail: log.toEmail,
+        subject,
+        status: "failed",
+        errorMessage: message,
+        source: log.source
+      });
+      return res.status(502).json({ ok: false, status: "failed", error: message });
+    }
+  } catch (error) {
+    console.error("resend error:", error);
+    return res.status(500).json({ error: "Failed to resend email" });
+  }
+});
+
 async function getEmail(accessToken) {
   const tmpAuth = new google.auth.OAuth2();
   tmpAuth.setCredentials({ access_token: accessToken });
@@ -652,6 +795,163 @@ async function runAiTemplatePrePass() {
   }
 }
 
+// IST (Asia/Kolkata) calendar day as YYYY-MM-DD, used for the once-per-day guard.
+function istDayKey(date) {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Kolkata",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).format(date);
+}
+
+// Run the recruiter automation for a SINGLE (populated) automation row — the
+// exact same checks and send logic used by the nightly cron. Enforces one send
+// batch per IST day via an atomic claim on `lastRunDayKey`, so the manual
+// "send now" button and the cron can never double-send for a user in a day.
+// Returns a structured status the caller can surface to the operator.
+async function processAutomation(automation, { force = false } = {}) {
+  if (!automation) return { status: "no_config" };
+  if (!automation.group || !automation.template) {
+    return { status: "missing_group_template" };
+  }
+  const ownerEmailLc = automation.ownerEmail.toLowerCase();
+  const todayKey = istDayKey(new Date());
+
+  // Fast pre-check (the authoritative guard is the atomic claim below).
+  if (!force && automation.lastRunDayKey === todayKey) {
+    return { status: "already_sent_today", lastRunAt: automation.lastRunAt };
+  }
+
+  const user = await UserModel.findOne({ email: ownerEmailLc })
+    .select("planType email")
+    .lean();
+  if (!user) return { status: "no_user" };
+  if (user.planType !== "Executive") {
+    return { status: "not_executive", planType: user.planType };
+  }
+
+  const pipelineCount = await JobModel.countDocuments(pipelineCountFilter(ownerEmailLc));
+  if (!automation.skipThreshold && pipelineCount < EXECUTIVE_AUTOMATION_THRESHOLD) {
+    return { status: "below_threshold", pipelineCount, threshold: EXECUTIVE_AUTOMATION_THRESHOLD };
+  }
+  if (automation.skipThreshold && pipelineCount < EXECUTIVE_AUTOMATION_THRESHOLD) {
+    console.log(`[RecruiterAutomation] ${ownerEmailLc}: skipThreshold ON — sending despite pipeline=${pipelineCount} < ${EXECUTIVE_AUTOMATION_THRESHOLD}`);
+  }
+
+  const allEmails = Array.isArray(automation.group.emails) ? automation.group.emails : [];
+  const normalizedAll = Array.from(
+    new Set(
+      allEmails
+        .map((v) => v && v.toString().trim().toLowerCase())
+        .filter((v) => v)
+    )
+  );
+  if (!normalizedAll.length) return { status: "no_emails" };
+
+  const alreadySentSet = new Set(
+    (automation.sentTo || [])
+      .map((v) => v && v.toString().trim().toLowerCase())
+      .filter((v) => v)
+  );
+  let pool = normalizedAll.filter((email) => !alreadySentSet.has(email));
+  let resetHistory = false;
+  // Defense-in-depth: cap the per-tick send at 5 even if Mongo doc still
+  // carries the old dailyLimit:20 value. Saving via the UI clamps on write,
+  // but existing docs predating the clamp must not flood Gmail.
+  const HARD_DAILY_CAP = 5;
+  const effectiveDailyLimit = Math.min(automation.dailyLimit || 0, HARD_DAILY_CAP);
+  if (pool.length < effectiveDailyLimit) {
+    pool = normalizedAll;
+    resetHistory = true;
+  }
+  const limit = Math.min(effectiveDailyLimit, pool.length);
+  const selected = [];
+  const poolCopy = [...pool];
+  while (selected.length < limit && poolCopy.length > 0) {
+    const index = Math.floor(Math.random() * poolCopy.length);
+    selected.push(poolCopy[index]);
+    poolCopy.splice(index, 1);
+  }
+  if (!selected.length) return { status: "no_recipients" };
+
+  const gmailUsers = await GmailUser.find({ ownerEmail: ownerEmailLc });
+  if (!gmailUsers.length) return { status: "no_gmail" };
+
+  // Atomic once-per-day claim: only the first request that flips lastRunDayKey
+  // to today proceeds; concurrent/duplicate triggers get "already sent today".
+  // (When force=true we skip the day condition to allow an explicit re-send.)
+  const claimFilter = force
+    ? { _id: automation._id }
+    : { _id: automation._id, lastRunDayKey: { $ne: todayKey } };
+  const claimed = await RecruiterEmailAutomation.findOneAndUpdate(
+    claimFilter,
+    { $set: { lastRunDayKey: todayKey, lastRunAt: new Date() } },
+    { new: true }
+  );
+  if (!claimed) {
+    return { status: "already_sent_today", lastRunAt: automation.lastRunAt };
+  }
+
+  let attachment = null;
+  if (automation.template.attachment && automation.template.attachment.content) {
+    const bufferContent = Buffer.isBuffer(automation.template.attachment.content)
+      ? automation.template.attachment.content
+      : Buffer.from(
+          automation.template.attachment.content.buffer || automation.template.attachment.content
+        );
+    attachment = {
+      filename: automation.template.attachment.filename,
+      mimetype: automation.template.attachment.mimetype,
+      content: bufferContent
+    };
+  }
+  const automationSubject = normalizeEmailSubject(automation.template.subject);
+  let sent = 0;
+  let failed = 0;
+  for (const gUser of gmailUsers) {
+    for (const recipient of selected) {
+      try {
+        await sendGmail(gUser, {
+          to: recipient,
+          subject: automationSubject,
+          text: automation.template.text,
+          attachment
+        });
+        await createSendLog({
+          ownerEmail: automation.ownerEmail,
+          fromEmail: gUser.email,
+          toEmail: recipient,
+          subject: automationSubject,
+          status: "success",
+          source: "automation"
+        });
+        sent++;
+      } catch (error) {
+        const message = error && error.message ? error.message : "Unknown error";
+        console.error(`Automation email error from ${gUser.email} to ${recipient}: ${message}`);
+        await createSendLog({
+          ownerEmail: automation.ownerEmail,
+          fromEmail: gUser.email,
+          toEmail: recipient,
+          subject: automationSubject,
+          status: "failed",
+          errorMessage: message,
+          source: "automation"
+        });
+        failed++;
+      }
+    }
+  }
+  const newHistory = resetHistory ? selected : Array.from(new Set([...alreadySentSet, ...selected]));
+  await RecruiterEmailAutomation.updateOne(
+    { _id: automation._id },
+    { $set: { sentTo: newHistory } }
+  );
+
+  return { status: "sent", sent, failed, recipients: selected };
+}
+
 export async function runRecruiterAutomationDailyJob() {
   // Pre-pass: for any Executive user crossing the threshold whose automation
   // row exists with a group set but no template, build an AI template (resume +
@@ -666,126 +966,16 @@ export async function runRecruiterAutomationDailyJob() {
     .populate("template");
 
   for (const automation of automations) {
-    if (!automation.group || !automation.template) {
-      continue;
-    }
-    const ownerEmailLc = automation.ownerEmail.toLowerCase();
-    const user = await UserModel.findOne({ email: ownerEmailLc })
-      .select("planType email")
-      .lean();
-    if (!user) {
-      console.log(`[RecruiterAutomation] skip ${ownerEmailLc}: no user`);
-      continue;
-    }
-    if (user.planType !== "Executive") {
-      console.log(`[RecruiterAutomation] skip ${ownerEmailLc}: plan=${user.planType}, need Executive`);
-      continue;
-    }
-    const pipelineCount = await JobModel.countDocuments(pipelineCountFilter(ownerEmailLc));
-    if (!automation.skipThreshold && pipelineCount < EXECUTIVE_AUTOMATION_THRESHOLD) {
-      console.log(`[RecruiterAutomation] skip ${ownerEmailLc}: pipeline=${pipelineCount} < ${EXECUTIVE_AUTOMATION_THRESHOLD}`);
-      continue;
-    }
-    if (automation.skipThreshold && pipelineCount < EXECUTIVE_AUTOMATION_THRESHOLD) {
-      console.log(`[RecruiterAutomation] ${ownerEmailLc}: skipThreshold ON — sending despite pipeline=${pipelineCount} < ${EXECUTIVE_AUTOMATION_THRESHOLD}`);
-    }
-    const allEmails = Array.isArray(automation.group.emails) ? automation.group.emails : [];
-    if (!allEmails.length) {
-      continue;
-    }
-    const normalizedAll = Array.from(
-      new Set(
-        allEmails
-          .map((v) => v && v.toString().trim().toLowerCase())
-          .filter((v) => v)
-      )
-    );
-    if (!normalizedAll.length) {
-      continue;
-    }
-    const alreadySentSet = new Set(
-      (automation.sentTo || [])
-        .map((v) => v && v.toString().trim().toLowerCase())
-        .filter((v) => v)
-    );
-    let pool = normalizedAll.filter((email) => !alreadySentSet.has(email));
-    let resetHistory = false;
-    // Defense-in-depth: cap the per-tick send at 5 even if Mongo doc still
-    // carries the old dailyLimit:20 value. Saving via the UI clamps on
-    // write, but existing docs predating the clamp must not flood Gmail.
-    const HARD_DAILY_CAP = 5;
-    const effectiveDailyLimit = Math.min(automation.dailyLimit || 0, HARD_DAILY_CAP);
-    if (pool.length < effectiveDailyLimit) {
-      pool = normalizedAll;
-      resetHistory = true;
-    }
-    const limit = Math.min(effectiveDailyLimit, pool.length);
-    const selected = [];
-    const poolCopy = [...pool];
-    while (selected.length < limit && poolCopy.length > 0) {
-      const index = Math.floor(Math.random() * poolCopy.length);
-      selected.push(poolCopy[index]);
-      poolCopy.splice(index, 1);
-    }
-    if (!selected.length) {
-      continue;
-    }
-    const gmailUsers = await GmailUser.find({
-      ownerEmail: automation.ownerEmail.toLowerCase()
-    });
-    if (!gmailUsers.length) {
-      continue;
-    }
-    let attachment = null;
-    if (automation.template.attachment && automation.template.attachment.content) {
-      const bufferContent = Buffer.isBuffer(automation.template.attachment.content)
-        ? automation.template.attachment.content
-        : Buffer.from(
-            automation.template.attachment.content.buffer || automation.template.attachment.content
-          );
-      attachment = {
-        filename: automation.template.attachment.filename,
-        mimetype: automation.template.attachment.mimetype,
-        content: bufferContent
-      };
-    }
-    const automationSubject = normalizeEmailSubject(automation.template.subject);
-    for (const user of gmailUsers) {
-      for (const recipient of selected) {
-        try {
-          await sendGmail(user, {
-            to: recipient,
-            subject: automationSubject,
-            text: automation.template.text,
-            attachment
-          });
-          await createSendLog({
-            ownerEmail: automation.ownerEmail,
-            fromEmail: user.email,
-            toEmail: recipient,
-            subject: automationSubject,
-            status: "success",
-            source: "automation"
-          });
-        } catch (error) {
-          const message = error && error.message ? error.message : "Unknown error";
-          console.error(`Automation email error from ${user.email} to ${recipient}: ${message}`);
-          await createSendLog({
-            ownerEmail: automation.ownerEmail,
-            fromEmail: user.email,
-            toEmail: recipient,
-            subject: automationSubject,
-            status: "failed",
-            errorMessage: message,
-            source: "automation"
-          });
-        }
+    try {
+      const result = await processAutomation(automation, { force: false });
+      if (result.status === "sent") {
+        console.log(`[RecruiterAutomation] ${automation.ownerEmail}: sent ${result.sent} (failed ${result.failed})`);
+      } else {
+        console.log(`[RecruiterAutomation] skip ${automation.ownerEmail}: ${result.status}`);
       }
+    } catch (e) {
+      console.error(`[RecruiterAutomation] error for ${automation?.ownerEmail}:`, e?.message);
     }
-    const newHistory = resetHistory ? selected : Array.from(new Set([...alreadySentSet, ...selected]));
-    automation.sentTo = newHistory;
-    automation.lastRunAt = new Date();
-    await automation.save();
   }
 }
 
