@@ -12,6 +12,9 @@ const recruiterEmailAutomationSchema = new mongoose.Schema(
     // Set per-user from the Operations panel ("Skip 200 limit").
     skipThreshold: { type: Boolean, default: false },
     lastRunAt: { type: Date },
+    // IST calendar day (YYYY-MM-DD) of the last send. Used as an atomic guard so
+    // the nightly cron and the manual "send now" button never double-send in a day.
+    lastRunDayKey: { type: String, default: null },
     sentTo: { type: [String], default: [] }
   },
   { timestamps: true }
