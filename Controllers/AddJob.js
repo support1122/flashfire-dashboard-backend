@@ -106,7 +106,7 @@ export default async function AddJob(req, res) {
         //      and let the push through.
         //   4. After insert, detectOvershoot() logs a structured warning
         //      when concurrent inserts raced past the limit.
-        //   5. Cap counts ops jobs only since 00:00 IST today.
+        //   5. Cap counts ops jobs only since the 10 PM IST window reset.
         if (isOpsRole) {
             if (!clientForExclusions) {
                 return res.status(400).json({

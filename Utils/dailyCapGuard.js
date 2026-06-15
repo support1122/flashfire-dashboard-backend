@@ -4,8 +4,8 @@
 // numbers.
 //
 // Policy:
-//   - Window resets at 00:00 Asia/Kolkata each day (IST is UTC+5:30 fixed,
-//     no DST quirks).
+//   - Window resets at 22:00 (10 PM) Asia/Kolkata each day (IST is UTC+5:30
+//     fixed, no DST quirks).
 //   - Cap = profile.targetJobCount when admin set it; otherwise DEFAULT_CAP.
 //   - Cap applies to createdByRole:'operations' jobs only — user-tracked
 //     jobs ignore the cap entirely.
@@ -225,11 +225,21 @@ export async function checkPlanCap(rawEmail) {
     };
 }
 
+// Daily cap window resets at 22:00 (10 PM) Asia/Kolkata each day. Returns the
+// UTC instant of the most recent 22:00 IST boundary — i.e. the start of the
+// cap window currently in effect.
+export const CAP_RESET_HOUR_IST = 22; // 10 PM IST
+
 export function startOfTodayIST() {
     const offsetMs = 5.5 * 60 * 60 * 1000;
     const istNow = new Date(Date.now() + offsetMs);
-    istNow.setUTCHours(0, 0, 0, 0);
-    return new Date(istNow.getTime() - offsetMs);
+    const boundary = new Date(istNow.getTime());
+    boundary.setUTCHours(CAP_RESET_HOUR_IST, 0, 0, 0);
+    // Before today's 22:00 IST → the active window opened at 22:00 IST yesterday.
+    if (istNow.getTime() < boundary.getTime()) {
+        boundary.setTime(boundary.getTime() - 24 * 60 * 60 * 1000);
+    }
+    return new Date(boundary.getTime() - offsetMs);
 }
 
 function todayLowBoundObjectId() {
@@ -290,8 +300,8 @@ export async function checkCap(rawEmail) {
             remaining: 0,
             reason: "TARGET_REACHED",
             message: isDefault
-                ? `Daily target reached (${count}/${effectiveCap} today, default cap). Set a higher target on the dashboard or wait for 00:00 IST reset.`
-                : `Daily target reached (${count}/${effectiveCap} today). Raise the target on the dashboard or wait for 00:00 IST reset.`,
+                ? `Daily target reached (${count}/${effectiveCap} today, default cap). Set a higher target on the dashboard or wait for 10 PM IST reset.`
+                : `Daily target reached (${count}/${effectiveCap} today). Raise the target on the dashboard or wait for 10 PM IST reset.`,
         };
     }
     return {
