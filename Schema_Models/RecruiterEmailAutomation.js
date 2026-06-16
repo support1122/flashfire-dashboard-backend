@@ -9,8 +9,8 @@ const recruiterEmailAutomationSchema = new mongoose.Schema(
     enabled: { type: Boolean, default: true },
     // When true, this user bypasses the 200-application pipeline threshold and
     // recruiter emails are sent regardless of how many jobs they've applied to.
-    // Set per-user from the Operations panel ("Skip 200 limit").
-    skipThreshold: { type: Boolean, default: false },
+    // Defaults to true so new users are never silently blocked by the threshold.
+    skipThreshold: { type: Boolean, default: true },
     lastRunAt: { type: Date },
     // IST calendar day (YYYY-MM-DD) of the last send. Used as an atomic guard so
     // the nightly cron and the manual "send now" button never double-send in a day.
