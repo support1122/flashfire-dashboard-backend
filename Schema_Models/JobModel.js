@@ -199,6 +199,29 @@ export const JobSchema = new mongoose.Schema({
     lastFailedAt: { type: Date, default: null },
     retryAfter: { type: Date, default: null },
     error: { type: String, default: null }
+  },
+  // Second-stage screening tracking (secondJudgeWorker). Only set to
+  // 'pending' for jobs pushed by the JR-Direct extension auto-judge flow.
+  // The worker opens the real employer site via the scraper, re-judges the
+  // full posting text against the client profile, and moves the job to the
+  // removed column when the real JD fails the grade. 'passed' keeps it.
+  secondJudge: {
+    status: {
+      type: String,
+      enum: ['pending', 'processing', 'passed', 'failed', 'skipped'],
+      default: null
+    },
+    attempts: { type: Number, default: 0 },
+    startedAt: { type: Date, default: null },
+    completedAt: { type: Date, default: null },
+    lastFailedAt: { type: Date, default: null },
+    retryAfter: { type: Date, default: null },
+    // Grade from the second judge (0-100) and the operator-facing reason.
+    score: { type: Number, default: null },
+    reason: { type: String, default: null },
+    // How many chars the scraper returned for the real-site JD (diagnostics).
+    scrapedChars: { type: Number, default: null },
+    error: { type: String, default: null }
   }
 });
 
@@ -213,6 +236,8 @@ JobSchema.index({ userID: 1, updatedAt: -1 });
 JobSchema.index({ userID: 1, dateAdded: -1 });
 // Index for auto-optimization worker polling
 JobSchema.index({ 'autoOptimization.status': 1, 'autoOptimization.retryAfter': 1, _id: 1 });
+// Index for second-judge worker polling
+JobSchema.index({ 'secondJudge.status': 1, 'secondJudge.retryAfter': 1, _id: 1 });
 
 export const JobModel = mongoose.model('JobDB', JobSchema)
 
