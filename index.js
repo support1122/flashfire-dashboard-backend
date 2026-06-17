@@ -331,7 +331,8 @@ app.use((err, req, res, next) => {
     await connectDB();
     console.log("✅ Database connected successfully");
 
-    // Start auto-optimization worker on first PM2 cluster instance only
+    // All scheduled workers run on first PM2 cluster instance only to avoid
+    // duplicate cron fires when running in cluster mode (instances: 'max').
     const instanceId = process.env.NODE_APP_INSTANCE || '0';
     if (instanceId === '0') {
       startAutoOptimizationWorker();
@@ -343,24 +344,29 @@ app.use((err, req, res, next) => {
       // extension-pushed job, re-judges the full posting against the client
       // profile, and removes mismatches. DB-polled, no Redis.
       startSecondJudgeWorker();
+
+      // Recruiter email automation — fires at 11 PM IST every night.
+      // Must stay inside the instanceId === '0' guard so only one process
+      // runs it even when PM2 spawns multiple cluster workers.
+      cron.schedule(
+        "0 23 * * *",
+        async () => {
+          try {
+            await runRecruiterAutomationDailyJob();
+          } catch (error) {
+            console.error("Recruiter automation job failed", error);
+          }
+        },
+        {
+          timezone: "Asia/Kolkata"
+        }
+      );
+      console.log("[RecruiterAutomation] Nightly cron registered on instance 0 (11 PM IST)");
     } else {
       console.log(`[AutoOptWorker] Skipping on cluster instance ${instanceId}`);
       console.log(`[summary-sweep] Skipping on cluster instance ${instanceId}`);
+      console.log(`[RecruiterAutomation] Skipping cron on cluster instance ${instanceId}`);
     }
-
-    cron.schedule(
-      "0 23 * * *",
-      async () => {
-        try {
-          await runRecruiterAutomationDailyJob();
-        } catch (error) {
-          console.error("Recruiter automation job failed", error);
-        }
-      },
-      {
-        timezone: "Asia/Kolkata"
-      }
-    );
 
     app.listen(PORT, () => {
       console.log(`🚀 Server is running on port ${PORT} in ${NODE_ENV} mode`);
