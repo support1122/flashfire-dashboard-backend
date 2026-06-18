@@ -766,14 +766,34 @@ function createMimeMessage(from, to, subject, text, attachment = null) {
   return lines.join("\r\n");
 }
 
-async function sendGmail(user, { to, subject, text, attachment = null }) {
-  const client = new google.auth.OAuth2(
-    process.env.GOOGLE_CLIENT_ID,
-    process.env.GOOGLE_CLIENT_SECRET
-  );
+// In-memory access token cache: refreshToken -> { accessToken, expiresAt }
+const _tokenCache = new Map();
 
-  client.setCredentials({ refresh_token: user.refreshToken });
-  const gmail = google.gmail({ version: "v1", auth: client });
+async function getAccessToken(refreshToken) {
+  const cached = _tokenCache.get(refreshToken);
+  if (cached && cached.expiresAt > Date.now() + 60_000) return cached.accessToken;
+
+  const res = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      client_id: process.env.GOOGLE_CLIENT_ID,
+      client_secret: process.env.GOOGLE_CLIENT_SECRET,
+      refresh_token: refreshToken,
+      grant_type: "refresh_token"
+    }).toString()
+  });
+  if (!res.ok) throw new Error(`Token refresh failed: ${res.status} ${await res.text()}`);
+  const data = await res.json();
+  _tokenCache.set(refreshToken, {
+    accessToken: data.access_token,
+    expiresAt: Date.now() + (data.expires_in || 3600) * 1000
+  });
+  return data.access_token;
+}
+
+async function sendGmail(user, { to, subject, text, attachment = null }) {
+  const accessToken = await getAccessToken(user.refreshToken);
 
   const mimeMessage = createMimeMessage(user.email, to, subject, text, attachment);
   const raw = Buffer.from(mimeMessage)
@@ -782,31 +802,18 @@ async function sendGmail(user, { to, subject, text, attachment = null }) {
     .replace(/\//g, "_")
     .replace(/=+$/, "");
 
-  // Retry up to 3 times on transient network errors (e.g. "Premature close"
-  // from oauth2.googleapis.com token refresh dropping on Render).
-  const MAX_RETRIES = 3;
-  let lastError;
-  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
-    try {
-      await gmail.users.messages.send({
-        userId: "me",
-        requestBody: { raw }
-      });
-      return;
-    } catch (err) {
-      lastError = err;
-      const isTransient = err?.message && (
-        err.message.includes("Premature close") ||
-        err.message.includes("ECONNRESET") ||
-        err.message.includes("ETIMEDOUT") ||
-        err.message.includes("fetch failed")
-      );
-      if (!isTransient || attempt === MAX_RETRIES) throw err;
-      // Wait 2s, 4s before retrying
-      await new Promise(r => setTimeout(r, attempt * 2000));
-    }
+  const res = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/messages/send", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({ raw })
+  });
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`Gmail send failed: ${res.status} ${errText}`);
   }
-  throw lastError;
 }
 
 async function runAiTemplatePrePass() {
