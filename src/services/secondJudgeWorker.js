@@ -34,7 +34,9 @@ const MAX_ATTEMPTS = parseInt(process.env.SECOND_JUDGE_MAX_ATTEMPTS) || 3;
 const THRESHOLD = Number.isFinite(Number(process.env.SECOND_JUDGE_THRESHOLD))
   ? Number(process.env.SECOND_JUDGE_THRESHOLD)
   : 50;
-const MIN_JD_CHARS = parseInt(process.env.SECOND_JUDGE_MIN_JD_CHARS) || 200;
+// Floor below the scraper's own full-text floor (100) so we never re-reject a
+// page the scraper already returned ok — the scraper is the single thin-gate.
+const MIN_JD_CHARS = parseInt(process.env.SECOND_JUDGE_MIN_JD_CHARS) || 80;
 const STALE_THRESHOLD_MS = 5 * 60 * 1000; // 5 minutes
 
 // Scraper (Playwright text extractor). EXTRACT path matches the extension's
