@@ -131,7 +131,25 @@ router.get("/auth/google/callback", async (req, res) => {
   const { code, state } = req.query;
   if (!code) return res.status(400).send("Missing code");
   try {
-    const { tokens } = await oauth2Client.getToken(code);
+    // Use native fetch (Node 18+) instead of googleapis' bundled node-fetch
+    // to avoid ERR_STREAM_PREMATURE_CLOSE on Render's network.
+    const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        code,
+        client_id: process.env.GOOGLE_CLIENT_ID,
+        client_secret: process.env.GOOGLE_CLIENT_SECRET,
+        redirect_uri: process.env.GOOGLE_REDIRECT_URI,
+        grant_type: "authorization_code"
+      }).toString()
+    });
+    if (!tokenRes.ok) {
+      const errText = await tokenRes.text();
+      console.error("Token exchange failed:", tokenRes.status, errText);
+      return res.status(500).send("Google OAuth error: token exchange failed");
+    }
+    const tokens = await tokenRes.json();
     const email = await getEmail(tokens.access_token);
     const ownerEmail = typeof state === "string" ? decodeURIComponent(state) : undefined;
     await GmailUser.findOneAndUpdate(
