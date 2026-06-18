@@ -705,11 +705,13 @@ router.post("/automation/resend", async (req, res) => {
 });
 
 async function getEmail(accessToken) {
-  const tmpAuth = new google.auth.OAuth2();
-  tmpAuth.setCredentials({ access_token: accessToken });
-  const gmail = google.gmail({ version: "v1", auth: tmpAuth });
-  const profile = await gmail.users.getProfile({ userId: "me" });
-  return profile.data.emailAddress;
+  // Use native fetch to avoid ERR_STREAM_PREMATURE_CLOSE from googleapis' bundled node-fetch
+  const res = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/profile", {
+    headers: { Authorization: `Bearer ${accessToken}` }
+  });
+  if (!res.ok) throw new Error(`getEmail failed: ${res.status} ${await res.text()}`);
+  const data = await res.json();
+  return data.emailAddress;
 }
 
 function encodeFilename(filename) {
