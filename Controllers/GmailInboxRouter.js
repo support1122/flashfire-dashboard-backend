@@ -1,6 +1,5 @@
 import express from "express";
 import multer from "multer";
-import { google } from "googleapis";
 import { GmailUser } from "../Schema_Models/GmailUser.js";
 import { InboxThread } from "../Schema_Models/InboxThread.js";
 import { InboxMessage } from "../Schema_Models/InboxMessage.js";
@@ -125,14 +124,6 @@ async function getAccessToken(refreshToken) {
   return data.access_token;
 }
 
-function gmailClientForUser(user) {
-  const oauth = new google.auth.OAuth2(
-    process.env.GOOGLE_CLIENT_ID,
-    process.env.GOOGLE_CLIENT_SECRET
-  );
-  oauth.setCredentials({ refresh_token: user.refreshToken });
-  return google.gmail({ version: "v1", auth: oauth });
-}
 
 async function resolveGmailUser(ownerEmail, gmailEmail) {
   const owner = (ownerEmail || "").toLowerCase().trim();
