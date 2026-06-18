@@ -997,6 +997,9 @@ export async function runRecruiterAutomationDailyJob() {
     } catch (e) {
       console.error(`[RecruiterAutomation] error for ${automation?.ownerEmail}:`, e?.message);
     }
+    // 3s gap between users so OAuth token refreshes don't all hit Google
+    // simultaneously and cause "Premature close" connection drops on Render.
+    await new Promise(r => setTimeout(r, 3000));
   }
 }
 
