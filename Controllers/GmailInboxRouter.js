@@ -96,6 +96,35 @@ function buildComposeMime({ from, to, cc, bcc, subject, html, text, attachments,
 // =========================
 // Auth helpers
 // =========================
+
+// In-memory cache: refreshToken -> { accessToken, expiresAt }
+const _tokenCache = new Map();
+
+// Use native fetch to refresh the access token, bypassing googleapis'
+// bundled node-fetch which causes ERR_STREAM_PREMATURE_CLOSE on Render.
+async function getAccessToken(refreshToken) {
+  const cached = _tokenCache.get(refreshToken);
+  if (cached && cached.expiresAt > Date.now() + 60_000) return cached.accessToken;
+
+  const res = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      client_id: process.env.GOOGLE_CLIENT_ID,
+      client_secret: process.env.GOOGLE_CLIENT_SECRET,
+      refresh_token: refreshToken,
+      grant_type: "refresh_token"
+    }).toString()
+  });
+  if (!res.ok) throw new Error(`Token refresh failed: ${res.status} ${await res.text()}`);
+  const data = await res.json();
+  _tokenCache.set(refreshToken, {
+    accessToken: data.access_token,
+    expiresAt: Date.now() + (data.expires_in || 3600) * 1000
+  });
+  return data.access_token;
+}
+
 function gmailClientForUser(user) {
   const oauth = new google.auth.OAuth2(
     process.env.GOOGLE_CLIENT_ID,
@@ -267,29 +296,51 @@ async function fetchR2BodyText(key) {
 // =========================
 // Sync / fetch logic
 // =========================
-async function listAndCacheThreads({ user, ownerEmail, q, labelIds, pageToken, maxResults = 25 }) {
-  const gmail = gmailClientForUser(user);
-  const listRes = await gmail.users.threads.list({
-    userId: "me",
-    q: q || undefined,
-    labelIds: labelIds && labelIds.length ? labelIds : undefined,
-    pageToken: pageToken || undefined,
-    maxResults
+async function gmailGet(accessToken, path, params = {}) {
+  const url = new URL(`https://gmail.googleapis.com/gmail/v1/users/me/${path}`);
+  for (const [k, v] of Object.entries(params)) {
+    if (v !== undefined && v !== null) url.searchParams.set(k, v);
+  }
+  const res = await fetch(url.toString(), {
+    headers: { Authorization: `Bearer ${accessToken}` }
   });
+  if (!res.ok) throw new Error(`Gmail API ${path} failed: ${res.status} ${await res.text()}`);
+  return res.json();
+}
 
-  const threads = listRes.data.threads || [];
+async function gmailPost(accessToken, path, body = {}) {
+  const url = `https://gmail.googleapis.com/gmail/v1/users/me/${path}`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+    body: JSON.stringify(body)
+  });
+  if (!res.ok) throw new Error(`Gmail API POST ${path} failed: ${res.status} ${await res.text()}`);
+  return res.json();
+}
+
+async function listAndCacheThreads({ user, ownerEmail, q, labelIds, pageToken, maxResults = 25 }) {
+  const accessToken = await getAccessToken(user.refreshToken);
+  const listParams = { maxResults };
+  if (q) listParams.q = q;
+  if (pageToken) listParams.pageToken = pageToken;
+  if (labelIds && labelIds.length) listParams.labelIds = labelIds.join(",");
+  const listData = await gmailGet(accessToken, "threads", listParams);
+
+  const threads = listData.threads || [];
   const out = [];
 
   for (const t of threads) {
-    // Get minimal metadata for each thread (cheap, batched would be ideal — left for Phase 2)
-    const tDetail = await gmail.users.threads.get({
-      userId: "me",
-      id: t.id,
+    const metaParams = new URLSearchParams({
       format: "metadata",
-      metadataHeaders: ["From", "To", "Cc", "Subject", "Date"]
+      "metadataHeaders": ["From", "To", "Cc", "Subject", "Date"].join("&metadataHeaders=")
     });
+    const tDetailUrl = `https://gmail.googleapis.com/gmail/v1/users/me/threads/${t.id}?format=metadata&metadataHeaders=From&metadataHeaders=To&metadataHeaders=Cc&metadataHeaders=Subject&metadataHeaders=Date`;
+    const tDetailRes = await fetch(tDetailUrl, { headers: { Authorization: `Bearer ${accessToken}` } });
+    if (!tDetailRes.ok) continue;
+    const tDetail = await tDetailRes.json();
 
-    const msgs = tDetail.data.messages || [];
+    const msgs = tDetail.messages || [];
     if (!msgs.length) continue;
 
     const last = msgs[msgs.length - 1];
@@ -319,9 +370,9 @@ async function listAndCacheThreads({ user, ownerEmail, q, labelIds, pageToken, m
         ownerEmail,
         gmailEmail: user.email,
         threadId: t.id,
-        historyId: tDetail.data.historyId || null,
+        historyId: tDetail.historyId || null,
         subject,
-        snippet: t.snippet || tDetail.data.snippet || "",
+        snippet: t.snippet || tDetail.snippet || "",
         participants: Array.from(participants).filter(Boolean),
         fromLatest,
         lastMessageAt: lastDate,
@@ -338,8 +389,8 @@ async function listAndCacheThreads({ user, ownerEmail, q, labelIds, pageToken, m
 
   return {
     threads: out,
-    nextPageToken: listRes.data.nextPageToken || null,
-    resultSizeEstimate: listRes.data.resultSizeEstimate || 0
+    nextPageToken: listData.nextPageToken || null,
+    resultSizeEstimate: listData.resultSizeEstimate || 0
   };
 }
 
@@ -353,24 +404,16 @@ async function getCachedOrFetchMessage({ user, ownerEmail, messageId }) {
     return existing;
   }
 
-  const gmail = gmailClientForUser(user);
-  const detail = await gmail.users.messages.get({
-    userId: "me",
-    id: messageId,
-    format: "full"
-  });
-  const meta = normalizeMessageMeta(detail.data);
-  const bodies = extractBodies(detail.data.payload);
+  const accessToken = await getAccessToken(user.refreshToken);
+  const detailData = await gmailGet(accessToken, `messages/${messageId}`, { format: "full" });
+  const meta = normalizeMessageMeta(detailData);
+  const bodies = extractBodies(detailData.payload);
 
   // Fetch large inline body parts that Gmail stored as anonymous attachments.
   for (const part of bodies.inlineBodyParts) {
     try {
-      const r = await gmail.users.messages.attachments.get({
-        userId: "me",
-        messageId,
-        id: part.attachmentId
-      });
-      const decoded = decodeBase64Url(r.data.data || "").toString("utf8");
+      const attData = await gmailGet(accessToken, `messages/${messageId}/attachments/${part.attachmentId}`);
+      const decoded = decodeBase64Url(attData.data || "").toString("utf8");
       if (part.mimeType === "text/html") bodies.html += decoded;
       else if (part.mimeType === "text/plain") bodies.text += decoded;
     } catch (e) {
@@ -402,10 +445,10 @@ async function getCachedOrFetchMessage({ user, ownerEmail, messageId }) {
     {
       ownerEmail,
       gmailEmail: user.email,
-      threadId: detail.data.threadId,
+      threadId: detailData.threadId,
       messageId,
       ...meta,
-      snippet: detail.data.snippet || "",
+      snippet: detailData.snippet || "",
       bodyHtmlR2Key: htmlKey,
       bodyTextR2Key: textKey,
       bodyTextInline: !htmlKey && !textKey ? bodies.text || "" : "",
@@ -425,9 +468,9 @@ router.post("/labels", async (req, res) => {
     const { ownerEmail, gmailEmail } = req.body || {};
     const user = await resolveGmailUser(ownerEmail, gmailEmail);
     if (!user) return res.status(404).json({ error: "no_connected_gmail" });
-    const gmail = gmailClientForUser(user);
-    const r = await gmail.users.labels.list({ userId: "me" });
-    const labels = (r.data.labels || []).map((l) => ({
+    const accessToken = await getAccessToken(user.refreshToken);
+    const r = await gmailGet(accessToken, "labels");
+    const labels = (r.labels || []).map((l) => ({
       id: l.id,
       name: l.name,
       type: l.type,
@@ -486,13 +529,9 @@ router.post("/thread/:threadId", async (req, res) => {
     const user = await resolveGmailUser(ownerEmail, gmailEmail);
     if (!user) return res.status(404).json({ error: "no_connected_gmail" });
 
-    const gmail = gmailClientForUser(user);
-    const tDetail = await gmail.users.threads.get({
-      userId: "me",
-      id: threadId,
-      format: "minimal"
-    });
-    const msgIds = (tDetail.data.messages || []).map((m) => m.id);
+    const accessToken = await getAccessToken(user.refreshToken);
+    const tDetail = await gmailGet(accessToken, `threads/${threadId}`, { format: "minimal" });
+    const msgIds = (tDetail.messages || []).map((m) => m.id);
 
     const messages = [];
     for (const id of msgIds) {
@@ -554,13 +593,9 @@ router.post("/message/:messageId/attachment/:attachmentId", async (req, res) => 
     if (!att) return res.status(404).json({ error: "attachment_not_found" });
 
     if (!att.r2Key) {
-      const gmail = gmailClientForUser(user);
-      const r = await gmail.users.messages.attachments.get({
-        userId: "me",
-        messageId,
-        id: attachmentId
-      });
-      const buf = decodeBase64Url(r.data.data);
+      const accessToken = await getAccessToken(user.refreshToken);
+      const r = await gmailGet(accessToken, `messages/${messageId}/attachments/${attachmentId}`);
+      const buf = decodeBase64Url(r.data);
       const key = await uploadInboxAttachment({
         ownerEmail: user.ownerEmail,
         gmailEmail: user.email,
@@ -594,7 +629,7 @@ router.post("/modify", async (req, res) => {
       req.body || {};
     const user = await resolveGmailUser(ownerEmail, gmailEmail);
     if (!user) return res.status(404).json({ error: "no_connected_gmail" });
-    const gmail = gmailClientForUser(user);
+    const accessToken = await getAccessToken(user.refreshToken);
 
     let add = Array.isArray(addLabelIds) ? [...addLabelIds] : [];
     let remove = Array.isArray(removeLabelIds) ? [...removeLabelIds] : [];
@@ -606,8 +641,8 @@ router.post("/modify", async (req, res) => {
       // Trash requires special endpoint
       const ids = messageIds || threadIds || [];
       for (const id of ids) {
-        if (messageIds) await gmail.users.messages.trash({ userId: "me", id });
-        else await gmail.users.threads.trash({ userId: "me", id });
+        if (messageIds) await gmailPost(accessToken, `messages/${id}/trash`);
+        else await gmailPost(accessToken, `threads/${id}/trash`);
       }
       // Update local cache
       if (messageIds?.length) {
@@ -624,11 +659,7 @@ router.post("/modify", async (req, res) => {
 
     if (Array.isArray(messageIds) && messageIds.length) {
       for (const id of messageIds) {
-        await gmail.users.messages.modify({
-          userId: "me",
-          id,
-          requestBody: { addLabelIds: add, removeLabelIds: remove }
-        });
+        await gmailPost(accessToken, `messages/${id}/modify`, { addLabelIds: add, removeLabelIds: remove });
       }
       // Update local cache
       const setOps = {};
@@ -646,11 +677,7 @@ router.post("/modify", async (req, res) => {
 
     if (Array.isArray(threadIds) && threadIds.length) {
       for (const id of threadIds) {
-        await gmail.users.threads.modify({
-          userId: "me",
-          id,
-          requestBody: { addLabelIds: add, removeLabelIds: remove }
-        });
+        await gmailPost(accessToken, `threads/${id}/modify`, { addLabelIds: add, removeLabelIds: remove });
       }
       // Update local thread cache
       const incUnread = remove.includes("UNREAD") ? { unreadCount: 0 } : null;
@@ -680,7 +707,7 @@ router.post("/reply", async (req, res) => {
     if (!user) return res.status(404).json({ error: "no_connected_gmail" });
     if (!to || !subject) return res.status(400).json({ error: "to_and_subject_required" });
 
-    const gmail = gmailClientForUser(user);
+    const accessToken = await getAccessToken(user.refreshToken);
     const boundary = `----=_FF_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
     const headers = [
       `To: ${Array.isArray(to) ? to.join(", ") : to}`,
@@ -712,12 +739,8 @@ router.post("/reply", async (req, res) => {
     const mime = headers.join("\r\n") + body;
     const raw = Buffer.from(mime).toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 
-    const r = await gmail.users.messages.send({
-      userId: "me",
-      requestBody: { raw, threadId: threadId || undefined }
-    });
-
-    res.json({ ok: true, messageId: r.data.id, threadId: r.data.threadId });
+    const r = await gmailPost(accessToken, "messages/send", { raw, threadId: threadId || undefined });
+    res.json({ ok: true, messageId: r.id, threadId: r.threadId });
   } catch (err) {
     console.error("[Inbox] reply error:", err?.response?.data || err.message);
     res.status(500).json({ error: err?.message || "reply_failed" });
@@ -766,12 +789,9 @@ router.post("/compose", composeUpload.array("attachments", 10), async (req, res)
     });
     const raw = Buffer.from(mime).toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 
-    const gmail = gmailClientForUser(user);
-    const r = await gmail.users.messages.send({
-      userId: "me",
-      requestBody: { raw, threadId: threadId || undefined }
-    });
-    res.json({ ok: true, messageId: r.data.id, threadId: r.data.threadId });
+    const accessToken = await getAccessToken(user.refreshToken);
+    const r = await gmailPost(accessToken, "messages/send", { raw, threadId: threadId || undefined });
+    res.json({ ok: true, messageId: r.id, threadId: r.threadId });
   } catch (err) {
     console.error("[Inbox] compose error:", err?.response?.data || err.message);
     res.status(500).json({ error: err?.message || "compose_failed" });
@@ -784,9 +804,9 @@ router.post("/unread-count", async (req, res) => {
     const { ownerEmail, gmailEmail } = req.body || {};
     const user = await resolveGmailUser(ownerEmail, gmailEmail);
     if (!user) return res.status(404).json({ error: "no_connected_gmail" });
-    const gmail = gmailClientForUser(user);
-    const r = await gmail.users.labels.get({ userId: "me", id: "INBOX" });
-    const inboxUnread = r.data.messagesUnread || 0;
+    const accessToken = await getAccessToken(user.refreshToken);
+    const r = await gmailGet(accessToken, "labels/INBOX");
+    const inboxUnread = r.messagesUnread || 0;
     res.json({ unread: inboxUnread, gmailEmail: user.email });
   } catch (err) {
     res.status(500).json({ error: err?.message || "unread_failed" });
@@ -799,14 +819,12 @@ router.post("/star", async (req, res) => {
     const { ownerEmail, gmailEmail, threadIds, messageIds, star } = req.body || {};
     const user = await resolveGmailUser(ownerEmail, gmailEmail);
     if (!user) return res.status(404).json({ error: "no_connected_gmail" });
-    const gmail = gmailClientForUser(user);
+    const accessToken = await getAccessToken(user.refreshToken);
     const ids = threadIds || messageIds || [];
     for (const id of ids) {
-      const body = star
-        ? { addLabelIds: ["STARRED"] }
-        : { removeLabelIds: ["STARRED"] };
-      if (threadIds) await gmail.users.threads.modify({ userId: "me", id, requestBody: body });
-      else await gmail.users.messages.modify({ userId: "me", id, requestBody: body });
+      const body = star ? { addLabelIds: ["STARRED"] } : { removeLabelIds: ["STARRED"] };
+      if (threadIds) await gmailPost(accessToken, `threads/${id}/modify`, body);
+      else await gmailPost(accessToken, `messages/${id}/modify`, body);
     }
     if (threadIds?.length) {
       await InboxThread.updateMany(
