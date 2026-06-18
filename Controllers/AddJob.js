@@ -7,7 +7,7 @@ import { sanitizeJobTitle } from '../Utils/jobTitle.js';
 import { checkCap, detectOvershoot, checkPlanCap, enforcePlanCapPostInsert } from '../Utils/dailyCapGuard.js';
 
 export default async function AddJob(req, res) {
-    let { jobDetails, userDetails, role, operationsEmail, operationsName, extensionCode } = req.body;
+    let { jobDetails, userDetails, role, operationsEmail, operationsName, extensionCode, source } = req.body;
 
     try {
         jobDetails = jobDetails || {};
@@ -184,6 +184,25 @@ export default async function AddJob(req, res) {
                 attempts: 0,
                 error: 'Skipped: missing job description'
             };
+        }
+
+        // Second-stage screening: only jobs pushed by the JR-Direct extension
+        // auto-judge flow get re-judged against the REAL employer-site text.
+        // The extension judges on JobRight's own description only (no scraper);
+        // the secondJudgeWorker opens the actual posting and re-grades it.
+        // Requires a joblink for the scraper to open — otherwise skip.
+        const isExtensionJob = String(source || '').trim().toLowerCase() === 'jr-direct-extension';
+        const jl = String(jobDetails?.joblink || '').trim();
+        // Only queue real employer/ATS URLs — jobright/indeed/linkedin can't be
+        // scraped for full text (login/bot walls), so the second judge would
+        // have nothing valid to grade. The worker re-checks this defensively.
+        const scrapeableLink =
+            !!jl &&
+            !/jobright\.ai/i.test(jl) &&
+            !/indeed\.com/i.test(jl) &&
+            !/(^|\.)linkedin\.com/i.test(jl);
+        if (isExtensionJob && scrapeableLink) {
+            jobDetails.secondJudge = { status: 'pending', attempts: 0 };
         }
 
         const opsDisplayName =

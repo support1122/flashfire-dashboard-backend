@@ -155,6 +155,7 @@ import connectDB from "./Utils/ConnectDB.js";
 import Routes from "./Routes.js";
 import { runRecruiterAutomationDailyJob } from "./Controllers/GmailRouter.js";
 import { startSummarySweepWorker } from "./src/services/summarySweepWorker.js";
+import { startSecondJudgeWorker } from "./src/services/secondJudgeWorker.js";
 import { startAutoOptimizationWorker } from "./src/services/autoOptimizationWorker.js";
 
 dotenv.config();
@@ -339,6 +340,10 @@ app.use((err, req, res, next) => {
       // grader is never working off an outdated brief. Tagged source field
       // [auto:cron-sweep] so AI Summaries UI shows the auto origin.
       startSummarySweepWorker();
+      // Second-stage screening: opens the real employer site for each
+      // extension-pushed job, re-judges the full posting against the client
+      // profile, and removes mismatches. DB-polled, no Redis.
+      startSecondJudgeWorker();
 
       // Recruiter email automation — fires at 11 PM IST every night.
       // Must stay inside the instanceId === '0' guard so only one process
