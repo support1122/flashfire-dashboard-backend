@@ -77,6 +77,12 @@ This brief has TWO consumers, so precision matters:
    or exclude. Only a negation ("do not scrap", "don't scrap", "never scrap")
    turns it into an exclusion. A role the operator says to "scrap" is WANTED
    and must never be placed in Hard Disqualifiers as excluded.
+8. CO-OP = INTERNSHIP: a job TITLE containing "co-op", "co op", "coop", or
+   "cooperative education" is an INTERNSHIP. Treat co-op roles EXACTLY as the
+   Internship employment type — apply the candidate's Internship ACCEPT/REJECT
+   decision to them (skip them when internships are rejected; allow them when
+   internships are accepted). The "Employment type rules" block in the user
+   prompt tells you which way this candidate goes and the exact bullets to emit.
 
 # Candidate Summary
 2–3 sentences. State: current title, total years of experience, primary
@@ -193,7 +199,11 @@ If the operator gave a geographic/region/language directive (R9), include the
 one sentence it requires: treat an unconfirmed or out-of-home-country location
 on a country/region/language-keyed title as a skip; keep it only when the
 posting confirms a home-country (US or Canada, per the profile) location. Be
-specific to THIS candidate — no generic guidance.`;
+specific to THIS candidate — no generic guidance.
+ALWAYS include this exact sentence, for every candidate, no exceptions:
+"Co-op (also written 'co op', 'coop', or 'cooperative education') in a job
+title means an internship — apply the candidate's internship rule to co-op
+roles."`;
 
 // Fields that materially affect the summary's grader-facing content. We
 // snapshot only these (not the entire mongo doc) so the diff is small,
@@ -598,6 +608,15 @@ function buildUserPrompt(profile, resume, existingSummary, profileDiff, overlay 
     const section = isAccepted ? "Hard Constraints" : "Hard Disqualifiers";
     return `  - ${t}: ${isAccepted ? "ACCEPT" : "REJECT"} → put "${wording}" under ${section}. Do NOT add any contradictory bullet for ${t} in any other section.`;
   }).join("\n");
+  // Co-op IS an internship. Drive co-op handling off the Internship decision so
+  // co-op titles are treated the same as internships for EVERY candidate.
+  // When internships are rejected we emit dedicated literal-spelling skip
+  // bullets (the deterministic title matcher needs the exact word "co-op" /
+  // "co op" / "coop" — "Skip internships." alone would not catch a "Co-op" title).
+  const internshipAccepted = employmentTypes.includes("Internship");
+  const coOpRule = internshipAccepted
+    ? `  - Co-op: ACCEPT (co-op = internship, and internships are accepted) → add "Open to co-op / co op roles." under Hard Constraints. Do NOT skip co-op roles.`
+    : `  - Co-op: REJECT (co-op = internship, and internships are rejected) → add these THREE exact bullets under Hard Disqualifiers, one per line, so the title matcher catches every spelling: "Skip co-op roles." AND "Skip co op roles." AND "Skip coop roles."`;
   const rolesBlock = `\n\n## Role classifier (AUTHORITATIVE — applies on top of profile.preferredRoles)
 Preferred (positive):  ${preferredRoles.length ? preferredRoles.map((r) => `"${r}"`).join(", ") : "(none)"}
 Excluded (negative):   ${excludedRoles.length ? excludedRoles.map((r) => `"${r}"`).join(", ") : "(none)"}
@@ -613,7 +632,8 @@ Rules:
 For each employment type below, use EXACTLY the wording given. Do not invent
 synonyms, do not add "skip" bullets for any ACCEPT type, do not omit "skip"
 bullets for any REJECT type:
-${empPerType}`;
+${empPerType}
+${coOpRule}`;
   const resumeBlob = resume
     ? JSON.stringify(
         {
