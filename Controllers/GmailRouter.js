@@ -762,10 +762,31 @@ async function sendGmail(user, { to, subject, text, attachment = null }) {
     .replace(/\//g, "_")
     .replace(/=+$/, "");
 
-  await gmail.users.messages.send({
-    userId: "me",
-    requestBody: { raw }
-  });
+  // Retry up to 3 times on transient network errors (e.g. "Premature close"
+  // from oauth2.googleapis.com token refresh dropping on Render).
+  const MAX_RETRIES = 3;
+  let lastError;
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      await gmail.users.messages.send({
+        userId: "me",
+        requestBody: { raw }
+      });
+      return;
+    } catch (err) {
+      lastError = err;
+      const isTransient = err?.message && (
+        err.message.includes("Premature close") ||
+        err.message.includes("ECONNRESET") ||
+        err.message.includes("ETIMEDOUT") ||
+        err.message.includes("fetch failed")
+      );
+      if (!isTransient || attempt === MAX_RETRIES) throw err;
+      // Wait 2s, 4s before retrying
+      await new Promise(r => setTimeout(r, attempt * 2000));
+    }
+  }
+  throw lastError;
 }
 
 async function runAiTemplatePrePass() {
