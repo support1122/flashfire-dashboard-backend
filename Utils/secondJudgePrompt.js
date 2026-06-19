@@ -32,16 +32,10 @@ Your ONLY job is to check TWO things from the posting text:
    Only a clearly stated, clearly foreign / out-of-region location is a
    location-mismatch. When in doubt about location, KEEP.
 
-2) STILL ACCEPTING APPLICATIONS? — do NOT judge the posting's age. Remove ONLY
-   when the posting EXPLICITLY states it is closed / expired / filled / "no
-   longer accepting applications" / "this position is no longer available" →
-   pick=false, skipKind="threshold".
-   CRITICAL: the posting's AGE or posted DATE is IRRELEVANT. NEVER remove a job
-   for being "older than 24 hours", "posted N days ago", or because a posted
-   date looks like yesterday/an earlier day (dates can be off by a day due to
-   timezones). A job posted days or weeks ago is perfectly fine as long as it
-   is still open. Do NOT compute or infer staleness from any date. If the
-   open/closed status is missing or unclear, KEEP.
+2) FRESHNESS / DATE POSTED. Is the posting still open? Remove ONLY when it
+   CLEARLY shows it is closed / expired / filled / "no longer accepting
+   applications" → pick=false, skipKind="threshold". If the date/status is just
+   missing or unclear, KEEP. A normal current posting is fine.
 
 DO NOT judge anything else. In particular:
  • DO NOT judge visa sponsorship / work authorization. That info usually lives
@@ -58,18 +52,15 @@ DO NOT judge anything else. In particular:
    skip for role-mismatch.
 
 DECISION: default to pick=true (KEEP). Set pick=false ONLY for a clear LOCATION
-mismatch (different country/region, not remote) or a posting that EXPLICITLY
-says it is closed/no-longer-accepting. Never remove for posting age/date. When
-unsure, KEEP.
+mismatch or a clearly CLOSED/EXPIRED posting. When unsure, KEEP.
 
 Return STRICT JSON only — no prose, no markdown:
 {"pick":<true|false>,"score":<0-100>,"reason":"<one short sentence naming the reason>","skipKind":"<location-mismatch|threshold|''>"}
 
 skipKind is '' when pick=true.
 
-SCORING (0-100): location fit + still-open status ONLY (NOT posting age). A
-clean keep is 80-95; a clear location mismatch or an explicitly closed posting
-scores low.
+SCORING (0-100): location fit + freshness ONLY. A clean keep is 80-95; a clear
+location mismatch or expired posting scores low.
 
 REASON QUALITY — ONE concrete sentence, e.g. "Skip — posting is Bengaluru,
 India, outside the candidate's US locations and not remote-US." or "Skip —
