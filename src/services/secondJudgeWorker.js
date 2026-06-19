@@ -237,45 +237,23 @@ async function judgeRealSite({ profile, job, scrapedText }) {
 }
 
 // ─── Remove a job that failed the second judge ───────────────────────
-async function removeForMismatch(job, verdict, scrapedChars) {
+// Flag a job that failed the second judge — but DO NOT remove it. We never
+// touch currentStatus / removal fields / timeline; the job stays exactly where
+// it is. We only record the secondJudge verdict so the operator sees the flag
+// (icon + reason) on the card and decides what to do. This is advisory, not an
+// auto-removal.
+async function flagForMismatch(job, verdict, scrapedChars) {
   const reason = (verdict.reason || 'Did not match client profile on the full posting').trim();
-  const verdictFields = {
-    'secondJudge.status': 'failed',
-    'secondJudge.score': verdict.score,
-    'secondJudge.reason': reason,
-    'secondJudge.scrapedChars': scrapedChars,
-    'secondJudge.completedAt': new Date(),
-    'secondJudge.error': null,
-  };
-  // Race guard: only remove if the job is still in its initial 'saved' state.
-  // If a user/operator already moved it (applied/interviewing/removed) between
-  // claim and verdict, don't clobber that — just record the verdict.
-  // currentStatus MUST start with "deleted" — the Removed column filters by
-  // currentStatus.startsWith("deleted"); "deleted by AI" keeps AI attribution.
-  const updated = await JobModel.findOneAndUpdate(
-    { _id: job._id, currentStatus: 'saved' },
-    {
-      $set: {
-        currentStatus: 'deleted by AI',
-        removedBy: 'AI',
-        removalReason: `Failed second-stage screening — ${reason}`,
-        removalDate: nowIST(),
-        updatedAt: nowIST(),
-        ...verdictFields,
-      },
-      // Neutral timeline entry — clients see "Removed" (normalized in the UI);
-      // the detailed reason lives in removalReason / secondJudge (operator-only).
-      $push: { timeline: 'deleted by AI' },
+  await JobModel.findByIdAndUpdate(job._id, {
+    $set: {
+      'secondJudge.status': 'failed',
+      'secondJudge.score': verdict.score,
+      'secondJudge.reason': reason,
+      'secondJudge.scrapedChars': scrapedChars,
+      'secondJudge.completedAt': new Date(),
+      'secondJudge.error': null,
     },
-    { new: true }
-  );
-  if (!updated) {
-    // Status changed since we claimed it — record the verdict without removing.
-    await JobModel.findByIdAndUpdate(job._id, {
-      $set: { ...verdictFields, 'secondJudge.error': 'Status changed before removal; not clobbered' },
-    });
-    console.warn(`[SecondJudge] [${job.userID}] [${job._id}] FAIL but status moved off 'saved' — verdict recorded, not removed`);
-  }
+  });
 }
 
 // ─── Keep a job that passed the second judge ─────────────────────────
@@ -366,8 +344,8 @@ async function processJob(job) {
     await keepForPass(job, verdict, text.length);
     console.log(`${tag} PASS (score ${verdict.score}) — kept`);
   } else {
-    await removeForMismatch(job, verdict, text.length);
-    console.log(`${tag} FAIL (score ${verdict.score}${verdict.skipKind ? `, ${verdict.skipKind}` : ''}) — moved to removed`);
+    await flagForMismatch(job, verdict, text.length);
+    console.log(`${tag} FLAGGED (score ${verdict.score}${verdict.skipKind ? `, ${verdict.skipKind}` : ''}) — kept, operator review`);
   }
 }
 

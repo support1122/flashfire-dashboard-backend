@@ -53,6 +53,7 @@ export default async function SummariesOverview(req, res) {
       perClientOperators,
       sessionStats,
       removedAgg,
+      flaggedAgg,
     ] = await Promise.all([
       // Heavy aiSummary text NEVER lands in the list payload — only a
       // computed `hasSummary` boolean. Cuts the response from ~500KB to
@@ -195,6 +196,12 @@ export default async function SummariesOverview(req, res) {
           },
         },
       ]),
+      // AI second-stage FLAGS per client (secondJudge.status:'failed'). These
+      // are kept jobs the AI flagged for operator review (not removed).
+      JobModel.aggregate([
+        { $match: { "secondJudge.status": "failed" } },
+        { $group: { _id: "$userID", count: { $sum: 1 } } },
+      ]),
     ]);
 
     const opsLifetimeBy = new Map();
@@ -210,6 +217,8 @@ export default async function SummariesOverview(req, res) {
         removedByAI: r.removedByAI || 0,
       });
     }
+    const flaggedBy = new Map();
+    for (const r of flaggedAgg) flaggedBy.set(String(r._id || "").toLowerCase(), r.count || 0);
     const userByEmail = new Map();
     for (const u of users) userByEmail.set(String(u.email || "").toLowerCase(), u);
 
@@ -285,6 +294,7 @@ export default async function SummariesOverview(req, res) {
     let linkedinSkippedTotal = 0;
     let removedTotal = 0;
     let removedByAITotal = 0;
+    let flaggedByAITotal = 0;
 
     const rows = profiles
       .map((p) => {
@@ -319,6 +329,8 @@ export default async function SummariesOverview(req, res) {
         const rem = removedBy.get(email) || { removed: 0, removedByAI: 0 };
         removedTotal += rem.removed;
         removedByAITotal += rem.removedByAI;
+        const flaggedByAI = flaggedBy.get(email) || 0;
+        flaggedByAITotal += flaggedByAI;
 
         // Per-client operator chips. Carries the full ExtensionSessionStat
         // rollup so the UI can render an English breakdown sentence per
@@ -366,6 +378,7 @@ export default async function SummariesOverview(req, res) {
           currentAllCount: all,
           removed: rem.removed,
           removedByAI: rem.removedByAI,
+          flaggedByAI,
           capRemaining: Math.max(0, effectiveCap - opsTodayCount),
           capStatus,
           operatorBreakdown: ops,
@@ -398,6 +411,7 @@ export default async function SummariesOverview(req, res) {
         linkedinSkippedTotal,
         removedTotal,
         removedByAITotal,
+        flaggedByAITotal,
       },
       operators: operatorAgg.map((o) => ({
         operator: o.operator || "(unknown)",

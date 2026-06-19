@@ -25,14 +25,12 @@ export default async function GetAiRemovedJobs(req, res) {
     const limit = Math.min(Math.max(limitRaw, 1), 50); // top-5 default, cap at 50
     const skip = (page - 1) * limit;
 
-    // Both the second judge and exclusion reconciliation set removedBy:'AI'.
-    // Fall back to a currentStatus "...by AI" match for any legacy rows.
+    // Second-stage screening now FLAGS jobs (secondJudge.status:'failed')
+    // instead of removing them — the operator decides. List those flagged jobs
+    // with their reason so the CRM modal surfaces the AI's concerns.
     const query = {
       userID: email,
-      $or: [
-        { removedBy: "AI" },
-        { currentStatus: { $regex: /by ai$/i } },
-      ],
+      "secondJudge.status": "failed",
     };
 
     const projection =
