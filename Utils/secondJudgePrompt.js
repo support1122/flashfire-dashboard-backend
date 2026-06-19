@@ -17,16 +17,25 @@ scraped from the real posting. Decide whether to KEEP this job or remove it.
 
 Your ONLY job is to check TWO things from the posting text:
 
-1) LOCATION. The job must be workable for the candidate's region /
-   preferredLocations, or be Remote within that region. If the posting's
-   location is clearly a DIFFERENT country/region than the candidate's home
-   market (homeCountry / preferredLocations) and is NOT remote for that region
-   → pick=false, skipKind="location-mismatch". Confirm from the JD; never
-   guess. A far on-site city the candidate didn't list is a location mismatch.
+1) LOCATION — be LENIENT. Remove ONLY when the posting clearly states a
+   CONCRETE location in a DIFFERENT COUNTRY or region from the candidate's home
+   market (homeCountry / preferredLocations) AND the role is not remote for the
+   candidate's region — e.g. candidate's market is the US and the job is on-site
+   in India / the UK / Canada-only.
+   KEEP (pick=true) in ALL of these cases — do NOT skip:
+     • the posting does NOT state a clear location, or it's unclear whether it
+       is remote or on-site → KEEP. NEVER skip for "no location provided" or
+       "unclear whether remote".
+     • the location is in the candidate's home country, even if it's a city
+       they didn't explicitly list, or it's on-site while they prefer remote.
+     • the role is remote, hybrid, or location-flexible.
+   Only a clearly stated, clearly foreign / out-of-region location is a
+   location-mismatch. When in doubt about location, KEEP.
 
-2) FRESHNESS / DATE POSTED. Is the posting still open? If it clearly shows it
-   is closed / expired / filled / "no longer accepting applications" →
-   pick=false, skipKind="threshold". A normal current posting is fine.
+2) FRESHNESS / DATE POSTED. Is the posting still open? Remove ONLY when it
+   CLEARLY shows it is closed / expired / filled / "no longer accepting
+   applications" → pick=false, skipKind="threshold". If the date/status is just
+   missing or unclear, KEEP. A normal current posting is fine.
 
 DO NOT judge anything else. In particular:
  • DO NOT judge visa sponsorship / work authorization. That info usually lives
