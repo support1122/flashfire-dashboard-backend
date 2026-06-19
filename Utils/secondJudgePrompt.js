@@ -49,6 +49,18 @@ The candidate's preferredRoles list is the WHOLE universe of acceptable
 disciplines. Do NOT widen the family across disciplines (e.g. don't pick
 "Inventory Control Analyst" when the candidate wants "Data Analyst").
 
+RULE 0 — DIRECT MATCH ALWAYS WINS (applies to EVERY field, not just the
+examples below). If the job title is the same as, or clearly contains, ANY one
+of the preferredRoles (case-insensitive, ignoring seniority words like Sr/Jr/I/
+II/Lead and trivial wording differences), that is a direct match → PICK with a
+high score. Example: title "Process Engineer" with preferredRole "Process
+Engineer" is an obvious PICK. The examples further down happen to use Data/
+Finance roles, but this grader covers ALL disciplines equally — Process,
+Semiconductor, Lithography, Mechanical, Hardware, Manufacturing, Chemical, etc.
+NEVER answer "does not match any preferred roles" when the title literally
+appears in the preferredRoles list. Only fall through to the qualifier steps
+below when there is NO such direct match.
+
 Step 1 — Extract the discipline QUALIFIER from each preferredRole
 ("Data Analyst" → "Data", "Financial Analyst" → "Financial/Finance",
 "Business Intelligence Engineer" → "BI"). The bare role noun ("Analyst",
@@ -96,13 +108,52 @@ or a foreign-language market is OUT OF SCOPE unless the posting confirms a
 location in the home country (or its Remote variant). When unconfirmed, set
 pick=false with skipKind="location-mismatch". Do not infer the location.`;
 
-// fmtList — normalize a profile field that may be an array or a delimited string.
+// fmtList — normalize a roles/locations field into clean, individual entries.
+// The value may be: a plain delimited string, a proper array of clean entries,
+// OR an array whose elements are themselves comma/slash/pipe-joined strings
+// (some save paths store the whole list in a single element). We flatten AND
+// split every element so the grader always sees distinct roles. Without this, a
+// single "Process Engineer, Equipment Engineer, ..." element looks like ONE
+// giant role and the model wrongly reports "no preferred roles match" (score 0).
 function fmtList(v) {
-    if (Array.isArray(v)) return v.filter(Boolean);
-    if (typeof v === 'string') {
-        return v.split(/\s*[/|,]\s*|\s{2,}/).map((s) => s.trim()).filter(Boolean);
+    const items = Array.isArray(v) ? v : (typeof v === 'string' ? [v] : []);
+    const out = [];
+    for (const item of items) {
+        if (typeof item !== 'string') continue;
+        for (const piece of item.split(/\s*[/|,]\s*|\s{2,}/)) {
+            const t = piece.trim();
+            if (t) out.push(t);
+        }
     }
-    return [];
+    return out;
+}
+
+// directRoleMatch — true when the job title clearly IS one of the candidate's
+// preferred roles (ignoring seniority words + punctuation). Used as a
+// deterministic safety net: the second judge must never remove a job for a
+// "role-mismatch" when its title literally matches a preferred role (guards
+// against LLM false-negatives like rejecting "Process Engineer" for a client
+// whose preferredRoles include "Process Engineer").
+const SENIORITY_RX = /\b(senior|sr|junior|jr|lead|staff|principal|associate|entry|level|intern|i|ii|iii|iv|v)\b/gi;
+function normRole(s) {
+    return String(s || '')
+        .toLowerCase()
+        .replace(/[^a-z0-9 ]/g, ' ')
+        .replace(SENIORITY_RX, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+export function directRoleMatch(jobTitle, preferredRolesRaw) {
+    const title = normRole(jobTitle);
+    if (!title) return false;
+    for (const r of fmtList(preferredRolesRaw)) {
+        const role = normRole(r);
+        // Require a qualified role (2+ words) so a bare "Engineer"/"Analyst"
+        // can't match every title.
+        if (!role || role.split(' ').length < 2) continue;
+        if (title === role || title.includes(role) || role.includes(title)) return true;
+    }
+    return false;
 }
 
 // splitRoles — clients sometimes type negative clauses into preferredRoles

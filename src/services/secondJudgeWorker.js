@@ -24,6 +24,7 @@ import { ProfileModel } from '../../Schema_Models/ProfileModel.js';
 import {
   SECOND_JUDGE_SYSTEM_PROMPT,
   buildSecondJudgeUserPrompt,
+  directRoleMatch,
 } from '../../Utils/secondJudgePrompt.js';
 
 // ─── Configuration ───────────────────────────────────────────────────
@@ -343,7 +344,23 @@ async function processJob(job) {
 
   // Step 3: re-judge on the real-site text.
   const verdict = await judgeRealSite({ profile, job, scrapedText: text });
-  const pass = verdict.pick === true && verdict.score >= THRESHOLD;
+  let pass = verdict.pick === true && verdict.score >= THRESHOLD;
+
+  // Safety net against role-mismatch false-negatives: if the grader rejected
+  // on a ROLE basis but the job title literally matches one of the client's
+  // preferred roles, the verdict is wrong — keep the job. (Other rejection
+  // kinds — location/seniority/auth — are respected.)
+  if (!pass) {
+    const roleBasedReject =
+      verdict.skipKind === 'role-mismatch' ||
+      /role[\s-]?mismatch|preferred roles|does not match any/i.test(verdict.reason || '');
+    if (roleBasedReject && directRoleMatch(job.jobTitle, profile.preferredRoles)) {
+      console.warn(`${tag} OVERRIDE: grader said role-mismatch but title matches a preferred role — keeping`);
+      pass = true;
+      verdict.reason = `Kept — title "${job.jobTitle}" matches a preferred role (grader role-mismatch overridden)`;
+      if (!verdict.score) verdict.score = THRESHOLD;
+    }
+  }
 
   if (pass) {
     await keepForPass(job, verdict, text.length);
