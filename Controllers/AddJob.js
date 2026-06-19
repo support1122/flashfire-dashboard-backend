@@ -19,14 +19,26 @@ export default async function AddJob(req, res) {
             });
         }
 
-        // Indeed links are not allowed — the dashboard needs the original
-        // employer apply URL, not an indeed.com redirect. Reject defensively
-        // (the extension also filters these before pushing).
-        if (/indeed\.com/i.test(String(jobDetails?.joblink || ''))) {
+        // Job-board / aggregator links are not allowed — the dashboard needs
+        // the ORIGINAL employer apply URL. Previous scraper versions dropped
+        // these before push (src/adapters/jobright.js → isLinkedInApplyUrl);
+        // the new JR-Direct extension flow lost that filter, so re-enforce it
+        // here (the single choke point every push goes through). Mirrors the
+        // old BLOCKED_HOST_RX (valid URLs) + BLOCKED_SUBSTRING_RX (fallback).
+        const joblinkRaw = String(jobDetails?.joblink || '');
+        const BLOCKED_HOST_RX = /(^|\.)(linkedin\.com|dice\.com|indeed\.com|lifeattiktok\.com|dataannotation\.tech|jobs\.apple\.com|humana\.wd5\.myworkdayjobs\.com)$/i;
+        const BLOCKED_SUBSTRING_RX = /(linkedin\.com|dice\.com|indeed\.com|lifeattiktok\.com|dataannotation\.tech|dickssportinggoods)/i;
+        let blockedSource = false;
+        try {
+            blockedSource = BLOCKED_HOST_RX.test(new URL(joblinkRaw).hostname);
+        } catch {
+            blockedSource = BLOCKED_SUBSTRING_RX.test(joblinkRaw);
+        }
+        if (blockedSource) {
             return res.status(403).json({
                 success: false,
                 error: 'BLOCKED_SOURCE',
-                message: 'Indeed job links are not allowed — provide the original employer apply URL.'
+                message: 'Job board/aggregator links (LinkedIn, Dice, Indeed, etc.) are not allowed — provide the original employer apply URL.'
             });
         }
 
