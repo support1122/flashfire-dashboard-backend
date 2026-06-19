@@ -269,6 +269,11 @@ export async function readCap(rawEmail) {
 }
 
 // countOpsToday(email) → number. Throws on DB error.
+// Counts operator-pushed jobs in the current daily window, EXCLUDING ones that
+// were removed (currentStatus starts with "deleted"/"removed") — same rule as
+// countTotalJobs / the plan cap. A job the second judge (or an operator) moves
+// to "deleted by AI" therefore frees its daily slot, so the client can still
+// receive new jobs instead of being stuck at the cap on auto-rejected jobs.
 export async function countOpsToday(rawEmail) {
     const email = String(rawEmail || "").trim().toLowerCase();
     if (!email || !email.includes("@")) {
@@ -280,6 +285,11 @@ export async function countOpsToday(rawEmail) {
         userID: email,
         createdByRole: "operations",
         _id: { $gte: todayLowBoundObjectId() },
+        $or: [
+            { currentStatus: { $exists: false } },
+            { currentStatus: null },
+            { currentStatus: { $not: /^(deleted|removed)/i } },
+        ],
     });
 }
 

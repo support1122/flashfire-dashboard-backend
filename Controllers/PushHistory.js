@@ -66,10 +66,18 @@ export default async function PushHistory(req, res) {
     const todaySeconds = Math.floor(todayStart.getTime() / 1000);
     const todayOidHex = todaySeconds.toString(16).padStart(8, "0") + "0000000000000000";
     const todayLowBound = new ObjectId(todayOidHex);
+    // Exclude removed jobs so this matches the AddJob gate (dailyCapGuard
+    // .countOpsToday) — a second-judge "deleted by AI" job frees its daily
+    // slot, so the extension's "remaining" must reflect that too.
     const opsCountToday = await JobModel.countDocuments({
       userID: email,
       createdByRole: "operations",
       _id: { $gte: todayLowBound },
+      $or: [
+        { currentStatus: { $exists: false } },
+        { currentStatus: null },
+        { currentStatus: { $not: /^(deleted|removed)/i } },
+      ],
     });
 
     // 3) target cap (if set on profile)

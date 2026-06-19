@@ -11,98 +11,113 @@
 //   buildSecondJudgeUserPrompt({ profile, job, scrapedText, threshold }) — the
 //     user message: candidate hard-signals + the real-site JD for one job.
 
-export const SECOND_JUDGE_SYSTEM_PROMPT = `You are a hiring-fit grader for a job-search assistant.
-You are given ONE job and the candidate's profile. The job's "jd" field is the
-FULL text scraped directly from the real employer posting — it is authoritative.
-Decide whether this job matches the candidate's profile.
+export const SECOND_JUDGE_SYSTEM_PROMPT = `You are the SECOND-STAGE screener for a job-search assistant. A FIRST stage
+already judged ROLE FIT against the job's short description and PASSED this job.
+Your job is NOT to re-judge the role — it is to verify the FULL real employer
+posting ("jd", authoritative) for hard disqualifiers the first stage could not
+see. Decide whether to KEEP this job or remove it.
 
-The user prompt contains a "## Candidate hard signals" block with the
-authoritative preferredRoles, excludedRoles, experienceLevel, and
-preferredLocations pulled DIRECTLY from the client's onboarding profile.
-This is the ground truth — the candidate brief / aiSummary may paraphrase,
-but if they conflict, the hard-signals block wins.
+The "## Candidate hard signals" block (preferredRoles, excludedRoles,
+experienceLevel, preferredLocations, workAuth, homeCountry, excludedCompanies)
+is the ground truth.
 
-excludedRoles is a HARD VETO list. If the job title or its role family matches
-ANY excludedRole — even loosely — you MUST set pick=false and
-skipKind="role-mismatch", and quote the matched excludedRole in the reason.
-This overrides every other signal.
+WHAT TO FOCUS ON — in priority order:
 
-Because "jd" is the full real posting, you MUST read it for hard disqualifiers
-buried in the body — clearance required, on-site/in-office mandates,
-citizenship-only clauses, 10+ YOE caps, travel %, language requirements. These
-almost never appear in the title.
+1) VISA SPONSORSHIP / WORK AUTHORIZATION  ← THE PRIMARY SCREEN, weigh it most.
+   Treat the candidate as NEEDING sponsorship UNLESS workAuth clearly indicates
+   "US Citizen" or "Green Card"/"Permanent Resident". When the candidate needs
+   sponsorship and the posting says any of: requires US citizenship, "US
+   Person", active/eligible security clearance, "must be authorized to work in
+   the US without sponsorship now or in the future", "we do not sponsor",
+   "no visa sponsorship", "citizens or permanent residents only" → set
+   pick=false, skipKind="auth-mismatch", and quote the clause. This is the main
+   reason a job gets removed at this stage. If the candidate is a citizen /
+   green-card holder, sponsorship is NEVER a problem — do not skip on auth.
+
+2) LOCATION. The job must be workable for the candidate's region /
+   preferredLocations, or be Remote within that region. If the posting's
+   location is clearly a different country/region than the candidate's home
+   market and is NOT remote for that region → pick=false,
+   skipKind="location-mismatch". Confirm from the JD; never guess. On-site in a
+   far city the candidate didn't list is a location mismatch.
+
+3) DATE POSTED / FRESHNESS. Prefer current openings. If the posting clearly
+   shows it is closed / expired / "no longer accepting applications", lower the
+   score and skip with a clear reason. A normal recent posting is fine.
+
+4) EXCLUSIONS. If the job title matches an excludedRole the candidate opted out
+   of → pick=false, skipKind="role-mismatch" (quote it). If the company is in
+   excludedCompanies → pick=false, skipKind="company-blocked".
+
+ROLE / TITLE — DO NOT RE-LITIGATE. Stage one already decided the role fits.
+You must NOT skip for "role-mismatch" merely because the title's discipline
+isn't a verbatim preferredRole, or because the title isn't in the list. The
+ONLY role-based removal allowed here is an excludedRole hit (priority 4).
+Otherwise treat the role as acceptable. Give role/title little weight in the
+score. (Example: title "Process Engineer" — keep it; do not nitpick the role.)
+
+DECISION RULE: default to pick=true (KEEP). Set pick=false ONLY when one of the
+disqualifiers above is clearly present in the posting. When unsure, KEEP.
 
 Return STRICT JSON only — no prose, no markdown:
-{"pick":<true|false>,"score":<0-100>,"reason":"<one short sentence, 90-160 chars>","matchedRole":"<verbatim preferredRole this maps to, or '' for skip>","skipKind":"<see below, '' for picks>"}
+{"pick":<true|false>,"score":<0-100>,"reason":"<one short sentence, 90-160 chars naming the actual disqualifier>","skipKind":"<auth-mismatch|location-mismatch|role-mismatch|company-blocked|threshold|''>"}
 
-skipKind enum (REQUIRED for a skip — empty string for a pick):
-- "threshold"      → score >= 40 but < operator threshold
-- "role-mismatch"  → job title's discipline qualifier does NOT match any preferredRole's qualifier
-- "seniority-mismatch" → discipline matches but seniority is 2+ levels off
-- "location-mismatch"  → outside preferredLocations + workModel forbids it
-- "auth-mismatch"  → requires citizenship/clearance candidate doesn't have
-- "company-blocked" → company name in excludedCompanies
-Pick the SINGLE biggest reason; do not stack.
+skipKind is '' when pick=true. Pick the SINGLE biggest reason; do not stack.
 
-ROLE MATCHING (THE MOST IMPORTANT RULE):
-The candidate's preferredRoles list is the WHOLE universe of acceptable
-disciplines. Do NOT widen the family across disciplines (e.g. don't pick
-"Inventory Control Analyst" when the candidate wants "Data Analyst").
+SCORING (0-100): sponsorship/work-authorization fit dominates, then location,
+then freshness; role/title contributes little. A clean keep is typically 75-95;
+a clear disqualifier scores low.
 
-Step 1 — Extract the discipline QUALIFIER from each preferredRole
-("Data Analyst" → "Data", "Financial Analyst" → "Financial/Finance",
-"Business Intelligence Engineer" → "BI"). The bare role noun ("Analyst",
-"Engineer", "Manager", "Developer") is NEVER a qualifier on its own.
+REASON QUALITY — ONE concrete sentence naming the real disqualifier, e.g.
+"Skip — posting requires US citizenship; candidate is on F1 OPT and needs
+sponsorship." Never "good fit" / "not a match" / "see JD".`;
 
-Step 2 — PICK only when the job title contains EITHER (a) a direct qualifier
-match from the candidate's list (case-insensitive; allow obvious abbreviations
-BI↔Business Intelligence, ML↔Machine Learning, FE↔Frontend, BE↔Backend), OR
-(b) an ADJACENT qualifier in the SAME field with strong domain overlap
-confirmed by the JD body. Allowed adjacencies only:
-  Data ↔ Analytics ↔ Reporting ↔ Insights
-  BI / Business Intelligence ↔ Reporting ↔ Analytics
-  Financial ↔ Finance ↔ FP&A ↔ Treasury (only when JD is finance work)
-  Software / Backend / Frontend / Full-Stack ↔ Developer / SWE / SDE
-  Product Manager ↔ Product Owner ↔ APM
-  ML ↔ AI ↔ Machine Learning Engineer ↔ Applied Scientist
-Adjacent matches REQUIRE the JD body to confirm the work is in that field.
-
-Step 3 — When still in doubt, SKIP with skipKind:"role-mismatch". NEVER allow a
-cross-field match (Sourcing, Inventory Control, Procurement, Sales, Marketing,
-Customer Success, Recruiting, QA unless QA is in preferredRoles).
-
-Scoring rules:
-- score 0-100 weighing: role qualifier match (45%), seniority (20%),
-  location/work-model (15%), skills/JD signals (15%), salary (5%).
-- BEFORE any pick logic: excludedRoles veto, then qualifier-miss veto.
-- Pick only when (a) qualifier matches (direct or adjacent in same field)
-  AND (b) score >= operator threshold AND (c) seniority within band.
-
-Seniority bands (use experienceLevel from hard signals):
-  intern→0y · entry→0-3y (1-2y postings ARE entry) · mid→2-6y ·
-  senior→5-10y (Sr/II/III) · lead/staff→7-12y · principal→10-15y ·
-  director/VP→12+y mgmt · exec→15+y. Skip only when bands are 2+ apart;
-  adjacent bands (entry↔mid, mid↔senior) still pick. Entry candidate vs JD
-  demanding "1+/2+/1-3 years" → PICK; only skip when JD demands 4+ years or a
-  senior-tier title.
-
-REASON QUALITY — ONE short sentence, 90-160 chars, plain English, concrete.
-NEVER write "good fit", "not a match", "see JD". The "matchedRole" field MUST
-be the VERBATIM preferredRole string for picks, '' for skips.
-
-GEOGRAPHIC / REGION / LANGUAGE SCOPE:
-A job whose title signals a market OUTSIDE the candidate's home country/region
-or a foreign-language market is OUT OF SCOPE unless the posting confirms a
-location in the home country (or its Remote variant). When unconfirmed, set
-pick=false with skipKind="location-mismatch". Do not infer the location.`;
-
-// fmtList — normalize a profile field that may be an array or a delimited string.
+// fmtList — normalize a roles/locations field into clean, individual entries.
+// The value may be: a plain delimited string, a proper array of clean entries,
+// OR an array whose elements are themselves comma/slash/pipe-joined strings
+// (some save paths store the whole list in a single element). We flatten AND
+// split every element so the grader always sees distinct roles. Without this, a
+// single "Process Engineer, Equipment Engineer, ..." element looks like ONE
+// giant role and the model wrongly reports "no preferred roles match" (score 0).
 function fmtList(v) {
-    if (Array.isArray(v)) return v.filter(Boolean);
-    if (typeof v === 'string') {
-        return v.split(/\s*[/|,]\s*|\s{2,}/).map((s) => s.trim()).filter(Boolean);
+    const items = Array.isArray(v) ? v : (typeof v === 'string' ? [v] : []);
+    const out = [];
+    for (const item of items) {
+        if (typeof item !== 'string') continue;
+        for (const piece of item.split(/\s*[/|,]\s*|\s{2,}/)) {
+            const t = piece.trim();
+            if (t) out.push(t);
+        }
     }
-    return [];
+    return out;
+}
+
+// directRoleMatch — true when the job title clearly IS one of the candidate's
+// preferred roles (ignoring seniority words + punctuation). Used as a
+// deterministic safety net: the second judge must never remove a job for a
+// "role-mismatch" when its title literally matches a preferred role (guards
+// against LLM false-negatives like rejecting "Process Engineer" for a client
+// whose preferredRoles include "Process Engineer").
+const SENIORITY_RX = /\b(senior|sr|junior|jr|lead|staff|principal|associate|entry|level|intern|i|ii|iii|iv|v)\b/gi;
+function normRole(s) {
+    return String(s || '')
+        .toLowerCase()
+        .replace(/[^a-z0-9 ]/g, ' ')
+        .replace(SENIORITY_RX, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+export function directRoleMatch(jobTitle, preferredRolesRaw) {
+    const title = normRole(jobTitle);
+    if (!title) return false;
+    for (const r of fmtList(preferredRolesRaw)) {
+        const role = normRole(r);
+        // Require a qualified role (2+ words) so a bare "Engineer"/"Analyst"
+        // can't match every title.
+        if (!role || role.split(' ').length < 2) continue;
+        if (title === role || title.includes(role) || role.includes(title)) return true;
+    }
+    return false;
 }
 
 // splitRoles — clients sometimes type negative clauses into preferredRoles

@@ -13,6 +13,7 @@ import Get24HourJobs from "./Controllers/Get24HourJobs.js";
 import StoreJobAndUserDetails, { saveToDashboard } from "./Controllers/StoreJobAndUserDetails.js";
 import UpdateChanges from "./Controllers/UpdateChanges.js";
 import GetRemovalReason from "./Controllers/GetRemovalReason.js";
+import GetAiRemovedJobs from "./Controllers/GetAiRemovedJobs.js";
 import PlanSelect from "./Controllers/PlanSelect.js";
 import { uploadProfileFile, upload } from "./Controllers/UploadProfileFile.js";
 import { uploadSingleFile, uploadBase64File, uploadOnboardingAttachment, upload as uploadMiddleware } from "./Controllers/UploadFile.js";
@@ -362,6 +363,7 @@ app.get("/get/prev24hourjobs", Get24HourJobs);
 app.post("/storejobanduserdetails", StoreJobAndUserDetails);
 app.put("/updatechanges", VerifyJobIDAndChanges, UpdateChanges);
 app.post("/get-removal-reason", GetRemovalReason);
+app.get("/ai-removed-jobs", GetAiRemovedJobs);
 
 // One-time data fix: reset appliedDate for Feb/March 2026 applied jobs to dateAdded + 1 day
 app.post("/fix/applied", fixAppliedDates);
