@@ -52,6 +52,7 @@ export default async function SummariesOverview(req, res) {
       operatorAgg,
       perClientOperators,
       sessionStats,
+      removedAgg,
     ] = await Promise.all([
       // Heavy aiSummary text NEVER lands in the list payload — only a
       // computed `hasSummary` boolean. Cuts the response from ~500KB to
@@ -169,6 +170,31 @@ export default async function SummariesOverview(req, res) {
           return [];
         }
       })(),
+      // Removed jobs per client: total removed + the AI subset (removedBy:'AI'
+      // or currentStatus "… by AI"). Powers the Removed / Removed-by-AI split.
+      JobModel.aggregate([
+        { $match: { currentStatus: { $regex: /^(deleted|removed)/i } } },
+        {
+          $group: {
+            _id: "$userID",
+            removed: { $sum: 1 },
+            removedByAI: {
+              $sum: {
+                $cond: [
+                  {
+                    $or: [
+                      { $eq: ["$removedBy", "AI"] },
+                      { $regexMatch: { input: { $ifNull: ["$currentStatus", ""] }, regex: /by ai$/i } },
+                    ],
+                  },
+                  1,
+                  0,
+                ],
+              },
+            },
+          },
+        },
+      ]),
     ]);
 
     const opsLifetimeBy = new Map();
@@ -177,6 +203,13 @@ export default async function SummariesOverview(req, res) {
     for (const r of opsToday) opsTodayBy.set(String(r._id || "").toLowerCase(), r.count);
     const allBy = new Map();
     for (const r of allLifetime) allBy.set(String(r._id || "").toLowerCase(), r.count);
+    const removedBy = new Map();
+    for (const r of removedAgg) {
+      removedBy.set(String(r._id || "").toLowerCase(), {
+        removed: r.removed || 0,
+        removedByAI: r.removedByAI || 0,
+      });
+    }
     const userByEmail = new Map();
     for (const u of users) userByEmail.set(String(u.email || "").toLowerCase(), u);
 
@@ -250,6 +283,8 @@ export default async function SummariesOverview(req, res) {
     let staleCount = 0;
     let captureSessionsToday = 0;
     let linkedinSkippedTotal = 0;
+    let removedTotal = 0;
+    let removedByAITotal = 0;
 
     const rows = profiles
       .map((p) => {
@@ -280,6 +315,10 @@ export default async function SummariesOverview(req, res) {
 
         const ext = extByClient.get(email);
         if (ext) linkedinSkippedTotal += ext.linkedinSkipped;
+
+        const rem = removedBy.get(email) || { removed: 0, removedByAI: 0 };
+        removedTotal += rem.removed;
+        removedByAITotal += rem.removedByAI;
 
         // Per-client operator chips. Carries the full ExtensionSessionStat
         // rollup so the UI can render an English breakdown sentence per
@@ -325,6 +364,8 @@ export default async function SummariesOverview(req, res) {
           currentOpsCount: opsLife,
           currentOpsToday: opsTodayCount,
           currentAllCount: all,
+          removed: rem.removed,
+          removedByAI: rem.removedByAI,
           capRemaining: Math.max(0, effectiveCap - opsTodayCount),
           capStatus,
           operatorBreakdown: ops,
@@ -355,6 +396,8 @@ export default async function SummariesOverview(req, res) {
         opsTotal,
         opsToday: opsTodayTotal,
         linkedinSkippedTotal,
+        removedTotal,
+        removedByAITotal,
       },
       operators: operatorAgg.map((o) => ({
         operator: o.operator || "(unknown)",
