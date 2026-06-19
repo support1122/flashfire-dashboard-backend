@@ -76,10 +76,18 @@ export default async function ExtensionTodayStats(req, res) {
                     },
                 },
             ]),
+            // Drives "remaining" — exclude removed jobs so it matches the
+            // AddJob gate (dailyCapGuard.countOpsToday). A second-judge
+            // "deleted by AI" job frees its daily slot.
             JobModel.countDocuments({
                 userID: email,
                 createdByRole: "operations",
                 _id: { $gte: todayLowBound },
+                $or: [
+                    { currentStatus: { $exists: false } },
+                    { currentStatus: null },
+                    { currentStatus: { $not: /^(deleted|removed)/i } },
+                ],
             }),
             // Server-truth pushed today, grouped by extensionCode (set by AddJob
             // when extension sends it + by saveToDashboard).
