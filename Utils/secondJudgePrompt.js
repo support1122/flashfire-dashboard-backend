@@ -166,27 +166,16 @@ function deriveHomeCountry(profile) {
 }
 
 export function buildSecondJudgeUserPrompt({ profile, job, scrapedText, threshold }) {
-    const rolesRaw = fmtList(profile?.preferredRoles);
-    const { preferred: preferredRoles, excluded: excludedRoles } = splitRoles(rolesRaw);
+    // LOCATION + FRESHNESS only — give the grader just the location signals it
+    // needs. Deliberately NO role/sponsorship/excluded fields (stage one owns
+    // role; sponsorship is unreliable from scraped text) so the model can't be
+    // tempted to re-judge them.
     const preferredLocations = fmtList(profile?.preferredLocations);
-
-    const hardSignals = {
-        preferredRoles: preferredRoles.length ? preferredRoles : '(not specified — fall back to summary)',
-        excludedRoles: excludedRoles.length ? excludedRoles : [],
-        experienceLevel: profile?.experienceLevel || '(not specified)',
+    const locationSignals = {
         preferredLocations: preferredLocations.length ? preferredLocations : '(not specified)',
-        workAuth: profile?.usWorkEligibility || profile?.visaStatus || '(not specified)',
         homeCountry: deriveHomeCountry(profile),
-        excludedCompanies: profile?.excludedCompanies || profile?.removedCompanies || [],
     };
-    const hardSignalsBlock = `## Candidate hard signals (AUTHORITATIVE — quote these exact role strings in your reason)\n${JSON.stringify(hardSignals, null, 2)}\n`;
-
-    const aiSummary = profile?.aiSummary && String(profile.aiSummary).trim();
-    const intentBlock = aiSummary
-        ? `## Candidate brief (use for nuance — but hard signals above win on conflict):\n${aiSummary}\n`
-        : `## Candidate raw profile (no AI summary built yet):\n${JSON.stringify({
-              targetCompanies: profile?.targetCompanies || '',
-          }, null, 2)}\n`;
+    const signalsBlock = `## Candidate location (AUTHORITATIVE for the location check)\n${JSON.stringify(locationSignals, null, 2)}\n`;
 
     // Real-site JD. Trim to keep token cost bounded — gpt-4o-mini priced at
     // ~$0.15/1M input, so a single 8000-char posting is well under a cent.
@@ -202,8 +191,7 @@ export function buildSecondJudgeUserPrompt({ profile, job, scrapedText, threshol
 
     return `Threshold: ${threshold}
 
-${hardSignalsBlock}
-${intentBlock}
+${signalsBlock}
 ## Job to judge (real employer-site text — return ONE decision):
 ${JSON.stringify(slim, null, 2)}`;
 }

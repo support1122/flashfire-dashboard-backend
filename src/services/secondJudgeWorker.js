@@ -24,7 +24,6 @@ import { ProfileModel } from '../../Schema_Models/ProfileModel.js';
 import {
   SECOND_JUDGE_SYSTEM_PROMPT,
   buildSecondJudgeUserPrompt,
-  directRoleMatch,
 } from '../../Utils/secondJudgePrompt.js';
 
 // ─── Configuration ───────────────────────────────────────────────────
@@ -65,6 +64,23 @@ function withTimeout(promise, ms, label) {
     timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
   });
   return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
+// fetchWithTimeout — fetch that ABORTS on timeout so a slow scraper/OpenAI
+// request doesn't leak a socket (the old withTimeout(fetch(...)) left the
+// underlying request running). On timeout the AbortError surfaces to the
+// caller, which retries with backoff / fails open.
+async function fetchWithTimeout(url, options = {}, ms = 30000, label = 'request') {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), ms);
+  try {
+    return await fetch(url, { ...options, signal: ctrl.signal });
+  } catch (e) {
+    if (e?.name === 'AbortError') throw new Error(`${label} timed out after ${ms}ms`);
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 // isScrapeableEmployerUrl — only real employer/ATS pages can be scraped for
@@ -159,7 +175,7 @@ async function scrapeJobText(joblink) {
   const url = `${SCRAPER_BASE_URL}${SCRAPER_EXTRACT_PATH}${encodeURIComponent(joblink)}`;
   let resp;
   try {
-    resp = await withTimeout(fetch(url, { method: 'GET' }), SCRAPER_TIMEOUT_MS, 'scraper /extract');
+    resp = await fetchWithTimeout(url, { method: 'GET' }, SCRAPER_TIMEOUT_MS, 'scraper /extract');
   } catch (e) {
     const err = new Error(`Scraper request failed: ${e.message}`);
     err._stage = 'Scraper Fetch';
@@ -199,12 +215,13 @@ async function judgeRealSite({ profile, job, scrapedText }) {
   };
   let resp;
   try {
-    resp = await withTimeout(
-      fetch(OPENAI_URL, {
+    resp = await fetchWithTimeout(
+      OPENAI_URL,
+      {
         method: 'POST',
         headers: { 'content-type': 'application/json', authorization: `Bearer ${apiKey}` },
         body: JSON.stringify(body),
-      }),
+      },
       OPENAI_TIMEOUT_MS,
       'OpenAI chat.completions'
     );
@@ -322,23 +339,10 @@ async function processJob(job) {
 
   // Step 3: re-judge on the real-site text.
   const verdict = await judgeRealSite({ profile, job, scrapedText: text });
-  let pass = verdict.pick === true && verdict.score >= THRESHOLD;
-
-  // Safety net against role-mismatch false-negatives: if the grader rejected
-  // on a ROLE basis but the job title literally matches one of the client's
-  // preferred roles, the verdict is wrong — keep the job. (Other rejection
-  // kinds — location/seniority/auth — are respected.)
-  if (!pass) {
-    const roleBasedReject =
-      verdict.skipKind === 'role-mismatch' ||
-      /role[\s-]?mismatch|preferred roles|does not match any/i.test(verdict.reason || '');
-    if (roleBasedReject && directRoleMatch(job.jobTitle, profile.preferredRoles)) {
-      console.warn(`${tag} OVERRIDE: grader said role-mismatch but title matches a preferred role — keeping`);
-      pass = true;
-      verdict.reason = `Kept — title "${job.jobTitle}" matches a preferred role (grader role-mismatch overridden)`;
-      if (!verdict.score) verdict.score = THRESHOLD;
-    }
-  }
+  // The prompt judges LOCATION + FRESHNESS only and never emits role-mismatch,
+  // so no role override is needed here (an old directRoleMatch override was
+  // removed — its reason-text regex could wrongly KEEP a location-failed job).
+  const pass = verdict.pick === true && verdict.score >= THRESHOLD;
 
   if (pass) {
     await keepForPass(job, verdict, text.length);
