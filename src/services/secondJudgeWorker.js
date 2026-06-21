@@ -4,19 +4,20 @@
 // scraper) and pushes the matches to the dashboard. This worker is the second
 // gate: for each such job it opens the REAL employer posting via the scraper,
 // scrapes the full visible text, and re-judges that text against the client
-// profile with the same grader criteria. A pass keeps the job; a mismatch moves
-// it to the "removed by AI" column with an operator-facing reason.
+// profile (LOCATION + FRESHNESS only). It NEVER removes the job — a pass keeps
+// it; a mismatch only FLAGS it (records the reason) for the operator to review
+// and decide. currentStatus/timeline are never touched here.
 //
 // Pattern mirrors autoOptimizationWorker.js: MongoDB polling (no Redis), atomic
 // claim, exponential backoff, stale-processing recovery. Failures to SCREEN
 // (scrape down, OpenAI down, thin content, no profile) fail OPEN — the job is
-// kept and marked 'skipped'; we only ever remove on a clear judge mismatch.
+// kept and marked 'skipped'.
 //
 // secondJudge.status lifecycle:
 //   pending    → queued by AddJob (extension jobs with a joblink)
 //   processing → claimed by this worker
 //   passed     → re-judged on real-site text, kept
-//   failed     → re-judged on real-site text, mismatch → moved to removed
+//   failed     → re-judged on real-site text, mismatch → FLAGGED (kept; operator decides)
 //   skipped    → could not screen after retries (kept, fail-open)
 
 import { JobModel } from '../../Schema_Models/JobModel.js';
@@ -53,6 +54,8 @@ const OPENAI_TIMEOUT_MS = parseInt(process.env.SECOND_JUDGE_OPENAI_TIMEOUT_MS) |
 let isProcessing = false;
 let workerRunning = false;
 let pollTimer = null;
+let lastRecoverMs = 0;
+const RECOVER_EVERY_MS = 60 * 1000; // periodic stale-recovery cadence
 
 function nowIST() {
   return new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
@@ -356,6 +359,13 @@ async function processJob(job) {
 // ─── Polling Loop ────────────────────────────────────────────────────
 async function pollLoop() {
   if (!workerRunning) return;
+  // Periodic stale-recovery (not just at boot): a job left in 'processing' by a
+  // crash/restart is invisible to claimNextJob (which only picks 'pending').
+  // Fire-and-forget so it never delays claiming; the updateMany is indexed.
+  if (Date.now() - lastRecoverMs > RECOVER_EVERY_MS) {
+    lastRecoverMs = Date.now();
+    recoverStaleJobs().catch((e) => console.warn('[SecondJudge] recover error:', e.message));
+  }
   try {
     const job = await claimNextJob();
     if (job) {
