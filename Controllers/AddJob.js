@@ -26,8 +26,10 @@ export default async function AddJob(req, res) {
         // here (the single choke point every push goes through). Mirrors the
         // old BLOCKED_HOST_RX (valid URLs) + BLOCKED_SUBSTRING_RX (fallback).
         const joblinkRaw = String(jobDetails?.joblink || '');
-        const BLOCKED_HOST_RX = /(^|\.)(linkedin\.com|dice\.com|indeed\.com|lifeattiktok\.com|dataannotation\.tech|jobs\.apple\.com|humana\.wd5\.myworkdayjobs\.com)$/i;
-        const BLOCKED_SUBSTRING_RX = /(linkedin\.com|dice\.com|indeed\.com|lifeattiktok\.com|dataannotation\.tech|dickssportinggoods)/i;
+        // jobright.ai included: a /jobs/info/<id> link means the employer apply
+        // URL never resolved — reject it (the dashboard needs the real URL).
+        const BLOCKED_HOST_RX = /(^|\.)(jobright\.ai|linkedin\.com|dice\.com|indeed\.com|lifeattiktok\.com|dataannotation\.tech|jobs\.apple\.com|humana\.wd5\.myworkdayjobs\.com)$/i;
+        const BLOCKED_SUBSTRING_RX = /(jobright\.ai|linkedin\.com|dice\.com|indeed\.com|lifeattiktok\.com|dataannotation\.tech|dickssportinggoods)/i;
         let blockedSource = false;
         try {
             blockedSource = BLOCKED_HOST_RX.test(new URL(joblinkRaw).hostname);
