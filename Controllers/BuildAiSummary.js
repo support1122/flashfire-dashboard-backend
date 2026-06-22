@@ -827,6 +827,35 @@ async function callOpenAI(profile, resume, existingSummary, profileDiff, apiKey,
   }
 }
 
+// applyNotesPass — focused SECOND LLM pass: hand the model round-1's brief +
+// the operator notes and have it fix/complete the brief so EVERY directive is
+// reflected with correct polarity. Runs only when notes exist (+1 call/build).
+// Fail-open: returns the input brief unchanged on any error/empty — the
+// deterministic enforceNoteDirectives still runs afterwards as the guarantee.
+async function applyNotesPass(brief, notesText, apiKey) {
+  if (!notesText) return brief;
+  const sys = `You revise a candidate brief so it FULLY reflects the operator's notes. Output ONLY the corrected brief — same section headers, same order, keep all existing content, change nothing the notes don't require.
+Rules:
+- A note line beginning "SCRAP:" = the candidate WANTS it (TARGET). "SKIP:" = EXCLUDE it. The prefix is the FINAL polarity — NEVER flip it. For un-prefixed lines: "scrap X" (no negation) = TARGET; "do not scrap X" / "skip X" = EXCLUDE.
+- Every TARGET directive MUST appear in "# Strong Signals" as "- <X> — operator priority".
+- Every EXCLUDE directive MUST appear in "# Hard Disqualifiers" as "- Skip <X>.".
+- Include EVERY directive — do not drop, merge, soften, or duplicate; use the operator's wording.
+- NEVER put a wanted (SCRAP/target) role into Hard Disqualifiers.`;
+  const user = `Operator notes:\n<<<NOTES>>>\n${notesText}\n<<<END>>>\n\nCurrent brief:\n<<<BRIEF>>>\n${brief}\n<<<END>>>\n\nReturn the corrected full brief.`;
+  try {
+    const res = await axios.post("https://api.openai.com/v1/chat/completions", {
+      model: OPENAI_MODEL,
+      messages: [{ role: "system", content: sys }, { role: "user", content: user }],
+      temperature: 0,
+    }, { timeout: 60_000, headers: { "content-type": "application/json", authorization: `Bearer ${apiKey || OPENAI_API_KEY}` } });
+    const fixed = (res.data?.choices?.[0]?.message?.content || "").trim();
+    return fixed.length > 50 ? fixed : brief; // sanity: ignore a truncated/empty rewrite
+  } catch (e) {
+    console.warn("[BuildAiSummary] applyNotesPass failed, keeping round-1:", e.message);
+    return brief;
+  }
+}
+
 // Core build pipeline — no req/res. Returns a { success, ... } object so it
 // can be called both from the HTTP handler AND fire-and-forget from profile
 // create/update controllers to auto-rebuild summaries.
@@ -970,6 +999,10 @@ async function runForProfileCore(profile, apiKey, reasonTag = "manual") {
   const provExtract = extractProvenance(summary, { noResume: !resume });
   summary = provExtract.cleanText;
   let aiProvenance = provExtract.provenance;
+  // Round 2 (LLM): re-apply the operator notes to the brief so every directive
+  // is reflected with correct polarity. enforceNoteDirectives below is the
+  // deterministic backstop in case this pass still misses one.
+  summary = (await applyNotesPass(summary, (profile?.aiNotes?.text || "").trim(), apiKey)).slice(0, MAX_SUMMARY_CHARS);
   // Apply operator's saved format overlay: if enabled, re-inject any bullets
   // the operator added on top of the previous build + replace any
   // locked-section bodies verbatim. Pure AI output if no overlay or overlay
