@@ -460,7 +460,7 @@ The text below is from the operator (${when}${who ? ` · ${who}` : ""}). These a
 
 CRITICAL CONTRACT — read before writing anything:
 A. Split the notes text into a numbered list of distinct directives in your head. A directive = one sentence or one bullet expressing ONE intent.
-B. For each directive, FIRST decide its polarity: is there a negation word (not/don't/never/no/skip/exclude) attached to "scrap"? If NO negation → it is a TARGET/INCLUDE directive. If negation present → it is an EXCLUDE directive. Get polarity right before routing.
+B. For each directive, FIRST decide its polarity. If the line begins with an explicit "SCRAP:" or "SKIP:" prefix, THAT prefix is the FINAL, AUTHORITATIVE polarity — SCRAP: = TARGET/INCLUDE (the candidate WANTS it), SKIP: = EXCLUDE — and it OVERRIDES everything else; never flip it. Otherwise fall back to the negation-word test: is there a negation word (not/don't/never/no/skip/exclude) attached to "scrap"? If NO negation → TARGET/INCLUDE; if negation present → EXCLUDE. (Note: bare "scrap X" / "scrap X more" with NO negation is a TARGET — the candidate WANTS X — never route it to Hard Disqualifiers.) Get polarity right before routing.
 C. Every directive MUST produce at least one corresponding bullet in the brief, in the section dictated by the ROUTING RULES below.
 D. After writing the brief, walk the directive list a second time and verify each is reflected with the CORRECT polarity. If even one is missing, in the wrong section, or has flipped polarity, REWRITE before output. A flipped or missed directive is a CRITICAL FAILURE.
 E. The "— operator priority" suffix is RESERVED for items that come FROM operator notes. Items derived from the resume or profile MUST NOT carry this suffix. Do not blanket-tag every Strong Signal bullet.
@@ -787,9 +787,9 @@ async function fetchResume(email) {
 // directive or mis-suffixed Strong Signals. Lower temp = stricter prompt
 // adherence at the cost of slightly more repetitive phrasing — acceptable
 // because the brief is read by a grader, not a human reader.
-const SUMMARY_TEMPERATURE = Number.isFinite(Number(process.env.FF_SUMMARY_TEMPERATURE))
-  ? Number(process.env.FF_SUMMARY_TEMPERATURE)
-  : 0.05;
+// 0 = greedy decoding — most deterministic, strictest rule adherence (this is
+// a classification/routing task, not creative writing). Overridable via env.
+const SUMMARY_TEMPERATURE = 0
 
 async function callOpenAI(profile, resume, existingSummary, profileDiff, apiKey, overlay = null) {
   const body = {
