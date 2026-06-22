@@ -199,7 +199,7 @@ export default async function SummariesOverview(req, res) {
       // AI second-stage FLAGS per client (secondJudge.status:'failed'). These
       // are kept jobs the AI flagged for operator review (not removed).
       JobModel.aggregate([
-        { $match: { "secondJudge.status": "failed" } },
+        { $match: { "secondJudge.status": "failed", currentStatus: { $not: /^(deleted|removed)/i } } },
         { $group: { _id: "$userID", count: { $sum: 1 } } },
       ]),
     ]);

@@ -203,12 +203,13 @@ export const JobSchema = new mongoose.Schema({
   // Second-stage screening tracking (secondJudgeWorker). Only set to
   // 'pending' for jobs pushed by the JR-Direct extension auto-judge flow.
   // The worker opens the real employer site via the scraper, re-judges the
-  // full posting text against the client profile, and moves the job to the
-  // removed column when the real JD fails the grade. 'passed' keeps it.
+  // full posting text against the client profile, and FLAGS the job ('failed'
+  // + reason) for operator review when it fails — it does NOT remove it.
+  // 'passed' keeps it.
   secondJudge: {
     status: {
       type: String,
-      enum: ['pending', 'processing', 'passed', 'failed', 'skipped'],
+      enum: ['pending', 'processing', 'passed', 'failed', 'skipped', 'reviewed'],
       default: null
     },
     attempts: { type: Number, default: 0 },

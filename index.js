@@ -342,7 +342,8 @@ app.use((err, req, res, next) => {
       startSummarySweepWorker();
       // Second-stage screening: opens the real employer site for each
       // extension-pushed job, re-judges the full posting against the client
-      // profile, and removes mismatches. DB-polled, no Redis.
+      // profile, and FLAGS mismatches for operator review (does not remove).
+      // DB-polled, no Redis.
       startSecondJudgeWorker();
 
       // Recruiter email automation — fires at 11 PM IST every night.

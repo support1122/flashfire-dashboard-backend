@@ -31,6 +31,9 @@ export default async function GetAiRemovedJobs(req, res) {
     const query = {
       userID: email,
       "secondJudge.status": "failed",
+      // Only still-present flagged jobs — if an operator already removed one,
+      // it shouldn't show in the "AI flags" list anymore.
+      currentStatus: { $not: /^(deleted|removed)/i },
     };
 
     const projection =

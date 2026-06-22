@@ -4,19 +4,20 @@
 // scraper) and pushes the matches to the dashboard. This worker is the second
 // gate: for each such job it opens the REAL employer posting via the scraper,
 // scrapes the full visible text, and re-judges that text against the client
-// profile with the same grader criteria. A pass keeps the job; a mismatch moves
-// it to the "removed by AI" column with an operator-facing reason.
+// profile (LOCATION + FRESHNESS only). It NEVER removes the job — a pass keeps
+// it; a mismatch only FLAGS it (records the reason) for the operator to review
+// and decide. currentStatus/timeline are never touched here.
 //
 // Pattern mirrors autoOptimizationWorker.js: MongoDB polling (no Redis), atomic
 // claim, exponential backoff, stale-processing recovery. Failures to SCREEN
 // (scrape down, OpenAI down, thin content, no profile) fail OPEN — the job is
-// kept and marked 'skipped'; we only ever remove on a clear judge mismatch.
+// kept and marked 'skipped'.
 //
 // secondJudge.status lifecycle:
 //   pending    → queued by AddJob (extension jobs with a joblink)
 //   processing → claimed by this worker
 //   passed     → re-judged on real-site text, kept
-//   failed     → re-judged on real-site text, mismatch → moved to removed
+//   failed     → re-judged on real-site text, mismatch → FLAGGED (kept; operator decides)
 //   skipped    → could not screen after retries (kept, fail-open)
 
 import { JobModel } from '../../Schema_Models/JobModel.js';
@@ -24,7 +25,6 @@ import { ProfileModel } from '../../Schema_Models/ProfileModel.js';
 import {
   SECOND_JUDGE_SYSTEM_PROMPT,
   buildSecondJudgeUserPrompt,
-  directRoleMatch,
 } from '../../Utils/secondJudgePrompt.js';
 
 // ─── Configuration ───────────────────────────────────────────────────
@@ -54,6 +54,8 @@ const OPENAI_TIMEOUT_MS = parseInt(process.env.SECOND_JUDGE_OPENAI_TIMEOUT_MS) |
 let isProcessing = false;
 let workerRunning = false;
 let pollTimer = null;
+let lastRecoverMs = 0;
+const RECOVER_EVERY_MS = 60 * 1000; // periodic stale-recovery cadence
 
 function nowIST() {
   return new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
@@ -65,6 +67,23 @@ function withTimeout(promise, ms, label) {
     timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
   });
   return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
+// fetchWithTimeout — fetch that ABORTS on timeout so a slow scraper/OpenAI
+// request doesn't leak a socket (the old withTimeout(fetch(...)) left the
+// underlying request running). On timeout the AbortError surfaces to the
+// caller, which retries with backoff / fails open.
+async function fetchWithTimeout(url, options = {}, ms = 30000, label = 'request') {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), ms);
+  try {
+    return await fetch(url, { ...options, signal: ctrl.signal });
+  } catch (e) {
+    if (e?.name === 'AbortError') throw new Error(`${label} timed out after ${ms}ms`);
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 // isScrapeableEmployerUrl — only real employer/ATS pages can be scraped for
@@ -159,7 +178,7 @@ async function scrapeJobText(joblink) {
   const url = `${SCRAPER_BASE_URL}${SCRAPER_EXTRACT_PATH}${encodeURIComponent(joblink)}`;
   let resp;
   try {
-    resp = await withTimeout(fetch(url, { method: 'GET' }), SCRAPER_TIMEOUT_MS, 'scraper /extract');
+    resp = await fetchWithTimeout(url, { method: 'GET' }, SCRAPER_TIMEOUT_MS, 'scraper /extract');
   } catch (e) {
     const err = new Error(`Scraper request failed: ${e.message}`);
     err._stage = 'Scraper Fetch';
@@ -199,12 +218,13 @@ async function judgeRealSite({ profile, job, scrapedText }) {
   };
   let resp;
   try {
-    resp = await withTimeout(
-      fetch(OPENAI_URL, {
+    resp = await fetchWithTimeout(
+      OPENAI_URL,
+      {
         method: 'POST',
         headers: { 'content-type': 'application/json', authorization: `Bearer ${apiKey}` },
         body: JSON.stringify(body),
-      }),
+      },
       OPENAI_TIMEOUT_MS,
       'OpenAI chat.completions'
     );
@@ -322,27 +342,15 @@ async function processJob(job) {
 
   // Step 3: re-judge on the real-site text.
   const verdict = await judgeRealSite({ profile, job, scrapedText: text });
-  let pass = verdict.pick === true && verdict.score >= THRESHOLD;
+  const pass = verdict.pick === true && verdict.score >= THRESHOLD;
+  // Hard guard: this stage flags ONLY location/freshness. Ignore any stray
+  // role/sponsorship/other flag the model emits (or an old prompt leaks) —
+  // those are not this stage's job, so keep the job.
+  const VALID_FLAGS = new Set(['location-mismatch', 'threshold']);
 
-  // Safety net against role-mismatch false-negatives: if the grader rejected
-  // on a ROLE basis but the job title literally matches one of the client's
-  // preferred roles, the verdict is wrong — keep the job. (Other rejection
-  // kinds — location/seniority/auth — are respected.)
-  if (!pass) {
-    const roleBasedReject =
-      verdict.skipKind === 'role-mismatch' ||
-      /role[\s-]?mismatch|preferred roles|does not match any/i.test(verdict.reason || '');
-    if (roleBasedReject && directRoleMatch(job.jobTitle, profile.preferredRoles)) {
-      console.warn(`${tag} OVERRIDE: grader said role-mismatch but title matches a preferred role — keeping`);
-      pass = true;
-      verdict.reason = `Kept — title "${job.jobTitle}" matches a preferred role (grader role-mismatch overridden)`;
-      if (!verdict.score) verdict.score = THRESHOLD;
-    }
-  }
-
-  if (pass) {
+  if (pass || !VALID_FLAGS.has(verdict.skipKind)) {
     await keepForPass(job, verdict, text.length);
-    console.log(`${tag} PASS (score ${verdict.score}) — kept`);
+    console.log(`${tag} ${pass ? 'PASS' : `KEPT (ignored non-location flag: ${verdict.skipKind || 'none'})`} (score ${verdict.score})`);
   } else {
     await flagForMismatch(job, verdict, text.length);
     console.log(`${tag} FLAGGED (score ${verdict.score}${verdict.skipKind ? `, ${verdict.skipKind}` : ''}) — kept, operator review`);
@@ -352,6 +360,13 @@ async function processJob(job) {
 // ─── Polling Loop ────────────────────────────────────────────────────
 async function pollLoop() {
   if (!workerRunning) return;
+  // Periodic stale-recovery (not just at boot): a job left in 'processing' by a
+  // crash/restart is invisible to claimNextJob (which only picks 'pending').
+  // Fire-and-forget so it never delays claiming; the updateMany is indexed.
+  if (Date.now() - lastRecoverMs > RECOVER_EVERY_MS) {
+    lastRecoverMs = Date.now();
+    recoverStaleJobs().catch((e) => console.warn('[SecondJudge] recover error:', e.message));
+  }
   try {
     const job = await claimNextJob();
     if (job) {
