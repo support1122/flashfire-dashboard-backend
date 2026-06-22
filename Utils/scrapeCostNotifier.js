@@ -78,6 +78,8 @@ async function getTodayModelStats() {
                 geminiBatches: { $sum: { $ifNull: ["$modelStats.geminiBatches", 0] } },
                 geminiErrors: { $sum: { $ifNull: ["$modelStats.geminiErrors", 0] } },
                 openaiBatches: { $sum: { $ifNull: ["$modelStats.openaiBatches", 0] } },
+                inputTokens: { $sum: { $ifNull: ["$modelStats.inputTokens", 0] } },
+                outputTokens: { $sum: { $ifNull: ["$modelStats.outputTokens", 0] } },
             },
         },
     ]);
@@ -86,6 +88,8 @@ async function getTodayModelStats() {
         geminiBatches: g.geminiBatches || 0,
         geminiErrors: g.geminiErrors || 0,
         openaiBatches: g.openaiBatches || 0,
+        inputTokens: g.inputTokens || 0,
+        outputTokens: g.outputTokens || 0,
     };
 }
 
@@ -105,6 +109,26 @@ async function getTodayTotalScraped() {
 export function estimateScrapeCost(scrapedJobs, modelTally = {}) {
     const n = Math.max(0, Number(scrapedJobs) || 0);
     const totalBatches = Math.ceil(n / BATCH_SIZE);
+
+    // REAL path: extension reported actual token usage (OpenAI-direct judge) →
+    // price the genuine tokens, no estimate. ponytail: OpenAI-only reporter, so
+    // real tokens are all OpenAI; gemini real-token split isn't reported yet.
+    const realIn = Math.max(0, Number(modelTally.inputTokens) || 0);
+    const realOut = Math.max(0, Number(modelTally.outputTokens) || 0);
+    if (realIn > 0 || realOut > 0) {
+        const oBatches = Math.max(0, Number(modelTally.openaiBatches) || 0) || totalBatches;
+        const usd = (realIn / 1_000_000) * OPENAI_INPUT_PER_M + (realOut / 1_000_000) * OPENAI_OUTPUT_PER_M;
+        return {
+            scraped: n, batches: totalBatches, inputTokens: realIn, outputTokens: realOut,
+            usd: Number(usd.toFixed(6)), inr: Number((usd * FX_USD_INR).toFixed(2)),
+            perJobUsd: n ? Number((usd / n).toFixed(6)) : 0,
+            perJobInr: n ? Number(((usd * FX_USD_INR) / n).toFixed(4)) : 0,
+            fxRate: FX_USD_INR, hasModelSplit: true, real: true,
+            geminiErrors: Math.max(0, Number(modelTally.geminiErrors) || 0), geminiPct: 0,
+            openai: { model: OPENAI_MODEL, batches: oBatches, inputTokens: realIn, outputTokens: realOut, usd: Number(usd.toFixed(6)) },
+            gemini: { model: GEMINI_MODEL, batches: 0, inputTokens: 0, outputTokens: 0, usd: 0 },
+        };
+    }
 
     const gBatchesReal = Math.max(0, Number(modelTally.geminiBatches) || 0);
     const oBatchesReal = Math.max(0, Number(modelTally.openaiBatches) || 0);

@@ -55,6 +55,9 @@ const extensionSessionStatSchema = new mongoose.Schema({
         geminiBatches: { type: Number, default: 0 },
         geminiErrors:  { type: Number, default: 0 },
         openaiBatches: { type: Number, default: 0 },
+        // Real token usage summed from the judge responses → exact milestone cost.
+        inputTokens:   { type: Number, default: 0 },
+        outputTokens:  { type: Number, default: 0 },
     },
     startedAt:     { type: Date, default: null },
     endedAt:       { type: Date, default: () => new Date(), index: true },
