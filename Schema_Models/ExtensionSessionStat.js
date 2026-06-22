@@ -58,6 +58,7 @@ const extensionSessionStatSchema = new mongoose.Schema({
         // Real token usage summed from the judge responses → exact milestone cost.
         inputTokens:   { type: Number, default: 0 },
         outputTokens:  { type: Number, default: 0 },
+        cachedTokens:  { type: Number, default: 0 }, // cached input (billed at 50%)
     },
     startedAt:     { type: Date, default: null },
     endedAt:       { type: Date, default: () => new Date(), index: true },

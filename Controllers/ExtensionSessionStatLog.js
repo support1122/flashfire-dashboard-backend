@@ -65,6 +65,7 @@ export default async function ExtensionSessionStatLog(req, res) {
                 openaiBatches: num((b.modelStats || {}).openaiBatches),
                 inputTokens:   num((b.modelStats || {}).inputTokens),
                 outputTokens:  num((b.modelStats || {}).outputTokens),
+                cachedTokens:  num((b.modelStats || {}).cachedTokens),
             },
             startedAt: b.startedAt ? new Date(b.startedAt) : null,
             endedAt: b.endedAt ? new Date(b.endedAt) : new Date(),

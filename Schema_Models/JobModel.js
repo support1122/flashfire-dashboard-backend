@@ -209,7 +209,7 @@ export const JobSchema = new mongoose.Schema({
   secondJudge: {
     status: {
       type: String,
-      enum: ['pending', 'processing', 'passed', 'failed', 'skipped'],
+      enum: ['pending', 'processing', 'passed', 'failed', 'skipped', 'reviewed'],
       default: null
     },
     attempts: { type: Number, default: 0 },

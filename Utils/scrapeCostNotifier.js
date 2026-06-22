@@ -80,6 +80,7 @@ async function getTodayModelStats() {
                 openaiBatches: { $sum: { $ifNull: ["$modelStats.openaiBatches", 0] } },
                 inputTokens: { $sum: { $ifNull: ["$modelStats.inputTokens", 0] } },
                 outputTokens: { $sum: { $ifNull: ["$modelStats.outputTokens", 0] } },
+                cachedTokens: { $sum: { $ifNull: ["$modelStats.cachedTokens", 0] } },
             },
         },
     ]);
@@ -90,6 +91,7 @@ async function getTodayModelStats() {
         openaiBatches: g.openaiBatches || 0,
         inputTokens: g.inputTokens || 0,
         outputTokens: g.outputTokens || 0,
+        cachedTokens: g.cachedTokens || 0,
     };
 }
 
@@ -117,13 +119,17 @@ export function estimateScrapeCost(scrapedJobs, modelTally = {}) {
     const realOut = Math.max(0, Number(modelTally.outputTokens) || 0);
     if (realIn > 0 || realOut > 0) {
         const oBatches = Math.max(0, Number(modelTally.openaiBatches) || 0) || totalBatches;
-        const usd = (realIn / 1_000_000) * OPENAI_INPUT_PER_M + (realOut / 1_000_000) * OPENAI_OUTPUT_PER_M;
+        // Cached input is billed at 50% (OpenAI automatic prompt caching).
+        const cached = Math.min(realIn, Math.max(0, Number(modelTally.cachedTokens) || 0));
+        const usd = ((realIn - cached) / 1_000_000) * OPENAI_INPUT_PER_M
+            + (cached / 1_000_000) * (OPENAI_INPUT_PER_M * 0.5)
+            + (realOut / 1_000_000) * OPENAI_OUTPUT_PER_M;
         return {
             scraped: n, batches: totalBatches, inputTokens: realIn, outputTokens: realOut,
             usd: Number(usd.toFixed(6)), inr: Number((usd * FX_USD_INR).toFixed(2)),
             perJobUsd: n ? Number((usd / n).toFixed(6)) : 0,
             perJobInr: n ? Number(((usd * FX_USD_INR) / n).toFixed(4)) : 0,
-            fxRate: FX_USD_INR, hasModelSplit: true, real: true,
+            fxRate: FX_USD_INR, hasModelSplit: true, real: true, cachedTokens: cached,
             geminiErrors: Math.max(0, Number(modelTally.geminiErrors) || 0), geminiPct: 0,
             openai: { model: OPENAI_MODEL, batches: oBatches, inputTokens: realIn, outputTokens: realOut, usd: Number(usd.toFixed(6)) },
             gemini: { model: GEMINI_MODEL, batches: 0, inputTokens: 0, outputTokens: 0, usd: 0 },
@@ -265,6 +271,7 @@ async function fireDiscord(milestone, costInfo, today) {
 
     fields.push(
         { name: "Output tokens", value: costInfo.outputTokens.toLocaleString(), inline: true },
+        ...(costInfo.cachedTokens ? [{ name: "Cached input (50% off)", value: `${costInfo.cachedTokens.toLocaleString()} (${Math.round(costInfo.cachedTokens / costInfo.inputTokens * 100)}%)`, inline: true }] : []),
         { name: "FX rate (fixed)", value: `₹${costInfo.fxRate} / USD`, inline: true },
         { name: "Cost (USD)", value: `**$${costInfo.usd.toFixed(4)}**`, inline: true },
         { name: "Cost (INR)", value: `**₹${costInfo.inr.toFixed(2)}**`, inline: true },
