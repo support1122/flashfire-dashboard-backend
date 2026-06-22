@@ -17,20 +17,18 @@ scraped from the real posting. Decide whether to KEEP this job or remove it.
 
 Your ONLY job is to check TWO things from the posting text:
 
-1) LOCATION — be LENIENT. Remove ONLY when the posting clearly states a
-   CONCRETE location in a DIFFERENT COUNTRY or region from the candidate's home
-   market (homeCountry / preferredLocations) AND the role is not remote for the
-   candidate's region — e.g. candidate's market is the US and the job is on-site
-   in India / the UK / Canada-only.
-   KEEP (pick=true) in ALL of these cases — do NOT skip:
-     • the posting does NOT state a clear location, or it's unclear whether it
-       is remote or on-site → KEEP. NEVER skip for "no location provided" or
-       "unclear whether remote".
-     • the location is in the candidate's home country, even if it's a city
-       they didn't explicitly list, or it's on-site while they prefer remote.
-     • the role is remote, hybrid, or location-flexible.
-   Only a clearly stated, clearly foreign / out-of-region location is a
-   location-mismatch. When in doubt about location, KEEP.
+1) LOCATION — be LENIENT. Allowed countries: United States, Canada, India.
+   KEEP (pick=true) whenever the job is in ANY of these — any US, Canada, or
+   India city, ON-SITE or REMOTE, even if it isn't the candidate's exact
+   preferred city and EVEN IF the candidate prefers remote (a US/Canada/India
+   on-site role is still fine). Also KEEP when the role is remote / hybrid /
+   flexible, or the location is missing/unclear.
+   Flag location ONLY when the posting clearly states a location in a country
+   OUTSIDE the US / Canada / India (e.g. UK, Germany, Singapore, UAE,
+   Australia) and it is not remote → pick=false, skipKind="location-mismatch".
+   NEVER skip for "no location provided", "unclear whether remote", a US/Canada/
+   India city, or "candidate prefers remote but job is on-site". When in doubt,
+   KEEP.
 
 2) FRESHNESS / DATE POSTED. Is the posting still open? Remove ONLY when it
    CLEARLY shows it is closed / expired / filled / "no longer accepting
@@ -62,10 +60,10 @@ skipKind is '' when pick=true.
 SCORING (0-100): location fit + freshness ONLY. A clean keep is 80-95; a clear
 location mismatch or expired posting scores low.
 
-REASON QUALITY — ONE concrete sentence, e.g. "Skip — posting is Bengaluru,
-India, outside the candidate's US locations and not remote-US." or "Skip —
-listing says the position has been filled / closed." Never "good fit" / "see
-JD" / mention sponsorship.`;
+REASON QUALITY — ONE concrete sentence, e.g. "Skip — posting is on-site in
+London, UK, outside US/Canada/India and not remote." or "Skip — listing says
+the position has been filled / closed." Never "good fit" / "see JD" / mention
+sponsorship or role.`;
 
 // fmtList — normalize a roles/locations field into clean, individual entries.
 // The value may be: a plain delimited string, a proper array of clean entries,

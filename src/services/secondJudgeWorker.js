@@ -342,14 +342,15 @@ async function processJob(job) {
 
   // Step 3: re-judge on the real-site text.
   const verdict = await judgeRealSite({ profile, job, scrapedText: text });
-  // The prompt judges LOCATION + FRESHNESS only and never emits role-mismatch,
-  // so no role override is needed here (an old directRoleMatch override was
-  // removed — its reason-text regex could wrongly KEEP a location-failed job).
   const pass = verdict.pick === true && verdict.score >= THRESHOLD;
+  // Hard guard: this stage flags ONLY location/freshness. Ignore any stray
+  // role/sponsorship/other flag the model emits (or an old prompt leaks) —
+  // those are not this stage's job, so keep the job.
+  const VALID_FLAGS = new Set(['location-mismatch', 'threshold']);
 
-  if (pass) {
+  if (pass || !VALID_FLAGS.has(verdict.skipKind)) {
     await keepForPass(job, verdict, text.length);
-    console.log(`${tag} PASS (score ${verdict.score}) — kept`);
+    console.log(`${tag} ${pass ? 'PASS' : `KEPT (ignored non-location flag: ${verdict.skipKind || 'none'})`} (score ${verdict.score})`);
   } else {
     await flagForMismatch(job, verdict, text.length);
     console.log(`${tag} FLAGGED (score ${verdict.score}${verdict.skipKind ? `, ${verdict.skipKind}` : ''}) — kept, operator review`);
