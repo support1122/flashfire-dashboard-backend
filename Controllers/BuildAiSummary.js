@@ -788,8 +788,8 @@ async function fetchResume(email) {
 // adherence at the cost of slightly more repetitive phrasing — acceptable
 // because the brief is read by a grader, not a human reader.
 // 0 = greedy decoding — most deterministic, strictest rule adherence (this is
-// a classification/routing task, not creative writing). Overridable via env.
-const SUMMARY_TEMPERATURE = 0
+// a classification/routing task, not creative writing). Hardcoded on purpose.
+const SUMMARY_TEMPERATURE = 0;
 
 async function callOpenAI(profile, resume, existingSummary, profileDiff, apiKey, overlay = null) {
   const body = {
