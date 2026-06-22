@@ -788,8 +788,8 @@ async function fetchResume(email) {
 // adherence at the cost of slightly more repetitive phrasing — acceptable
 // because the brief is read by a grader, not a human reader.
 // 0 = greedy decoding — most deterministic, strictest rule adherence (this is
-// a classification/routing task, not creative writing). Overridable via env.
-const SUMMARY_TEMPERATURE = 0
+// a classification/routing task, not creative writing). Hardcoded on purpose.
+const SUMMARY_TEMPERATURE = 0;
 
 async function callOpenAI(profile, resume, existingSummary, profileDiff, apiKey, overlay = null) {
   const body = {
@@ -824,6 +824,35 @@ async function callOpenAI(profile, resume, existingSummary, profileDiff, apiKey,
       error: status ? `OPENAI_${status}` : "OPENAI_NETWORK",
       message: detail.slice(0, 500),
     };
+  }
+}
+
+// applyNotesPass — focused SECOND LLM pass: hand the model round-1's brief +
+// the operator notes and have it fix/complete the brief so EVERY directive is
+// reflected with correct polarity. Runs only when notes exist (+1 call/build).
+// Fail-open: returns the input brief unchanged on any error/empty — the
+// deterministic enforceNoteDirectives still runs afterwards as the guarantee.
+async function applyNotesPass(brief, notesText, apiKey) {
+  if (!notesText) return brief;
+  const sys = `You revise a candidate brief so it FULLY reflects the operator's notes. Output ONLY the corrected brief — same section headers, same order, keep all existing content, change nothing the notes don't require.
+Rules:
+- A note line beginning "SCRAP:" = the candidate WANTS it (TARGET). "SKIP:" = EXCLUDE it. The prefix is the FINAL polarity — NEVER flip it. For un-prefixed lines: "scrap X" (no negation) = TARGET; "do not scrap X" / "skip X" = EXCLUDE.
+- Every TARGET directive MUST appear in "# Strong Signals" as "- <X> — operator priority".
+- Every EXCLUDE directive MUST appear in "# Hard Disqualifiers" as "- Skip <X>.".
+- Include EVERY directive — do not drop, merge, soften, or duplicate; use the operator's wording.
+- NEVER put a wanted (SCRAP/target) role into Hard Disqualifiers.`;
+  const user = `Operator notes:\n<<<NOTES>>>\n${notesText}\n<<<END>>>\n\nCurrent brief:\n<<<BRIEF>>>\n${brief}\n<<<END>>>\n\nReturn the corrected full brief.`;
+  try {
+    const res = await axios.post("https://api.openai.com/v1/chat/completions", {
+      model: OPENAI_MODEL,
+      messages: [{ role: "system", content: sys }, { role: "user", content: user }],
+      temperature: 0,
+    }, { timeout: 60_000, headers: { "content-type": "application/json", authorization: `Bearer ${apiKey || OPENAI_API_KEY}` } });
+    const fixed = (res.data?.choices?.[0]?.message?.content || "").trim();
+    return fixed.length > 50 ? fixed : brief; // sanity: ignore a truncated/empty rewrite
+  } catch (e) {
+    console.warn("[BuildAiSummary] applyNotesPass failed, keeping round-1:", e.message);
+    return brief;
   }
 }
 
@@ -873,6 +902,47 @@ export default async function BuildAiSummary(req, res) {
 
 function escapeRegex(s) {
   return String(s).replace(/[-/\\^$*+?.()|[\]{}]/g, "\\$&");
+}
+
+// enforceNoteDirectives — deterministic "round 2": after the LLM writes the
+// brief, GUARANTEE every explicit `SKIP:`/`SCRAP:` operator-note line is
+// reflected with the correct polarity (SCRAP→Strong Signals priority,
+// SKIP→Hard Disqualifiers), and strip the malformed "[— operator priority]"
+// tag the model sometimes emits. ponytail: code, not a 2nd OpenAI call.
+function enforceNoteDirectives(summary, notesText) {
+  if (!notesText) return summary;
+  const norm = (s) => String(s).toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  // Strip the literal "[— operator priority]" / "[— operator allows]" artifact.
+  let out = summary.replace(/\s*\[\s*[—-]\s*operator (?:priority|allows)\s*\]/gi, "");
+  for (const raw of String(notesText).split("\n")) {
+    const m = raw.match(/^\s*(SKIP|SCRAP)\s*:\s*(.+?)\s*$/i);
+    if (!m) continue;
+    // Drop a redundant leading verb ("Scrap Business Intelligence" → "Business Intelligence").
+    const text = m[2].replace(/^(?:do\s*not\s+scrap|don'?t\s+scrap|never\s+scrap|scrap|skip)\s+/i, "").trim();
+    if (!text) continue;
+    if (/^scrap$/i.test(m[1])) {
+      out = ensureBulletInSection(out, "# Strong Signals", text, `- ${text} — operator priority`, norm);
+    } else {
+      out = ensureBulletInSection(out, "# Hard Disqualifiers", text, `- Skip ${text}.`, norm);
+    }
+  }
+  return out;
+}
+
+// ensureBulletInSection — append `bullet` under the given header iff the
+// section doesn't already mention `needle` (normalised substring). Never
+// fabricates a section; never rewrites existing lines.
+function ensureBulletInSection(summary, headerPrefix, needle, bullet, norm) {
+  const lines = summary.split("\n");
+  const start = lines.findIndex((l) => l.trim().toLowerCase().startsWith(headerPrefix.toLowerCase()));
+  if (start === -1) return summary;
+  let end = lines.length;
+  for (let i = start + 1; i < lines.length; i++) { if (/^#\s/.test(lines[i])) { end = i; break; } }
+  if (norm(lines.slice(start + 1, end).join("\n")).includes(norm(needle))) return summary; // already present
+  let at = end;
+  while (at - 1 > start && lines[at - 1].trim() === "") at--; // insert after last non-blank line of section
+  lines.splice(at, 0, bullet);
+  return lines.join("\n");
 }
 
 async function runForProfileCore(profile, apiKey, reasonTag = "manual") {
@@ -929,6 +999,10 @@ async function runForProfileCore(profile, apiKey, reasonTag = "manual") {
   const provExtract = extractProvenance(summary, { noResume: !resume });
   summary = provExtract.cleanText;
   let aiProvenance = provExtract.provenance;
+  // Round 2 (LLM): re-apply the operator notes to the brief so every directive
+  // is reflected with correct polarity. enforceNoteDirectives below is the
+  // deterministic backstop in case this pass still misses one.
+  summary = (await applyNotesPass(summary, (profile?.aiNotes?.text || "").trim(), apiKey)).slice(0, MAX_SUMMARY_CHARS);
   // Apply operator's saved format overlay: if enabled, re-inject any bullets
   // the operator added on top of the previous build + replace any
   // locked-section bodies verbatim. Pure AI output if no overlay or overlay
@@ -955,6 +1029,9 @@ async function runForProfileCore(profile, apiKey, reasonTag = "manual") {
       }
     }
   }
+  // Round 2 (deterministic): guarantee every SKIP:/SCRAP: operator-note line is
+  // present with the right polarity, regardless of what the LLM emitted.
+  summary = enforceNoteDirectives(summary, (profile?.aiNotes?.text || "").trim()).slice(0, MAX_SUMMARY_CHARS);
   const wordCount = summary.trim().split(/\s+/).filter(Boolean).length;
 
   const builtAt = new Date();
