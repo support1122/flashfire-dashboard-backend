@@ -875,6 +875,47 @@ function escapeRegex(s) {
   return String(s).replace(/[-/\\^$*+?.()|[\]{}]/g, "\\$&");
 }
 
+// enforceNoteDirectives — deterministic "round 2": after the LLM writes the
+// brief, GUARANTEE every explicit `SKIP:`/`SCRAP:` operator-note line is
+// reflected with the correct polarity (SCRAP→Strong Signals priority,
+// SKIP→Hard Disqualifiers), and strip the malformed "[— operator priority]"
+// tag the model sometimes emits. ponytail: code, not a 2nd OpenAI call.
+function enforceNoteDirectives(summary, notesText) {
+  if (!notesText) return summary;
+  const norm = (s) => String(s).toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  // Strip the literal "[— operator priority]" / "[— operator allows]" artifact.
+  let out = summary.replace(/\s*\[\s*[—-]\s*operator (?:priority|allows)\s*\]/gi, "");
+  for (const raw of String(notesText).split("\n")) {
+    const m = raw.match(/^\s*(SKIP|SCRAP)\s*:\s*(.+?)\s*$/i);
+    if (!m) continue;
+    // Drop a redundant leading verb ("Scrap Business Intelligence" → "Business Intelligence").
+    const text = m[2].replace(/^(?:do\s*not\s+scrap|don'?t\s+scrap|never\s+scrap|scrap|skip)\s+/i, "").trim();
+    if (!text) continue;
+    if (/^scrap$/i.test(m[1])) {
+      out = ensureBulletInSection(out, "# Strong Signals", text, `- ${text} — operator priority`, norm);
+    } else {
+      out = ensureBulletInSection(out, "# Hard Disqualifiers", text, `- Skip ${text}.`, norm);
+    }
+  }
+  return out;
+}
+
+// ensureBulletInSection — append `bullet` under the given header iff the
+// section doesn't already mention `needle` (normalised substring). Never
+// fabricates a section; never rewrites existing lines.
+function ensureBulletInSection(summary, headerPrefix, needle, bullet, norm) {
+  const lines = summary.split("\n");
+  const start = lines.findIndex((l) => l.trim().toLowerCase().startsWith(headerPrefix.toLowerCase()));
+  if (start === -1) return summary;
+  let end = lines.length;
+  for (let i = start + 1; i < lines.length; i++) { if (/^#\s/.test(lines[i])) { end = i; break; } }
+  if (norm(lines.slice(start + 1, end).join("\n")).includes(norm(needle))) return summary; // already present
+  let at = end;
+  while (at - 1 > start && lines[at - 1].trim() === "") at--; // insert after last non-blank line of section
+  lines.splice(at, 0, bullet);
+  return lines.join("\n");
+}
+
 async function runForProfileCore(profile, apiKey, reasonTag = "manual") {
   const email = profile.email;
   const resumeRes = await fetchResume(email);
@@ -955,6 +996,9 @@ async function runForProfileCore(profile, apiKey, reasonTag = "manual") {
       }
     }
   }
+  // Round 2 (deterministic): guarantee every SKIP:/SCRAP: operator-note line is
+  // present with the right polarity, regardless of what the LLM emitted.
+  summary = enforceNoteDirectives(summary, (profile?.aiNotes?.text || "").trim()).slice(0, MAX_SUMMARY_CHARS);
   const wordCount = summary.trim().split(/\s+/).filter(Boolean).length;
 
   const builtAt = new Date();
