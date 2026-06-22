@@ -787,9 +787,11 @@ async function fetchResume(email) {
 // directive or mis-suffixed Strong Signals. Lower temp = stricter prompt
 // adherence at the cost of slightly more repetitive phrasing — acceptable
 // because the brief is read by a grader, not a human reader.
+// 0 = greedy decoding — most deterministic, strictest rule adherence (this is
+// a classification/routing task, not creative writing). Overridable via env.
 const SUMMARY_TEMPERATURE = Number.isFinite(Number(process.env.FF_SUMMARY_TEMPERATURE))
   ? Number(process.env.FF_SUMMARY_TEMPERATURE)
-  : 0.05;
+  : 0;
 
 async function callOpenAI(profile, resume, existingSummary, profileDiff, apiKey, overlay = null) {
   const body = {
