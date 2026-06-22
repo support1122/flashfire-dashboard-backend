@@ -464,6 +464,7 @@ B. For each directive, FIRST decide its polarity: is there a negation word (not/
 C. Every directive MUST produce at least one corresponding bullet in the brief, in the section dictated by the ROUTING RULES below.
 D. After writing the brief, walk the directive list a second time and verify each is reflected with the CORRECT polarity. If even one is missing, in the wrong section, or has flipped polarity, REWRITE before output. A flipped or missed directive is a CRITICAL FAILURE.
 E. The "— operator priority" suffix is RESERVED for items that come FROM operator notes. Items derived from the resume or profile MUST NOT carry this suffix. Do not blanket-tag every Strong Signal bullet.
+F. COMPLETENESS IS MANDATORY — operator notes are the HIGHEST authority, above profile and resume. EVERY directive from the notes MUST appear in the brief, including short, vague, or one-word ones (e.g. "marketing intelligence more" → "Marketing Intelligence — operator priority"; "provides sponsorship" → "Sponsorship-providing employers — operator priority"). If a directive does not cleanly match a routing rule below, DEFAULT-ROUTE it: has a negation word → Hard Disqualifiers "Skip <X>."; otherwise → Strong Signals "<X> — operator priority". NEVER silently drop, merge, soften, or generalise a note directive — use the operator's own wording. A dropped note directive is a CRITICAL FAILURE.
 
 ROUTING RULES (apply mechanically — do NOT improvise):
 
