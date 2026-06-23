@@ -124,12 +124,15 @@ export function estimateScrapeCost(scrapedJobs, modelTally = {}) {
         const usd = ((realIn - cached) / 1_000_000) * OPENAI_INPUT_PER_M
             + (cached / 1_000_000) * (OPENAI_INPUT_PER_M * 0.5)
             + (realOut / 1_000_000) * OPENAI_OUTPUT_PER_M;
+        // $ saved by prompt caching = the other 50% we did NOT pay on cached input.
+        const cacheSavedUsd = (cached / 1_000_000) * (OPENAI_INPUT_PER_M * 0.5);
         return {
             scraped: n, batches: totalBatches, inputTokens: realIn, outputTokens: realOut,
             usd: Number(usd.toFixed(6)), inr: Number((usd * FX_USD_INR).toFixed(2)),
             perJobUsd: n ? Number((usd / n).toFixed(6)) : 0,
             perJobInr: n ? Number(((usd * FX_USD_INR) / n).toFixed(4)) : 0,
             fxRate: FX_USD_INR, hasModelSplit: true, real: true, cachedTokens: cached,
+            cacheSavedUsd: Number(cacheSavedUsd.toFixed(6)), cacheSavedInr: Number((cacheSavedUsd * FX_USD_INR).toFixed(2)),
             geminiErrors: Math.max(0, Number(modelTally.geminiErrors) || 0), geminiPct: 0,
             openai: { model: OPENAI_MODEL, batches: oBatches, inputTokens: realIn, outputTokens: realOut, usd: Number(usd.toFixed(6)) },
             gemini: { model: GEMINI_MODEL, batches: 0, inputTokens: 0, outputTokens: 0, usd: 0 },
@@ -272,8 +275,9 @@ async function fireDiscord(milestone, costInfo, today) {
     fields.push(
         { name: "Output tokens", value: costInfo.outputTokens.toLocaleString(), inline: true },
         ...(costInfo.cachedTokens ? [{ name: "Cached input (50% off)", value: `${costInfo.cachedTokens.toLocaleString()} (${Math.round(costInfo.cachedTokens / costInfo.inputTokens * 100)}%)`, inline: true }] : []),
+        ...(costInfo.cacheSavedUsd ? [{ name: "💰 Prompt-cache saved", value: `$${costInfo.cacheSavedUsd.toFixed(4)} · ₹${costInfo.cacheSavedInr.toFixed(2)}`, inline: true }] : []),
         { name: "FX rate (fixed)", value: `₹${costInfo.fxRate} / USD`, inline: true },
-        { name: "Cost (USD)", value: `**$${costInfo.usd.toFixed(4)}**`, inline: true },
+        { name: costInfo.real ? "Cost (USD) — REAL" : "Cost (USD) — estimate", value: `**$${costInfo.usd.toFixed(4)}**`, inline: true },
         { name: "Cost (INR)", value: `**₹${costInfo.inr.toFixed(2)}**`, inline: true },
         { name: "Per-job cost", value: `$${costInfo.perJobUsd.toFixed(6)} · ₹${costInfo.perJobInr.toFixed(4)}`, inline: true },
     );
