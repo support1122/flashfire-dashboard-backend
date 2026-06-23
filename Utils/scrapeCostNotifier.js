@@ -25,11 +25,13 @@ import { ExtensionSessionStat } from "../Schema_Models/ExtensionSessionStat.js";
 
 const MILESTONE_STEP = 5000;
 const BATCH_SIZE = Number(process.env.AI_BATCH_SIZE) || 8;
-const TOKENS_PER_BATCH_IN = Number(process.env.AI_TOKENS_IN_PER_BATCH) || 8800;
-const TOKENS_PER_BATCH_OUT = Number(process.env.AI_TOKENS_OUT_PER_BATCH) || 500;
+// Low-end averages: first judge runs on JobRight's own short description (no
+// scraper enrichment), so input/batch is small. Conservative (lower) defaults.
+const TOKENS_PER_BATCH_IN = Number(process.env.AI_TOKENS_IN_PER_BATCH) || 3500;
+const TOKENS_PER_BATCH_OUT = Number(process.env.AI_TOKENS_OUT_PER_BATCH) || 400;
 // Fixed grader prompt reused every batch → cached after the first hit. Billed
 // at 50%. Conservative default ≈ the system prompt size.
-const CACHED_TOKENS_PER_BATCH = Number(process.env.AI_CACHED_TOKENS_PER_BATCH) || 2000;
+const CACHED_TOKENS_PER_BATCH = Number(process.env.AI_CACHED_TOKENS_PER_BATCH) || 1800;
 const FX_USD_INR = Number(process.env.USD_INR_FIXED) || 94;
 
 const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4o-mini";
