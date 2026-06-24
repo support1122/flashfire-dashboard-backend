@@ -22,6 +22,7 @@
 import axios from "axios";
 import { AppSettingsModel } from "../Schema_Models/AppSettings.js";
 import { ExtensionSessionStat } from "../Schema_Models/ExtensionSessionStat.js";
+import { JobModel } from "../Schema_Models/JobModel.js";
 
 const MILESTONE_STEP = 5000;
 const BATCH_SIZE = Number(process.env.AI_BATCH_SIZE) || 8;
@@ -32,6 +33,10 @@ const TOKENS_PER_BATCH_OUT = Number(process.env.AI_TOKENS_OUT_PER_BATCH) || 400;
 // Fixed grader prompt reused every batch → cached after the first hit. Billed
 // at 50%. Conservative default ≈ the system prompt size.
 const CACHED_TOKENS_PER_BATCH = Number(process.env.AI_CACHED_TOKENS_PER_BATCH) || 1800;
+// Second-stage screening (secondJudgeWorker): 1 OpenAI call PER pushed job on
+// the scraped real-site text. No batching. Avg tokens per call (low-end).
+const SECOND_TOKENS_IN = Number(process.env.AI2_TOKENS_IN_PER_CALL) || 2700;
+const SECOND_TOKENS_OUT = Number(process.env.AI2_TOKENS_OUT_PER_CALL) || 120;
 const FX_USD_INR = Number(process.env.USD_INR_FIXED) || 94;
 
 const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4o-mini";
@@ -71,21 +76,43 @@ async function getTodayTotalScraped() {
     return r?.[0]?.captures || 0;
 }
 
+// Count today's second-stage screening runs (1 OpenAI call each). Terminal
+// secondJudge states with a completedAt today (IST).
+async function getTodaySecondJudgeRuns() {
+    try {
+        return await JobModel.countDocuments({
+            "secondJudge.completedAt": { $gte: startOfTodayIST() },
+        });
+    } catch {
+        return 0;
+    }
+}
+
 // estimateScrapeCost — pure math, no I/O. OpenAI gpt-4o-mini only, priced from
 // per-batch averages + the cached (prompt-reuse) portion at 50%.
-export function estimateScrapeCost(scrapedJobs) {
+export function estimateScrapeCost(scrapedJobs, secondRuns = 0) {
     const n = Math.max(0, Number(scrapedJobs) || 0);
     const batches = Math.ceil(n / BATCH_SIZE);
     const inputTokens = batches * TOKENS_PER_BATCH_IN;
     const outputTokens = batches * TOKENS_PER_BATCH_OUT;
     const cachedTokens = Math.min(inputTokens, batches * CACHED_TOKENS_PER_BATCH);
 
+    // Stage 1 — first judge (extension, batched on JobRight desc).
     const usd =
         ((inputTokens - cachedTokens) / 1_000_000) * OPENAI_INPUT_PER_M +
         (cachedTokens / 1_000_000) * (OPENAI_INPUT_PER_M * 0.5) +
         (outputTokens / 1_000_000) * OPENAI_OUTPUT_PER_M;
-    // $ saved by prompt caching = the 50% NOT paid on cached input.
     const cacheSavedUsd = (cachedTokens / 1_000_000) * (OPENAI_INPUT_PER_M * 0.5);
+
+    // Stage 2 — second judge (dashboard backend, 1 call per pushed job).
+    const s = Math.max(0, Number(secondRuns) || 0);
+    const secondIn = s * SECOND_TOKENS_IN;
+    const secondOut = s * SECOND_TOKENS_OUT;
+    const secondUsd =
+        (secondIn / 1_000_000) * OPENAI_INPUT_PER_M +
+        (secondOut / 1_000_000) * OPENAI_OUTPUT_PER_M;
+
+    const totalUsd = usd + secondUsd;
 
     return {
         scraped: n,
@@ -95,10 +122,19 @@ export function estimateScrapeCost(scrapedJobs) {
         cachedTokens,
         usd: Number(usd.toFixed(6)),
         inr: Number((usd * FX_USD_INR).toFixed(2)),
-        perJobUsd: n ? Number((usd / n).toFixed(6)) : 0,
-        perJobInr: n ? Number(((usd * FX_USD_INR) / n).toFixed(4)) : 0,
         cacheSavedUsd: Number(cacheSavedUsd.toFixed(6)),
         cacheSavedInr: Number((cacheSavedUsd * FX_USD_INR).toFixed(2)),
+        second: {
+            runs: s,
+            inputTokens: secondIn,
+            outputTokens: secondOut,
+            usd: Number(secondUsd.toFixed(6)),
+            inr: Number((secondUsd * FX_USD_INR).toFixed(2)),
+        },
+        totalUsd: Number(totalUsd.toFixed(6)),
+        totalInr: Number((totalUsd * FX_USD_INR).toFixed(2)),
+        perJobUsd: n ? Number((totalUsd / n).toFixed(6)) : 0,
+        perJobInr: n ? Number(((totalUsd * FX_USD_INR) / n).toFixed(4)) : 0,
         fxRate: FX_USD_INR,
         model: OPENAI_MODEL,
     };
@@ -144,9 +180,10 @@ async function fireDiscord(milestone, costInfo, today) {
         { name: "Cached input (50% off)", value: `${costInfo.cachedTokens.toLocaleString()} (${cachePct}%)`, inline: true },
         { name: "💰 Prompt-cache saved", value: `$${costInfo.cacheSavedUsd.toFixed(4)} · ₹${costInfo.cacheSavedInr.toFixed(2)}`, inline: true },
         { name: "FX rate (fixed)", value: `₹${costInfo.fxRate} / USD`, inline: true },
-        { name: "Cost (USD)", value: `**$${costInfo.usd.toFixed(4)}**`, inline: true },
-        { name: "Cost (INR)", value: `**₹${costInfo.inr.toFixed(2)}**`, inline: true },
-        { name: "Per-job cost", value: `$${costInfo.perJobUsd.toFixed(6)} · ₹${costInfo.perJobInr.toFixed(4)}`, inline: true },
+        { name: "Stage 1 — first judge", value: `$${costInfo.usd.toFixed(4)} · ₹${costInfo.inr.toFixed(2)}`, inline: true },
+        { name: "Stage 2 — second judge", value: `${costInfo.second.runs.toLocaleString()} runs · $${costInfo.second.usd.toFixed(4)} · ₹${costInfo.second.inr.toFixed(2)}`, inline: true },
+        { name: "💵 TOTAL cost", value: `**$${costInfo.totalUsd.toFixed(4)} · ₹${costInfo.totalInr.toFixed(2)}**`, inline: true },
+        { name: "Per-job (all-in)", value: `$${costInfo.perJobUsd.toFixed(6)} · ₹${costInfo.perJobInr.toFixed(4)}`, inline: true },
     ];
 
     const embed = {
@@ -154,7 +191,7 @@ async function fireDiscord(milestone, costInfo, today) {
         description: `Today (${today} IST) the JR-Direct extension has captured **${milestone.toLocaleString()}** jobs across all operators.`,
         color: 0x10b981,
         fields,
-        footer: { text: `OpenAI ${costInfo.model} · $${OPENAI_INPUT_PER_M}/1M in · $${OPENAI_OUTPUT_PER_M}/1M out · avg ${TOKENS_PER_BATCH_IN}/${TOKENS_PER_BATCH_OUT} tok/batch · ~${CACHED_TOKENS_PER_BATCH} cached/batch (prompt cache, 50% off)` },
+        footer: { text: `OpenAI ${costInfo.model} · $${OPENAI_INPUT_PER_M}/1M in · $${OPENAI_OUTPUT_PER_M}/1M out · stage1 ${TOKENS_PER_BATCH_IN}/${TOKENS_PER_BATCH_OUT} tok/batch (~${CACHED_TOKENS_PER_BATCH} cached, 50% off) · stage2 ${SECOND_TOKENS_IN}/${SECOND_TOKENS_OUT} tok/run` },
         timestamp: new Date().toISOString(),
     };
     try {
@@ -175,7 +212,8 @@ export async function checkAndNotifyScrapeMilestone() {
         if (total < MILESTONE_STEP) return; // nothing to do under first threshold
         const milestone = await claimMilestone(today, total);
         if (!milestone) return; // already announced
-        await fireDiscord(milestone, estimateScrapeCost(milestone), today);
+        const secondRuns = await getTodaySecondJudgeRuns();
+        await fireDiscord(milestone, estimateScrapeCost(milestone, secondRuns), today);
     } catch (err) {
         console.warn("[scrapeCostNotifier] check failed:", err.message);
     }
