@@ -84,7 +84,9 @@ export default async function GetBaseResumeData(req, res) {
             showLeadership: !!cb.showLeadership,
             showPublications: !!cb.showPublications,
             sectionOrder,
-            version: 0,
+            // Reflect the assigned template version (0/1 = normal, 2 = medical)
+            // so the frontend renders ResumePreview vs ResumePreviewMedical.
+            version: typeof u.V === "number" ? u.V : 0,
             resumeId: u.resumeId || null,
             V: u.V ?? null,
             firstName: u.firstName || "",
