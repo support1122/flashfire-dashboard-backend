@@ -16,7 +16,7 @@
 //   gpt-4o-mini  = $0.15 / 1M in · $0.60 / 1M out · cached in at 50%
 //   FX (fixed)   = ₹94 / USD
 // Override via env: OPENAI_INPUT_PER_M, OPENAI_OUTPUT_PER_M, USD_INR_FIXED,
-//   AI_TOKENS_IN_PER_BATCH, AI_TOKENS_OUT_PER_BATCH, AI_CACHED_TOKENS_PER_BATCH,
+//   AI_TOKENS_IN_PER_BATCH, AI_TOKENS_OUT_PER_BATCH,
 //   AI_BATCH_SIZE.
 
 import axios from "axios";
@@ -31,12 +31,12 @@ const BATCH_SIZE = Number(process.env.AI_BATCH_SIZE) || 8;
 const TOKENS_PER_BATCH_IN = Number(process.env.AI_TOKENS_IN_PER_BATCH) || 3500;
 const TOKENS_PER_BATCH_OUT = Number(process.env.AI_TOKENS_OUT_PER_BATCH) || 400;
 // Fixed grader prompt reused every batch → cached after the first hit. Billed
-// at 50%. Conservative default ≈ the system prompt size.
-const CACHED_TOKENS_PER_BATCH = Number(process.env.AI_CACHED_TOKENS_PER_BATCH) || 1800;
+// at 50%. Conservative ≈ the system prompt size.
+const CACHED_TOKENS_PER_BATCH = 1800;
 // Second-stage screening (secondJudgeWorker): 1 OpenAI call PER pushed job on
 // the scraped real-site text. No batching. Avg tokens per call (low-end).
-const SECOND_TOKENS_IN = Number(process.env.AI2_TOKENS_IN_PER_CALL) || 2700;
-const SECOND_TOKENS_OUT = Number(process.env.AI2_TOKENS_OUT_PER_CALL) || 120;
+const SECOND_TOKENS_IN = 2700;
+const SECOND_TOKENS_OUT = 120;
 const FX_USD_INR = Number(process.env.USD_INR_FIXED) || 94;
 
 const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4o-mini";
