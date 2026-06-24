@@ -63,7 +63,57 @@ location mismatch or expired posting scores low.
 REASON QUALITY — ONE concrete sentence, e.g. "Skip — posting is on-site in
 London, UK, outside US/Canada/India and not remote." or "Skip — listing says
 the position has been filled / closed." Never "good fit" / "see JD" / mention
-sponsorship or role.`;
+sponsorship or role.
+
+WORKED EXAMPLES — study these; they define the boundary precisely. This block
+is identical on every request (the variable posting comes in the user message),
+so judge consistently with it:
+
+Example 1 — KEEP. JD: "Software Engineer · Austin, TX (Hybrid)." Austin is in
+the United States. → {"pick":true,"score":90,"reason":"Role is in Austin, TX (US).","skipKind":""}
+
+Example 2 — KEEP. JD: "Remote (United States)." US remote is allowed. →
+{"pick":true,"score":90,"reason":"Remote US role.","skipKind":""}
+
+Example 3 — KEEP. JD: "Data Analyst · Toronto, Ontario, Canada." Canada is
+allowed. → {"pick":true,"score":88,"reason":"Toronto, Canada is allowed.","skipKind":""}
+
+Example 4 — KEEP. JD: "Business Analyst · Bengaluru, India." India is allowed.
+→ {"pick":true,"score":88,"reason":"Bengaluru, India is allowed.","skipKind":""}
+
+Example 5 — KEEP. JD lists only responsibilities and requirements; no city,
+state, or country appears anywhere. Missing location → KEEP. →
+{"pick":true,"score":80,"reason":"No location stated; defaulting to keep.","skipKind":""}
+
+Example 6 — FLAG. JD: "Marketing Manager — London, United Kingdom. On-site, no
+remote." UK, on-site, outside US/Canada/India. →
+{"pick":false,"score":20,"reason":"On-site in London, UK, outside US/Canada/India and not remote.","skipKind":"location-mismatch"}
+
+Example 7 — KEEP. JD: "Operations Analyst · London, Ontario, Canada." Here
+"London" is the Canadian city — Canada is allowed. →
+{"pick":true,"score":88,"reason":"London, Ontario is in Canada.","skipKind":""}
+
+Example 8 — FLAG. JD body: "This position has been filled and is no longer
+accepting applications." Clearly closed. →
+{"pick":false,"score":10,"reason":"Posting is filled / no longer accepting applications.","skipKind":"threshold"}
+
+Example 9 — KEEP. JD says "our global offices span London, Singapore and New
+York" in company boilerplate, but the ROLE's stated location is "Chicago, IL".
+Judge the ROLE location, not boilerplate city mentions. →
+{"pick":true,"score":85,"reason":"Role is in Chicago, IL; other cities are company boilerplate.","skipKind":""}
+
+Example 10 — KEEP. JD: "Remote — must be authorized to work in the US." Remote
++ US authorization → allowed. →
+{"pick":true,"score":88,"reason":"Remote US-authorized role.","skipKind":""}
+
+Example 11 — FLAG. JD: "Standort: Berlin, Deutschland. Vor Ort." Germany,
+on-site, outside the allow-list. →
+{"pick":false,"score":18,"reason":"On-site in Berlin, Germany, outside US/Canada/India.","skipKind":"location-mismatch"}
+
+Example 12 — KEEP. JD: "Hybrid · New York, NY or Remote." US hybrid/remote. →
+{"pick":true,"score":90,"reason":"Hybrid/remote in New York, NY (US).","skipKind":""}
+
+Default whenever the evidence is thin, mixed, or ambiguous: KEEP (pick=true).`;
 
 // fmtList — normalize a roles/locations field into clean, individual entries.
 // The value may be: a plain delimited string, a proper array of clean entries,
@@ -163,6 +213,30 @@ function deriveHomeCountry(profile) {
     return 'US + Canada';
 }
 
+// extractRelevantJd — slim the full scraped page text down to the
+// location/freshness evidence the second stage actually grades on (#4). Keeps a
+// header window (location is normally near the top) plus any later line that
+// carries a location / date / open-or-closed keyword. Short pages pass through
+// untouched. Bounds input to MAX_JD_CHARS so a single call stays cheap.
+const MAX_JD_CHARS = 3500;
+const HEAD_CHARS = 1600;
+const JD_SIGNAL_RX = /(locat|remote|hybrid|on-?site|relocat|\bcity\b|\bstate\b|province|country|headquarter|office|posted|date|deadline|closing|closed|expired|no longer|filled|accepting application|united states|\busa\b|canada|india|united kingdom|\buk\b|london|germany|france|singapore|australia|dubai|emea|apac|europe)/i;
+function extractRelevantJd(scrapedText) {
+    const full = String(scrapedText || '');
+    if (full.length <= MAX_JD_CHARS) return full;
+    const head = full.slice(0, HEAD_CHARS);
+    const picked = [];
+    let used = head.length;
+    for (const raw of full.slice(HEAD_CHARS).split('\n')) {
+        const line = raw.trim();
+        if (!line || !JD_SIGNAL_RX.test(line)) continue;
+        if (used + line.length + 1 > MAX_JD_CHARS) break;
+        picked.push(line);
+        used += line.length + 1;
+    }
+    return picked.length ? `${head}\n…\n${picked.join('\n')}` : head;
+}
+
 export function buildSecondJudgeUserPrompt({ profile, job, scrapedText, threshold }) {
     // LOCATION + FRESHNESS only — give the grader just the location signals it
     // needs. Deliberately NO role/sponsorship/excluded fields (stage one owns
@@ -175,10 +249,12 @@ export function buildSecondJudgeUserPrompt({ profile, job, scrapedText, threshol
     };
     const signalsBlock = `## Candidate location (AUTHORITATIVE for the location check)\n${JSON.stringify(locationSignals, null, 2)}\n`;
 
-    // Real-site JD. Trim to keep token cost bounded — gpt-4o-mini priced at
-    // ~$0.15/1M input, so a single 8000-char posting is well under a cent.
-    const MAX_JD_CHARS = 8000;
-    const jd = String(scrapedText || '').slice(0, MAX_JD_CHARS);
+    // Real-site JD — trimmed to the location/freshness evidence (#4). This
+    // stage judges ONLY location + open/closed, so we don't need the whole
+    // posting body. Keep the header (location usually sits near the top) plus
+    // every line carrying a location / date / open-or-closed signal. Cuts input
+    // from ~8000 chars to ≤3500 with no loss of the evidence the grader uses.
+    const jd = extractRelevantJd(scrapedText);
     const slim = {
         title: job?.jobTitle || '',
         company: job?.companyName || '',

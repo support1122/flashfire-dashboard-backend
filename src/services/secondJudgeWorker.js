@@ -31,7 +31,13 @@ import {
 const WORKER_ENABLED = process.env.SECOND_JUDGE_ENABLED !== 'false';
 const POLL_INTERVAL_MS = parseInt(process.env.SECOND_JUDGE_POLL_INTERVAL_MS) || 10000;
 const DELAY_BETWEEN_JOBS_MS = parseInt(process.env.SECOND_JUDGE_DELAY_BETWEEN_JOBS_MS) || 2000;
-const MAX_ATTEMPTS = parseInt(process.env.SECOND_JUDGE_MAX_ATTEMPTS) || 3;
+const MAX_ATTEMPTS = parseInt(process.env.SECOND_JUDGE_MAX_ATTEMPTS) || 5;
+// Backoff after each failed attempt N (minutes). First three are quick (the
+// scraper/OpenAI is usually back in seconds); attempts 4 and 5 wait HOURS so a
+// posting behind a long outage / slow ATS still gets two more shots over the
+// next ~15h before we give up and keep it (fail-open). Index = attempts-1.
+//   attempt 1 → 1 min · 2 → 2 min · 3 → 5 h · 4 → 10 h · 5 → skip
+const RETRY_DELAYS_MIN = [1, 2, 5 * 60, 10 * 60];
 const THRESHOLD = Number.isFinite(Number(process.env.SECOND_JUDGE_THRESHOLD))
   ? Number(process.env.SECOND_JUDGE_THRESHOLD)
   : 50;
@@ -111,6 +117,45 @@ function escapeRegExp(s) {
   return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+// ─── Fast deterministic pre-screen (cost saver, #2) ──────────────────
+// The second judge checks ONLY location (allow US/Canada/India, remote,
+// missing) + freshness (open vs closed/expired) — both strongly
+// regex-detectable. When the scraped text carries NEITHER a foreign-location
+// signal NOR a closed-posting signal, the LLM verdict is a certain KEEP, so we
+// skip the OpenAI call. Fail-open in BOTH directions, so the regex NEVER
+// removes anything on its own — it only decides whether the LLM must run:
+//   • a foreign job the regex misses (no country named) → kept, exactly as the
+//     LLM would (its rule: missing/unclear location → KEEP);
+//   • a false foreign hit (e.g. "London, Ontario") → escalates to the LLM,
+//     which confirms KEEP.
+const FOREIGN_LOCATION_RX = /\b(united kingdom|u\.k\.|uk|england|scotland|wales|ireland|dublin|london|manchester|edinburgh|germany|deutschland|berlin|munich|münchen|frankfurt|france|paris|spain|madrid|barcelona|portugal|lisbon|italy|rome|milan|netherlands|amsterdam|belgium|brussels|switzerland|zurich|geneva|sweden|stockholm|norway|oslo|denmark|copenhagen|finland|helsinki|poland|warsaw|krakow|austria|vienna|czech|prague|hungary|budapest|romania|bucharest|greece|athens|singapore|hong kong|japan|tokyo|osaka|china|shanghai|beijing|shenzhen|taiwan|taipei|south korea|seoul|australia|sydney|melbourne|brisbane|perth|new zealand|auckland|wellington|united arab emirates|u\.a\.e\.|uae|dubai|abu dhabi|qatar|doha|bahrain|kuwait|oman|saudi arabia|riyadh|jeddah|israel|tel aviv|turkey|istanbul|brazil|brasil|são paulo|sao paulo|rio de janeiro|argentina|buenos aires|chile|santiago|colombia|bogota|mexico|méxico|mexico city|philippines|manila|cebu|malaysia|kuala lumpur|indonesia|jakarta|vietnam|hanoi|ho chi minh|thailand|bangkok|pakistan|karachi|lahore|bangladesh|dhaka|sri lanka|colombo|south africa|johannesburg|cape town|nigeria|lagos|abuja|kenya|nairobi|egypt|cairo|morocco|casablanca|ghana|accra)\b/i;
+const CLOSED_POSTING_RX = /\b(no longer accepting applications?|this (job|position|posting|role|requisition|listing|opening) (has been |is )?(closed|filled|expired|no longer available)|position (has been )?filled|applications? (are |is )?(now )?closed|posting (is )?closed|job (has )?expired|we (are|'re) no longer (accepting|hiring)|not accepting (new )?applications?|requisition closed|position (is )?no longer available|this opportunity (has|is) (closed|no longer))\b/i;
+function fastScreen(text) {
+  const t = String(text || '');
+  if (CLOSED_POSTING_RX.test(t)) return { needsLLM: true, hint: 'closed-signal' };
+  if (FOREIGN_LOCATION_RX.test(t)) return { needsLLM: true, hint: 'foreign-location-signal' };
+  return { needsLLM: false, hint: '' };
+}
+
+// friendlySkipReason — turn a raw technical error into a plain-English line the
+// operator sees on the card / modal. The exact error is still stored separately
+// in secondJudge.error for debugging; this is only the human-readable summary.
+function friendlySkipReason(raw) {
+  const m = String(raw || '').toLowerCase();
+  if (m.includes('not a scrapeable') || m.includes('bad_input'))
+    return 'The saved link isn’t a job-site page we can open, so the second-stage check was skipped. Job kept.';
+  if (m.includes('no client profile') || m.includes('profile'))
+    return 'No client profile was on file to check against, so the second-stage check was skipped. Job kept.';
+  if (m.includes('timed out') || m.includes('scraper request failed') || m.includes('scraper http') ||
+      m.includes('econnrefused') || m.includes('fetch failed') || m.includes('network') || m.includes('nav_timeout'))
+    return 'Couldn’t open the job posting — the job site was slow or unavailable after several tries. Job kept.';
+  if (m.includes('thin') || m.includes('empty') || m.includes('page text') || m.includes('content'))
+    return 'The job page had almost no readable text (likely a login or bot wall), so it couldn’t be checked. Job kept.';
+  if (m.includes('openai') || m.includes('grader') || m.includes('json'))
+    return 'The AI screener was temporarily unavailable, so the second-stage check was skipped. Job kept.';
+  return 'The second-stage check couldn’t finish after several tries. Job kept.';
+}
+
 // ─── Stale Job Recovery ──────────────────────────────────────────────
 async function recoverStaleJobs() {
   const cutoff = new Date(Date.now() - STALE_THRESHOLD_MS);
@@ -162,13 +207,17 @@ async function markScreenFailure(jobId, errorMessage, attempts) {
   };
   if (attempts >= MAX_ATTEMPTS) {
     update['secondJudge.status'] = 'skipped';
+    update['secondJudge.reason'] = friendlySkipReason(errorMessage);
     update['secondJudge.completedAt'] = new Date();
     console.error(`[SecondJudge] Job ${jobId} could not be screened after ${attempts} attempts (kept): ${errorMessage}`);
   } else {
-    const backoffMinutes = Math.pow(2, attempts - 1); // 1, 2, 4 min
+    // Delay after THIS attempt: 1 min, 2 min, 5 h, 10 h. Falls back to 10 h if
+    // MAX_ATTEMPTS is raised past the table.
+    const backoffMinutes = RETRY_DELAYS_MIN[attempts - 1] ?? 10 * 60;
     update['secondJudge.status'] = 'pending';
     update['secondJudge.retryAfter'] = new Date(Date.now() + backoffMinutes * 60 * 1000);
-    console.log(`[SecondJudge] Job ${jobId} screen retry in ${backoffMinutes} min (attempt ${attempts}/${MAX_ATTEMPTS})`);
+    const human = backoffMinutes >= 60 ? `${backoffMinutes / 60} h` : `${backoffMinutes} min`;
+    console.log(`[SecondJudge] Job ${jobId} screen retry in ${human} (attempt ${attempts}/${MAX_ATTEMPTS})`);
   }
   await JobModel.findByIdAndUpdate(jobId, { $set: update });
 }
@@ -302,6 +351,7 @@ async function processJob(job) {
     await JobModel.findByIdAndUpdate(job._id, {
       $set: {
         'secondJudge.status': 'skipped',
+        'secondJudge.reason': friendlySkipReason('not a scrapeable employer URL'),
         'secondJudge.error': 'joblink is not a scrapeable employer URL — kept',
         'secondJudge.completedAt': new Date(),
       },
@@ -324,6 +374,7 @@ async function processJob(job) {
     await JobModel.findByIdAndUpdate(job._id, {
       $set: {
         'secondJudge.status': 'skipped',
+        'secondJudge.reason': friendlySkipReason('No client profile found'),
         'secondJudge.error': 'No client profile found for second judge',
         'secondJudge.completedAt': new Date(),
       },
@@ -339,6 +390,23 @@ async function processJob(job) {
     err._stage = 'Scraper Content';
     throw err; // retry/backoff; fail-open after MAX
   }
+
+  // Step 2.5: fast deterministic screen (#2). If the scraped text shows no
+  // foreign-location signal and no closed/expired signal, the LLM verdict is a
+  // certain KEEP — skip the OpenAI call entirely. Only ambiguous pages (a
+  // foreign-location or closed hint) pay for the LLM, which then confirms and
+  // guards against regex false-positives (e.g. "London, Ontario" / boilerplate).
+  const fast = fastScreen(text);
+  if (!fast.needsLLM) {
+    await keepForPass(
+      job,
+      { score: 85, reason: 'Kept — fast location/freshness check: no foreign-location or closed-posting signal in the posting.', skipKind: '' },
+      text.length
+    );
+    console.log(`${tag} FAST-KEPT (no LLM call — no foreign/closed signal)`);
+    return;
+  }
+  console.log(`${tag} fast-screen escalating to LLM (${fast.hint})`);
 
   // Step 3: re-judge on the real-site text.
   const verdict = await judgeRealSite({ profile, job, scrapedText: text });
