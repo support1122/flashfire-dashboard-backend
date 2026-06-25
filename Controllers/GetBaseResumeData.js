@@ -73,6 +73,7 @@ export default async function GetBaseResumeData(req, res) {
             resumeId: _rid,
             firstName: _fn,
             lastName: _ln,
+            createdAt: _ca,
             ...resumeData
         } = u;
 
@@ -87,6 +88,7 @@ export default async function GetBaseResumeData(req, res) {
             // Reflect the assigned template version (0/1 = normal, 2 = medical)
             // so the frontend renders ResumePreview vs ResumePreviewMedical.
             version: typeof u.V === "number" ? u.V : 0,
+            createdAt: u.createdAt || null,
             resumeId: u.resumeId || null,
             V: u.V ?? null,
             firstName: u.firstName || "",
