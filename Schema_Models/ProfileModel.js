@@ -309,7 +309,13 @@ export const profileSchema = new mongoose.Schema({
   },
   experienceLevel: {
     type: String,
-    enum: ["Entry level", "0-2 Years", "0-3 Years", "0-4 Years", "0-5 Years", "0-6 Years", "0-7 Years", "Other"],
+    // Accepts the onboarding form's seniority labels plus the legacy
+    // year-range values (older profiles / scraper). Kept as a union so
+    // create-path .save() validation no longer rejects current form values.
+    enum: [
+      "Entry Level", "Mid Level", "Senior Level", "Executive",
+      "Entry level", "0-2 Years", "0-3 Years", "0-4 Years", "0-5 Years", "0-6 Years", "0-7 Years", "Other",
+    ],
     required: true,
   },
   expectedSalaryRange: {
@@ -328,6 +334,18 @@ export const profileSchema = new mongoose.Schema({
   reasonForLeaving: {
     type: String,
     required: false,
+  },
+  // Free-text availability note from the onboarding form (e.g. "after May").
+  availabilityNote: {
+    type: String,
+    required: false,
+    default: "",
+  },
+  // Free-text salary expectation note from the onboarding form.
+  expectedSalaryNarrative: {
+    type: String,
+    required: false,
+    default: "",
   },
   // Employment types the candidate WILL accept. Multi-select from the
   // /profile UI. Defaults to ["Full-time"] when the client never edited
@@ -362,7 +380,12 @@ export const profileSchema = new mongoose.Schema({
   },
   joinTime: {
     type: String,
-    enum: ["in 1 week", "in 2 week", "in 3 week", "in 4 week", "in 6-7 week"],
+    // Onboarding form labels + legacy values, unioned so create-path
+    // validation accepts what the form actually sends.
+    enum: [
+      "Immediately", "2 weeks", "1 month", "2-3 months", "3+ months",
+      "in 1 week", "in 2 week", "in 3 week", "in 4 week", "in 6-7 week",
+    ],
     required: true,
     default: "in 1 week"
   },
