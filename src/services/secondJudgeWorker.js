@@ -4,9 +4,10 @@
 // scraper) and pushes the matches to the dashboard. This worker is the second
 // gate: for each such job it opens the REAL employer posting via the scraper,
 // scrapes the full visible text, and re-judges that text against the client
-// profile (LOCATION + FRESHNESS only). It NEVER removes the job — a pass keeps
-// it; a mismatch only FLAGS it (records the reason) for the operator to review
-// and decide. currentStatus/timeline are never touched here.
+// profile (LOCATION + FRESHNESS only). A pass keeps the job; a mismatch FLAGS it
+// (records the reason) and opens a grace window (REMOVE_GRACE_HOURS, default 24h)
+// for the operator to dismiss ("keep") — if no one acts, a periodic sweep moves
+// the job to the Removed column ("removed by AI"). A pass/skip never moves it.
 //
 // Pattern mirrors autoOptimizationWorker.js: MongoDB polling (no Redis), atomic
 // claim, exponential backoff, stale-processing recovery. Failures to SCREEN
@@ -17,11 +18,15 @@
 //   pending    → queued by AddJob (extension jobs with a joblink)
 //   processing → claimed by this worker
 //   passed     → re-judged on real-site text, kept
-//   failed     → re-judged on real-site text, mismatch → FLAGGED (kept; operator decides)
+//   failed     → re-judged on real-site text, mismatch → FLAGGED; auto-removed to
+//                the Removed column after REMOVE_GRACE_HOURS unless an operator
+//                dismisses it (which sets 'reviewed') within the window
+//   reviewed   → flag resolved (operator keep, or grace-window auto-removal)
 //   skipped    → could not screen after retries (kept, fail-open)
 
 import { JobModel } from '../../Schema_Models/JobModel.js';
 import { ProfileModel } from '../../Schema_Models/ProfileModel.js';
+import { UserModel } from '../../Schema_Models/UserModel.js';
 import {
   SECOND_JUDGE_SYSTEM_PROMPT,
   buildSecondJudgeUserPrompt,
@@ -45,6 +50,19 @@ const THRESHOLD = Number.isFinite(Number(process.env.SECOND_JUDGE_THRESHOLD))
 // page the scraper already returned ok — the scraper is the single thin-gate.
 const MIN_JD_CHARS = parseInt(process.env.SECOND_JUDGE_MIN_JD_CHARS) || 80;
 const STALE_THRESHOLD_MS = 5 * 60 * 1000; // 5 minutes
+
+// Auto-remove flagged jobs that failed the second judge once a grace window has
+// elapsed. The failure first FLAGS the job (operator can dismiss with "keep" in
+// that window, which sets status:'reviewed' and exempts it); if no one acts
+// within REMOVE_GRACE, the job is moved to the Removed column ("removed by AI").
+const AUTO_REMOVE_ENABLED = process.env.SECOND_JUDGE_AUTO_REMOVE_ENABLED !== 'false';
+const REMOVE_GRACE_HOURS = Number.isFinite(Number(process.env.SECOND_JUDGE_REMOVE_GRACE_HOURS))
+  ? Number(process.env.SECOND_JUDGE_REMOVE_GRACE_HOURS)
+  : 24;
+const REMOVE_GRACE_MS = REMOVE_GRACE_HOURS * 60 * 60 * 1000;
+const AUTO_REMOVE_EVERY_MS = 5 * 60 * 1000; // sweep cadence (grace is hours, so 5 min is ample)
+const AI_REMOVAL_STATUS = 'removed by AI'; // mirrors reconcileExclusionJobs.js → lands in Removed column
+let lastAutoRemoveMs = 0;
 
 // Scraper (Playwright text extractor). EXTRACT path matches the extension's
 // exports.js SCRAPER_ENDPOINTS.EXTRACT_INFO ('/extract/infor=').
@@ -176,6 +194,68 @@ async function recoverStaleJobs() {
   }
 }
 
+// ─── Auto-remove failed flags past the grace window ──────────────────
+// Move jobs that FAILED the second judge to the Removed column once their grace
+// window (REMOVE_GRACE_HOURS, default 24h from the failure verdict) has elapsed
+// and no operator dismissed the flag (an operator "keep" sets status:'reviewed',
+// dropping it from this query). Mirrors reconcileExclusionJobs.js' AI-removal
+// fields so it lands in the Removed column exactly like an exclusion removal.
+async function autoRemoveExpiredFailedFlags() {
+  if (!AUTO_REMOVE_ENABLED) return;
+  const cutoff = new Date(Date.now() - REMOVE_GRACE_MS);
+  const due = await JobModel.find({
+    'secondJudge.status': 'failed',
+    'secondJudge.completedAt': { $lte: cutoff },
+    // Skip anything already in a removed/deleted column (defensive — failed flags
+    // are by definition still-present, but never double-remove).
+    currentStatus: { $not: /^(deleted|removed)/i },
+  })
+    .select('_id userID secondJudge.reason secondJudge.score')
+    .lean();
+  if (!due.length) return;
+
+  const now = nowIST();
+  const bulk = due.map((j) => ({
+    updateOne: {
+      filter: { _id: j._id },
+      update: {
+        $set: {
+          currentStatus: AI_REMOVAL_STATUS,
+          updatedAt: now,
+          removalReason:
+            (j.secondJudge?.reason || '').trim() ||
+            'Failed second-stage screening (location/freshness mismatch on the full posting)',
+          removalDate: now,
+          removedBy: 'AI',
+          // Dismiss the flag so it leaves the review queue and is never
+          // re-removed; the verdict (score/reason) stays for the record.
+          'secondJudge.status': 'reviewed',
+        },
+        $push: { timeline: AI_REMOVAL_STATUS },
+      },
+    },
+  }));
+  await JobModel.bulkWrite(bulk);
+
+  // Keep each client's removed-jobs counter in step (same as exclusion removal).
+  const perUser = new Map();
+  for (const j of due) {
+    if (!j.userID) continue;
+    perUser.set(j.userID, (perUser.get(j.userID) || 0) + 1);
+  }
+  await Promise.all(
+    [...perUser.entries()].map(([email, n]) =>
+      UserModel.findOneAndUpdate({ email }, { $inc: { removedJobsCount: n } }).catch((e) =>
+        console.warn(`[SecondJudge] removedJobsCount inc failed for ${email}:`, e.message)
+      )
+    )
+  );
+
+  console.log(
+    `[SecondJudge] Auto-removed ${due.length} flagged job(s) past ${REMOVE_GRACE_HOURS}h grace → "${AI_REMOVAL_STATUS}"`
+  );
+}
+
 // ─── Claim Next Pending Job (Atomic) ─────────────────────────────────
 async function claimNextJob() {
   return JobModel.findOneAndUpdate(
@@ -305,12 +385,12 @@ async function judgeRealSite({ profile, job, scrapedText }) {
   };
 }
 
-// ─── Remove a job that failed the second judge ───────────────────────
-// Flag a job that failed the second judge — but DO NOT remove it. We never
-// touch currentStatus / removal fields / timeline; the job stays exactly where
-// it is. We only record the secondJudge verdict so the operator sees the flag
-// (icon + reason) on the card and decides what to do. This is advisory, not an
-// auto-removal.
+// ─── Flag a job that failed the second judge ─────────────────────────
+// Record the FAILED verdict but leave the job in place for now: currentStatus /
+// removal fields / timeline are untouched here so the operator sees the flag
+// (icon + reason) and has the grace window to dismiss it. If the flag is still
+// 'failed' after REMOVE_GRACE_HOURS, autoRemoveExpiredFailedFlags() moves it to
+// the Removed column. completedAt stamps the start of that grace window.
 async function flagForMismatch(job, verdict, scrapedChars) {
   const reason = (verdict.reason || 'Did not match client profile on the full posting').trim();
   await JobModel.findByIdAndUpdate(job._id, {
@@ -435,6 +515,12 @@ async function pollLoop() {
     lastRecoverMs = Date.now();
     recoverStaleJobs().catch((e) => console.warn('[SecondJudge] recover error:', e.message));
   }
+  // Periodic sweep: move failed flags past their grace window to the Removed
+  // column. Fire-and-forget so it never delays claiming the next pending job.
+  if (Date.now() - lastAutoRemoveMs > AUTO_REMOVE_EVERY_MS) {
+    lastAutoRemoveMs = Date.now();
+    autoRemoveExpiredFailedFlags().catch((e) => console.warn('[SecondJudge] auto-remove error:', e.message));
+  }
   try {
     const job = await claimNextJob();
     if (job) {
@@ -470,6 +556,7 @@ export function startSecondJudgeWorker() {
   workerRunning = true;
   console.log('[SecondJudge] Starting second-stage screening worker');
   console.log(`[SecondJudge] Config: poll=${POLL_INTERVAL_MS}ms, maxAttempts=${MAX_ATTEMPTS}, threshold=${THRESHOLD}, model=${OPENAI_MODEL}`);
+  console.log(`[SecondJudge] Auto-remove: ${AUTO_REMOVE_ENABLED ? `on, grace=${REMOVE_GRACE_HOURS}h → "${AI_REMOVAL_STATUS}"` : 'off'}`);
   console.log(`[SecondJudge] Scraper: ${SCRAPER_BASE_URL}${SCRAPER_EXTRACT_PATH}<url>`);
 
   recoverStaleJobs()

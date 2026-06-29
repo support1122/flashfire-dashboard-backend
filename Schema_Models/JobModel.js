@@ -204,8 +204,10 @@ export const JobSchema = new mongoose.Schema({
   // 'pending' for jobs pushed by the JR-Direct extension auto-judge flow.
   // The worker opens the real employer site via the scraper, re-judges the
   // full posting text against the client profile, and FLAGS the job ('failed'
-  // + reason) for operator review when it fails — it does NOT remove it.
-  // 'passed' keeps it.
+  // + reason) when it fails. A failed flag is auto-moved to the Removed column
+  // ("removed by AI") after a grace window (SECOND_JUDGE_REMOVE_GRACE_HOURS,
+  // default 24h) unless an operator dismisses it ('reviewed') first. 'passed'
+  // keeps it. completedAt stamps the failure (start of the grace window).
   secondJudge: {
     status: {
       type: String,
