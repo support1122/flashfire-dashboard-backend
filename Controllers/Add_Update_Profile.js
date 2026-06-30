@@ -840,6 +840,7 @@ export default async function Add_Update_Profile(req, res) {
       undergraduateTranscript,
       preferredRoles,
       experienceLevel,
+      yearsOfExperience,
       expectedSalaryRange,
       expectedSalaryNarrative,
       preferredLocations,
@@ -925,6 +926,9 @@ export default async function Add_Update_Profile(req, res) {
           undergraduateTranscript: undergraduateTranscript || existingProfile.undergraduateTranscript,
           preferredRoles: preferredRoles || existingProfile.preferredRoles,
           experienceLevel: experienceLevel || existingProfile.experienceLevel,
+          yearsOfExperience: yearsOfExperience !== undefined && yearsOfExperience !== ""
+            ? Number(yearsOfExperience)
+            : existingProfile.yearsOfExperience,
           expectedSalaryRange: expectedSalaryRange || existingProfile.expectedSalaryRange,
           expectedSalaryNarrative: expectedSalaryNarrative !== undefined ? expectedSalaryNarrative : existingProfile.expectedSalaryNarrative,
           preferredLocations: preferredLocations || existingProfile.preferredLocations,
@@ -1003,6 +1007,9 @@ export default async function Add_Update_Profile(req, res) {
         undergraduateTranscript: undergraduateTranscript || existingProfile.undergraduateTranscript,
         preferredRoles: preferredRoles || existingProfile.preferredRoles,
         experienceLevel: experienceLevel || existingProfile.experienceLevel,
+        yearsOfExperience: yearsOfExperience !== undefined && yearsOfExperience !== ""
+          ? Number(yearsOfExperience)
+          : existingProfile.yearsOfExperience,
         expectedSalaryRange: expectedSalaryRange || existingProfile.expectedSalaryRange,
         expectedSalaryNarrative: expectedSalaryNarrative !== undefined ? expectedSalaryNarrative : existingProfile.expectedSalaryNarrative,
         preferredLocations: preferredLocations || existingProfile.preferredLocations,
@@ -1070,6 +1077,7 @@ export default async function Add_Update_Profile(req, res) {
         undergraduateTranscript: undergraduateTranscript || null,
         preferredRoles: preferredRoles || [],
         experienceLevel: experienceLevel || "",
+        yearsOfExperience: yearsOfExperience !== undefined && yearsOfExperience !== "" ? Number(yearsOfExperience) : null,
         expectedSalaryRange: expectedSalaryRange || "",
         expectedSalaryNarrative: expectedSalaryNarrative || "",
         preferredLocations: preferredLocations || [],
