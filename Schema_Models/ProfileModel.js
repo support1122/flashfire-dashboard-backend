@@ -318,6 +318,15 @@ export const profileSchema = new mongoose.Schema({
     ],
     required: true,
   },
+  // YOE — total years of professional experience (numeric). Optional; used
+  // by the scraper/AI to gauge seniority more precisely than the level label.
+  yearsOfExperience: {
+    type: Number,
+    required: false,
+    min: 0,
+    max: 60,
+    default: null,
+  },
   expectedSalaryRange: {
     type: String,
     enum: ["60k-100k", "100k-150k", "150k-200k", "Other"],
