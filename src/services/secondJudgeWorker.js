@@ -68,7 +68,10 @@ let lastAutoRemoveMs = 0;
 // exports.js SCRAPER_ENDPOINTS.EXTRACT_INFO ('/extract/infor=').
 const SCRAPER_BASE_URL = (process.env.SCRAPER_BASE_URL || 'http://34.100.143.80:8092').replace(/\/+$/, '');
 const SCRAPER_EXTRACT_PATH = process.env.SCRAPER_EXTRACT_PATH || '/extract/infor=';
-const SCRAPER_TIMEOUT_MS = parseInt(process.env.SECOND_JUDGE_SCRAPER_TIMEOUT_MS) || 45000;
+// 70s (was 45s): must exceed the scraper's own nav timeout (JDFETCH_NAV_TIMEOUT_MS,
+// now 35s) plus HTTP-tier + queue wait, else we abort a scrape that was about to
+// succeed and wrongly log "couldn't open the posting".
+const SCRAPER_TIMEOUT_MS = parseInt(process.env.SECOND_JUDGE_SCRAPER_TIMEOUT_MS) || 70000;
 
 // OpenAI judge (reuses the same key as /extension/openai-judge).
 const OPENAI_URL = 'https://api.openai.com/v1/chat/completions';
