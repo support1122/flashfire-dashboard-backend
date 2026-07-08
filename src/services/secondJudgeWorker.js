@@ -36,6 +36,11 @@ import {
 const WORKER_ENABLED = process.env.SECOND_JUDGE_ENABLED !== 'false';
 const POLL_INTERVAL_MS = parseInt(process.env.SECOND_JUDGE_POLL_INTERVAL_MS) || 10000;
 const DELAY_BETWEEN_JOBS_MS = parseInt(process.env.SECOND_JUDGE_DELAY_BETWEEN_JOBS_MS) || 2000;
+// How many jobs to screen IN PARALLEL. The scraper cluster has ~6 concurrent
+// slots, so 6 keeps it saturated; each in-flight job is one scrape + (maybe) one
+// OpenAI call, both I/O-bound. claimNextJob is atomic, so parallel claims (and
+// multiple backend instances) never grab the same job.
+const CONCURRENCY = Math.max(1, parseInt(process.env.SECOND_JUDGE_CONCURRENCY) || 6);
 const MAX_ATTEMPTS = parseInt(process.env.SECOND_JUDGE_MAX_ATTEMPTS) || 5;
 // Backoff after each failed attempt N (minutes). First three are quick (the
 // scraper/OpenAI is usually back in seconds); attempts 4 and 5 wait HOURS so a
@@ -78,7 +83,7 @@ const OPENAI_URL = 'https://api.openai.com/v1/chat/completions';
 const OPENAI_MODEL = process.env.OPENAI_JUDGE_MODEL || process.env.OPENAI_MODEL || 'gpt-4o-mini';
 const OPENAI_TIMEOUT_MS = parseInt(process.env.SECOND_JUDGE_OPENAI_TIMEOUT_MS) || 30000;
 
-let isProcessing = false;
+let inFlight = 0;   // jobs currently being screened in parallel (0..CONCURRENCY)
 let workerRunning = false;
 let pollTimer = null;
 let lastRecoverMs = 0;
@@ -508,7 +513,24 @@ async function processJob(job) {
   }
 }
 
-// ─── Polling Loop ────────────────────────────────────────────────────
+// Run one claimed job to completion (screen → verdict), converting a thrown
+// screening error into retry/backoff. NEVER rejects, so it always frees its slot.
+async function runJob(job) {
+  try {
+    await processJob(job);
+  } catch (err) {
+    const attempts = job.secondJudge?.attempts || 1;
+    await markScreenFailure(job._id, `${err._stage || 'Unknown'}: ${err.message}`, attempts)
+      .catch((e) => console.error('[SecondJudge] markScreenFailure error:', e.message));
+  }
+}
+
+// ─── Polling Loop (bounded concurrency) ──────────────────────────────
+// One self-scheduling timer chain (no overlapping invocations, so the in-flight
+// count can't be raced past CONCURRENCY). Each tick tops the in-flight set up to
+// CONCURRENCY by atomically claiming pending jobs; each claimed job runs
+// concurrently and frees its slot on completion. A backlog of N now drains in
+// ≈ (N / CONCURRENCY) × per-job time instead of one-at-a-time.
 async function pollLoop() {
   if (!workerRunning) return;
   // Periodic stale-recovery (not just at boot): a job left in 'processing' by a
@@ -524,26 +546,26 @@ async function pollLoop() {
     lastAutoRemoveMs = Date.now();
     autoRemoveExpiredFailedFlags().catch((e) => console.warn('[SecondJudge] auto-remove error:', e.message));
   }
+
+  let claimedAny = false;
   try {
-    const job = await claimNextJob();
-    if (job) {
-      isProcessing = true;
-      try {
-        await processJob(job);
-      } catch (err) {
-        const attempts = job.secondJudge?.attempts || 1;
-        await markScreenFailure(job._id, `${err._stage || 'Unknown'}: ${err.message}`, attempts);
-      }
-      isProcessing = false;
-      pollTimer = setTimeout(pollLoop, DELAY_BETWEEN_JOBS_MS);
-    } else {
-      pollTimer = setTimeout(pollLoop, POLL_INTERVAL_MS);
+    // Fill every free slot. claimNextJob is atomic, so each iteration gets a
+    // DISTINCT job; the launched runJob is NOT awaited (runs in background) and
+    // decrements inFlight when it settles.
+    while (inFlight < CONCURRENCY) {
+      const job = await claimNextJob();
+      if (!job) break; // queue empty, or everything left is backing off
+      claimedAny = true;
+      inFlight += 1;
+      runJob(job).finally(() => { inFlight -= 1; });
     }
   } catch (err) {
     console.error('[SecondJudge] Poll loop error:', err.message);
-    isProcessing = false;
-    pollTimer = setTimeout(pollLoop, POLL_INTERVAL_MS);
   }
+
+  // Poll fast while work is in flight (refill freed slots promptly); slow when idle.
+  const nextDelay = (inFlight > 0 || claimedAny) ? DELAY_BETWEEN_JOBS_MS : POLL_INTERVAL_MS;
+  pollTimer = setTimeout(pollLoop, nextDelay);
 }
 
 // ─── Public API ──────────────────────────────────────────────────────
@@ -558,7 +580,7 @@ export function startSecondJudgeWorker() {
   }
   workerRunning = true;
   console.log('[SecondJudge] Starting second-stage screening worker');
-  console.log(`[SecondJudge] Config: poll=${POLL_INTERVAL_MS}ms, maxAttempts=${MAX_ATTEMPTS}, threshold=${THRESHOLD}, model=${OPENAI_MODEL}`);
+  console.log(`[SecondJudge] Config: poll=${POLL_INTERVAL_MS}ms, concurrency=${CONCURRENCY}, maxAttempts=${MAX_ATTEMPTS}, threshold=${THRESHOLD}, model=${OPENAI_MODEL}`);
   console.log(`[SecondJudge] Auto-remove: ${AUTO_REMOVE_ENABLED ? `on, grace=${REMOVE_GRACE_HOURS}h → "${AI_REMOVAL_STATUS}"` : 'off'}`);
   console.log(`[SecondJudge] Scraper: ${SCRAPER_BASE_URL}${SCRAPER_EXTRACT_PATH}<url>`);
 
@@ -582,10 +604,12 @@ export function stopSecondJudgeWorker() {
 export function getSecondJudgeStatus() {
   return {
     running: workerRunning,
-    processing: isProcessing,
+    processing: inFlight > 0,
+    inFlight,
     enabled: WORKER_ENABLED,
     config: {
       pollIntervalMs: POLL_INTERVAL_MS,
+      concurrency: CONCURRENCY,
       maxAttempts: MAX_ATTEMPTS,
       threshold: THRESHOLD,
       model: OPENAI_MODEL,
