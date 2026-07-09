@@ -202,12 +202,14 @@ export const JobSchema = new mongoose.Schema({
   },
   // Second-stage screening tracking (secondJudgeWorker). Only set to
   // 'pending' for jobs pushed by the JR-Direct extension auto-judge flow.
-  // The worker opens the real employer site via the scraper, re-judges the
-  // full posting text against the client profile, and FLAGS the job ('failed'
-  // + reason) when it fails. A failed flag is auto-moved to the Removed column
-  // ("removed by AI") after a grace window (SECOND_JUDGE_REMOVE_GRACE_HOURS,
-  // default 24h) unless an operator dismisses it ('reviewed') first. 'passed'
-  // keeps it. completedAt stamps the failure (start of the grace window).
+  // The worker opens the real employer site via the scraper and re-judges the
+  // full posting text against the client profile. Outcomes:
+  //   • CLOSED/EXPIRED posting (skipKind 'threshold') → moved to the Removed
+  //     column ("removed by AI") straight away; nobody can apply to it.
+  //   • LOCATION mismatch (skipKind 'location-mismatch') → 'failed', i.e.
+  //     FLAGGED for operator review. The job stays in its column and is never
+  //     auto-removed; an operator resolves it to 'reviewed' (keep or remove).
+  //   • 'passed' / 'skipped' → kept, no move.
   secondJudge: {
     status: {
       type: String,
@@ -222,6 +224,10 @@ export const JobSchema = new mongoose.Schema({
     // Grade from the second judge (0-100) and the operator-facing reason.
     score: { type: Number, default: null },
     reason: { type: String, default: null },
+    // Which check failed: 'threshold' (closed/expired posting — auto-removed),
+    // 'location-mismatch' (flagged for review), or '' when the job passed.
+    // null means the row predates this field (pre-upgrade flag).
+    skipKind: { type: String, default: null },
     // How many chars the scraper returned for the real-site JD (diagnostics).
     scrapedChars: { type: Number, default: null },
     error: { type: String, default: null }

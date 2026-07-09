@@ -4,10 +4,23 @@
 // scraper) and pushes the matches to the dashboard. This worker is the second
 // gate: for each such job it opens the REAL employer posting via the scraper,
 // scrapes the full visible text, and re-judges that text against the client
-// profile (LOCATION + FRESHNESS only). A pass keeps the job; a mismatch FLAGS it
-// (records the reason) and opens a grace window (REMOVE_GRACE_HOURS, default 24h)
-// for the operator to dismiss ("keep") — if no one acts, a periodic sweep moves
-// the job to the Removed column ("removed by AI"). A pass/skip never moves it.
+// profile (LOCATION + FRESHNESS only).
+//
+// The two failure kinds are treated DIFFERENTLY, on purpose:
+//   • FRESHNESS (skipKind 'threshold') — the posting is closed / expired / stale.
+//     Nobody can apply to it, so there is nothing for an operator to decide: the
+//     job is moved to the Removed column ("removed by AI") IMMEDIATELY, carrying
+//     the reason.
+//   • LOCATION (skipKind 'location-mismatch') — judgement call (the client may
+//     still want a London role). The job is FLAGGED and KEPT; it shows up in the
+//     CRM "AI second-stage flags" queue and only an operator can remove it.
+// A pass or a skip never moves the job.
+//
+// Removing on freshness needs TWO independent keys, because an LLM alone is not
+// trustworthy about dates: the grader must return skipKind 'threshold' AND the
+// scraped text must carry deterministic evidence (an explicit closed/expired
+// statement, or a parsed posted-date older than STALE_POSTING_DAYS). If the
+// grader says "expired" but the page shows no such evidence, we KEEP the job.
 //
 // Pattern mirrors autoOptimizationWorker.js: MongoDB polling (no Redis), atomic
 // claim, exponential backoff, stale-processing recovery. Failures to SCREEN
@@ -18,10 +31,8 @@
 //   pending    → queued by AddJob (extension jobs with a joblink)
 //   processing → claimed by this worker
 //   passed     → re-judged on real-site text, kept
-//   failed     → re-judged on real-site text, mismatch → FLAGGED; auto-removed to
-//                the Removed column after REMOVE_GRACE_HOURS unless an operator
-//                dismisses it (which sets 'reviewed') within the window
-//   reviewed   → flag resolved (operator keep, or grace-window auto-removal)
+//   failed     → LOCATION mismatch → FLAGGED for operator review, job stays put
+//   reviewed   → flag resolved (operator keep/remove), or auto-removed as stale
 //   skipped    → could not screen after retries (kept, fail-open)
 
 import { JobModel } from '../../Schema_Models/JobModel.js';
@@ -56,18 +67,28 @@ const THRESHOLD = Number.isFinite(Number(process.env.SECOND_JUDGE_THRESHOLD))
 const MIN_JD_CHARS = parseInt(process.env.SECOND_JUDGE_MIN_JD_CHARS) || 80;
 const STALE_THRESHOLD_MS = 5 * 60 * 1000; // 5 minutes
 
-// Auto-remove flagged jobs that failed the second judge once a grace window has
-// elapsed. The failure first FLAGS the job (operator can dismiss with "keep" in
-// that window, which sets status:'reviewed' and exempts it); if no one acts
-// within REMOVE_GRACE, the job is moved to the Removed column ("removed by AI").
+// The two flag kinds the grader may return (see secondJudgePrompt.js). Only
+// these are actionable; any other skipKind the model invents is ignored (keep).
+const FRESHNESS_KIND = 'threshold';        // posting closed / expired / stale
+const LOCATION_KIND = 'location-mismatch'; // outside US / Canada / India, on-site
+const VALID_FLAGS = new Set([LOCATION_KIND, FRESHNESS_KIND]);
+
+// Auto-remove ONLY the freshness failures, and do it immediately: a closed or
+// expired posting cannot be applied to, so there is no operator decision to
+// make. Location mismatches are never auto-removed — they stay flagged for the
+// operator. Master switch for the removal half only (flagging always happens).
 const AUTO_REMOVE_ENABLED = process.env.SECOND_JUDGE_AUTO_REMOVE_ENABLED !== 'false';
-const REMOVE_GRACE_HOURS = Number.isFinite(Number(process.env.SECOND_JUDGE_REMOVE_GRACE_HOURS))
-  ? Number(process.env.SECOND_JUDGE_REMOVE_GRACE_HOURS)
-  : 24;
-const REMOVE_GRACE_MS = REMOVE_GRACE_HOURS * 60 * 60 * 1000;
-const AUTO_REMOVE_EVERY_MS = 5 * 60 * 1000; // sweep cadence (grace is hours, so 5 min is ample)
 const AI_REMOVAL_STATUS = 'removed by AI'; // mirrors reconcileExclusionJobs.js → lands in Removed column
-let lastAutoRemoveMs = 0;
+// A posting whose own posted-date is older than this many days counts as stale
+// (deterministic half of the two-key freshness gate).
+const STALE_POSTING_DAYS = Number.isFinite(Number(process.env.SECOND_JUDGE_STALE_DAYS))
+  ? Number(process.env.SECOND_JUDGE_STALE_DAYS)
+  : 60;
+// One-shot migration at boot: rows flagged 'failed' by the OLD grader (which was
+// never told today's date, so it read fresh postings as "expired") carry no
+// skipKind. Re-queue the freshness-looking ones for a clean re-screen instead of
+// trusting — or blindly removing on — that old verdict.
+const REQUEUE_LEGACY_FLAGS = process.env.SECOND_JUDGE_REQUEUE_LEGACY_FLAGS !== 'false';
 
 // Scraper (Playwright text extractor). EXTRACT path matches the extension's
 // exports.js SCRAPER_ENDPOINTS.EXTRACT_INFO ('/extract/infor=').
@@ -156,9 +177,91 @@ function escapeRegExp(s) {
 //     which confirms KEEP.
 const FOREIGN_LOCATION_RX = /\b(united kingdom|u\.k\.|uk|england|scotland|wales|ireland|dublin|london|manchester|edinburgh|germany|deutschland|berlin|munich|münchen|frankfurt|france|paris|spain|madrid|barcelona|portugal|lisbon|italy|rome|milan|netherlands|amsterdam|belgium|brussels|switzerland|zurich|geneva|sweden|stockholm|norway|oslo|denmark|copenhagen|finland|helsinki|poland|warsaw|krakow|austria|vienna|czech|prague|hungary|budapest|romania|bucharest|greece|athens|singapore|hong kong|japan|tokyo|osaka|china|shanghai|beijing|shenzhen|taiwan|taipei|south korea|seoul|australia|sydney|melbourne|brisbane|perth|new zealand|auckland|wellington|united arab emirates|u\.a\.e\.|uae|dubai|abu dhabi|qatar|doha|bahrain|kuwait|oman|saudi arabia|riyadh|jeddah|israel|tel aviv|turkey|istanbul|brazil|brasil|são paulo|sao paulo|rio de janeiro|argentina|buenos aires|chile|santiago|colombia|bogota|mexico|méxico|mexico city|philippines|manila|cebu|malaysia|kuala lumpur|indonesia|jakarta|vietnam|hanoi|ho chi minh|thailand|bangkok|pakistan|karachi|lahore|bangladesh|dhaka|sri lanka|colombo|south africa|johannesburg|cape town|nigeria|lagos|abuja|kenya|nairobi|egypt|cairo|morocco|casablanca|ghana|accra)\b/i;
 const CLOSED_POSTING_RX = /\b(no longer accepting applications?|this (job|position|posting|role|requisition|listing|opening) (has been |is )?(closed|filled|expired|no longer available)|position (has been )?filled|applications? (are |is )?(now )?closed|posting (is )?closed|job (has )?expired|we (are|'re) no longer (accepting|hiring)|not accepting (new )?applications?|requisition closed|position (is )?no longer available|this opportunity (has|is) (closed|no longer))\b/i;
-function fastScreen(text) {
+
+// ─── Posted-date parsing (deterministic freshness evidence) ──────────
+// Only read a date that FOLLOWS an explicit "posted"/"published" label, so the
+// many other dates in a JD (start date, founding year, benefits-enrolment
+// window) can never be mistaken for the posting date.
+const MONTH_NAMES = 'jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t|tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?';
+const MONTH_INDEX = { jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5, jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11 };
+// The date window is captured in a LOOKAHEAD so it is not consumed: a later
+// "Posted <date>" that sits within 40 chars of an earlier label must still be
+// found (a re-posted job prints both, and the newer one has to win).
+const POSTED_LABEL_RX = /(?:date\s+posted|posted\s+on|posted\s+date|first\s+posted|published\s+on|posted|published)\s*[:\-–—]?\s*(?=([^\n\r]{0,40}))/gi;
+const DAY_MONTH_YEAR_RX = new RegExp(`^(\\d{1,2})\\s+(${MONTH_NAMES})\\.?,?\\s+(\\d{4})`, 'i');
+const MONTH_DAY_YEAR_RX = new RegExp(`^(${MONTH_NAMES})\\.?\\s+(\\d{1,2})(?:st|nd|rd|th)?,?\\s+(\\d{4})`, 'i');
+
+// ageFromSnippet — days between `now` and the date at the START of `snippet`.
+// Returns null when the snippet holds no date we can read. A date in the FUTURE
+// yields 0 (never "stale"): that is a site bug or a timezone artifact, and it is
+// exactly the case the old grader misread as "expired".
+function ageFromSnippet(snippet, now) {
+  const s = String(snippet || '').trim();
+  if (!s) return null;
+
+  let m = s.match(/^(\d{1,4})\s*\+?\s*days?\s+ago/i);
+  if (m) return Number(m[1]);
+  m = s.match(/^(\d{1,3})\s*\+?\s*months?\s+ago/i);
+  if (m) return Number(m[1]) * 30;
+  m = s.match(/^(\d{1,2})\s*\+?\s*years?\s+ago/i);
+  if (m) return Number(m[1]) * 365;
+  if (/^(today|yesterday|just\s+posted|\d{1,3}\s*\+?\s*(?:hours?|minutes?|mins?)\s+ago)/i.test(s)) return 0;
+
+  let utc = null;
+  if ((m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/))) {
+    utc = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  } else if ((m = s.match(DAY_MONTH_YEAR_RX))) {
+    utc = Date.UTC(Number(m[3]), MONTH_INDEX[m[2].slice(0, 3).toLowerCase()], Number(m[1]));
+  } else if ((m = s.match(MONTH_DAY_YEAR_RX))) {
+    utc = Date.UTC(Number(m[3]), MONTH_INDEX[m[1].slice(0, 3).toLowerCase()], Number(m[2]));
+  } else if ((m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/))) {
+    utc = Date.UTC(Number(m[3]), Number(m[1]) - 1, Number(m[2])); // US M/D/YYYY
+  }
+  if (utc == null || Number.isNaN(utc)) return null;
+  const age = Math.floor((now - utc) / 86400000);
+  return age < 0 ? 0 : age;
+}
+
+// parsePostedAgeDays — age in days of the posting, or null if the page states
+// none. When several posted-dates appear we take the MOST RECENT (smallest age):
+// a page must not be condemned by the oldest date printed anywhere on it.
+// Exported for tests.
+export function parsePostedAgeDays(text, now = Date.now()) {
+  const t = String(text || '');
+  POSTED_LABEL_RX.lastIndex = 0; // the regex is /g and module-scoped — reset per call
+  let m;
+  let best = null;
+  while ((m = POSTED_LABEL_RX.exec(t)) !== null) {
+    const age = ageFromSnippet(m[1], now);
+    if (age == null) continue;
+    if (best == null || age < best) best = age;
+  }
+  return best;
+}
+
+// freshnessEvidence — the DETERMINISTIC key for auto-removal. The grader's
+// 'threshold' verdict alone never removes a job; this must agree.
+// Exported for tests.
+export function freshnessEvidence(text) {
+  if (CLOSED_POSTING_RX.test(text)) {
+    return { stale: true, why: 'the posting states it is closed / filled / no longer accepting applications' };
+  }
+  const age = parsePostedAgeDays(text);
+  if (age != null && age > STALE_POSTING_DAYS) {
+    return { stale: true, why: `the posting is dated ${age} days ago, older than the ${STALE_POSTING_DAYS}-day freshness limit` };
+  }
+  return { stale: false, why: '', age };
+}
+
+// Exported for tests.
+export function fastScreen(text) {
   const t = String(text || '');
   if (CLOSED_POSTING_RX.test(t)) return { needsLLM: true, hint: 'closed-signal' };
+  // A stale posted-date is a freshness signal in its own right. Without this the
+  // LLM never sees an old-but-otherwise-normal US posting, so it could never be
+  // flagged as expired.
+  const age = parsePostedAgeDays(t);
+  if (age != null && age > STALE_POSTING_DAYS) return { needsLLM: true, hint: `stale-posted-date(${age}d)` };
   if (FOREIGN_LOCATION_RX.test(t)) return { needsLLM: true, hint: 'foreign-location-signal' };
   return { needsLLM: false, hint: '' };
 }
@@ -202,66 +305,49 @@ async function recoverStaleJobs() {
   }
 }
 
-// ─── Auto-remove failed flags past the grace window ──────────────────
-// Move jobs that FAILED the second judge to the Removed column once their grace
-// window (REMOVE_GRACE_HOURS, default 24h from the failure verdict) has elapsed
-// and no operator dismissed the flag (an operator "keep" sets status:'reviewed',
-// dropping it from this query). Mirrors reconcileExclusionJobs.js' AI-removal
-// fields so it lands in the Removed column exactly like an exclusion removal.
-async function autoRemoveExpiredFailedFlags() {
-  if (!AUTO_REMOVE_ENABLED) return;
-  const cutoff = new Date(Date.now() - REMOVE_GRACE_MS);
-  const due = await JobModel.find({
+// ─── One-shot: re-screen legacy freshness flags ──────────────────────
+// Rows flagged 'failed' before this version carry no skipKind, so we cannot tell
+// a location flag from a freshness flag — and the freshness verdicts among them
+// came from a grader that was never told today's date (it read "Posted 07 July
+// 2026" as "closed/expired"). Rather than trust those verdicts (or remove on
+// them), put the freshness-looking ones back in the queue: the fixed grader plus
+// the deterministic freshnessEvidence() gate then decides them correctly. Rows
+// that are genuinely closed get removed; false positives quietly pass and stay.
+// Location flags are left untouched. Converges: a re-screen always writes a
+// skipKind, so a row can never be picked up twice.
+const LEGACY_FRESHNESS_REASON_RX = /\b(clos(?:ed|ing)|expired?|filled|no longer (?:accepting|available|open)|not accepting|stale|(?:posting|listing) is dated)\b/i;
+
+// Exported for tests. Must match freshness reasons and never a location reason.
+export function isLegacyFreshnessReason(reason) {
+  return LEGACY_FRESHNESS_REASON_RX.test(String(reason || ''));
+}
+
+async function requeueLegacyFreshnessFlags() {
+  if (!REQUEUE_LEGACY_FLAGS) return;
+  const candidates = await JobModel.find({
     'secondJudge.status': 'failed',
-    'secondJudge.completedAt': { $lte: cutoff },
-    // Skip anything already in a removed/deleted column (defensive — failed flags
-    // are by definition still-present, but never double-remove).
+    'secondJudge.skipKind': null, // matches missing OR null — i.e. pre-upgrade rows only
     currentStatus: { $not: /^(deleted|removed)/i },
   })
-    .select('_id userID secondJudge.reason secondJudge.score')
+    .select('_id secondJudge.reason')
+    .limit(1000)
     .lean();
-  if (!due.length) return;
 
-  const now = nowIST();
-  const bulk = due.map((j) => ({
-    updateOne: {
-      filter: { _id: j._id },
-      update: {
-        $set: {
-          currentStatus: AI_REMOVAL_STATUS,
-          updatedAt: now,
-          removalReason:
-            (j.secondJudge?.reason || '').trim() ||
-            'Failed second-stage screening (location/freshness mismatch on the full posting)',
-          removalDate: now,
-          removedBy: 'AI',
-          // Dismiss the flag so it leaves the review queue and is never
-          // re-removed; the verdict (score/reason) stays for the record.
-          'secondJudge.status': 'reviewed',
-        },
-        $push: { timeline: AI_REMOVAL_STATUS },
+  const ids = candidates.filter((j) => isLegacyFreshnessReason(j.secondJudge?.reason)).map((j) => j._id);
+  if (!ids.length) return;
+
+  await JobModel.updateMany(
+    { _id: { $in: ids } },
+    {
+      $set: {
+        'secondJudge.status': 'pending',
+        'secondJudge.attempts': 0,
+        'secondJudge.retryAfter': null,
+        'secondJudge.error': null,
       },
-    },
-  }));
-  await JobModel.bulkWrite(bulk);
-
-  // Keep each client's removed-jobs counter in step (same as exclusion removal).
-  const perUser = new Map();
-  for (const j of due) {
-    if (!j.userID) continue;
-    perUser.set(j.userID, (perUser.get(j.userID) || 0) + 1);
-  }
-  await Promise.all(
-    [...perUser.entries()].map(([email, n]) =>
-      UserModel.findOneAndUpdate({ email }, { $inc: { removedJobsCount: n } }).catch((e) =>
-        console.warn(`[SecondJudge] removedJobsCount inc failed for ${email}:`, e.message)
-      )
-    )
+    }
   );
-
-  console.log(
-    `[SecondJudge] Auto-removed ${due.length} flagged job(s) past ${REMOVE_GRACE_HOURS}h grace → "${AI_REMOVAL_STATUS}"`
-  );
+  console.log(`[SecondJudge] Re-queued ${ids.length} legacy freshness flag(s) for a clean re-screen`);
 }
 
 // ─── Claim Next Pending Job (Atomic) ─────────────────────────────────
@@ -348,7 +434,18 @@ async function judgeRealSite({ profile, job, scrapedText }) {
     model: OPENAI_MODEL,
     messages: [
       { role: 'system', content: SECOND_JUDGE_SYSTEM_PROMPT },
-      { role: 'user', content: buildSecondJudgeUserPrompt({ profile, job, scrapedText, threshold: THRESHOLD }) },
+      {
+        role: 'user',
+        content: buildSecondJudgeUserPrompt({
+          profile,
+          job,
+          scrapedText,
+          threshold: THRESHOLD,
+          // The model cannot know the current date — anchor the freshness check.
+          todayISO: new Date().toISOString().slice(0, 10),
+          staleAfterDays: STALE_POSTING_DAYS,
+        }),
+      },
     ],
     response_format: { type: 'json_object' },
     temperature: 0,
@@ -393,17 +490,18 @@ async function judgeRealSite({ profile, job, scrapedText }) {
   };
 }
 
-// ─── Flag a job that failed the second judge ─────────────────────────
-// Record the FAILED verdict but leave the job in place for now: currentStatus /
-// removal fields / timeline are untouched here so the operator sees the flag
-// (icon + reason) and has the grace window to dismiss it. If the flag is still
-// 'failed' after REMOVE_GRACE_HOURS, autoRemoveExpiredFailedFlags() moves it to
-// the Removed column. completedAt stamps the start of that grace window.
-async function flagForMismatch(job, verdict, scrapedChars) {
+// ─── Flag a mismatch (job stays put, operator decides) ───────────────
+// Records the FAILED verdict and nothing else: currentStatus / removal fields /
+// timeline are untouched, so the job keeps its column and simply shows up in the
+// CRM "AI second-stage flags" queue with its reason. This is the ONLY outcome for
+// a location mismatch — that call is a judgement the operator owns, never the AI.
+// (A stale posting also lands here when auto-removal is switched off.)
+async function flagForMismatch(job, verdict, scrapedChars, kind = LOCATION_KIND) {
   const reason = (verdict.reason || 'Did not match client profile on the full posting').trim();
   await JobModel.findByIdAndUpdate(job._id, {
     $set: {
       'secondJudge.status': 'failed',
+      'secondJudge.skipKind': kind,
       'secondJudge.score': verdict.score,
       'secondJudge.reason': reason,
       'secondJudge.scrapedChars': scrapedChars,
@@ -413,11 +511,62 @@ async function flagForMismatch(job, verdict, scrapedChars) {
   });
 }
 
+// ─── Remove a CLOSED / EXPIRED posting immediately ───────────────────
+// Mirrors reconcileExclusionJobs.js' AI-removal fields so the job lands in the
+// Removed column exactly like an exclusion removal. Reached only when BOTH keys
+// agree (grader skipKind='threshold' AND freshnessEvidence().stale).
+//
+// The filter re-checks currentStatus so a job an operator removed while we were
+// screening is not re-stamped, and its client's removedJobsCount not double-
+// counted. status:'reviewed' (not 'failed') keeps it out of the flag queue.
+async function removeForStalePosting(job, verdict, scrapedChars, why) {
+  const now = nowIST();
+  const reason = (verdict.reason || '').trim() || `Posting is no longer open — ${why}.`;
+  const secondJudge = {
+    'secondJudge.status': 'reviewed',
+    'secondJudge.skipKind': FRESHNESS_KIND,
+    'secondJudge.score': verdict.score,
+    'secondJudge.reason': reason,
+    'secondJudge.scrapedChars': scrapedChars,
+    'secondJudge.completedAt': new Date(),
+    'secondJudge.error': null,
+  };
+
+  const moved = await JobModel.findOneAndUpdate(
+    { _id: job._id, currentStatus: { $not: /^(deleted|removed)/i } },
+    {
+      $set: {
+        currentStatus: AI_REMOVAL_STATUS,
+        updatedAt: now,
+        removalReason: reason,
+        removalDate: now,
+        removedBy: 'AI',
+        ...secondJudge,
+      },
+      $push: { timeline: AI_REMOVAL_STATUS },
+    },
+    { new: true }
+  ).lean();
+
+  if (!moved) {
+    // Already removed by an operator / another pass — just record the verdict.
+    await JobModel.findByIdAndUpdate(job._id, { $set: secondJudge });
+    return false;
+  }
+  if (job.userID) {
+    await UserModel.findOneAndUpdate({ email: job.userID }, { $inc: { removedJobsCount: 1 } }).catch((e) =>
+      console.warn(`[SecondJudge] removedJobsCount inc failed for ${job.userID}:`, e.message)
+    );
+  }
+  return true;
+}
+
 // ─── Keep a job that passed the second judge ─────────────────────────
 async function keepForPass(job, verdict, scrapedChars) {
   await JobModel.findByIdAndUpdate(job._id, {
     $set: {
       'secondJudge.status': 'passed',
+      'secondJudge.skipKind': '',
       'secondJudge.score': verdict.score,
       'secondJudge.reason': (verdict.reason || '').trim(),
       'secondJudge.scrapedChars': scrapedChars,
@@ -499,18 +648,51 @@ async function processJob(job) {
   // Step 3: re-judge on the real-site text.
   const verdict = await judgeRealSite({ profile, job, scrapedText: text });
   const pass = verdict.pick === true && verdict.score >= THRESHOLD;
+
   // Hard guard: this stage flags ONLY location/freshness. Ignore any stray
   // role/sponsorship/other flag the model emits (or an old prompt leaks) —
   // those are not this stage's job, so keep the job.
-  const VALID_FLAGS = new Set(['location-mismatch', 'threshold']);
-
   if (pass || !VALID_FLAGS.has(verdict.skipKind)) {
     await keepForPass(job, verdict, text.length);
     console.log(`${tag} ${pass ? 'PASS' : `KEPT (ignored non-location flag: ${verdict.skipKind || 'none'})`} (score ${verdict.score})`);
-  } else {
-    await flagForMismatch(job, verdict, text.length);
-    console.log(`${tag} FLAGGED (score ${verdict.score}${verdict.skipKind ? `, ${verdict.skipKind}` : ''}) — kept, operator review`);
+    return;
   }
+
+  // Step 4a: FRESHNESS → remove immediately, but only on two independent keys.
+  // The grader said "expired"; the page must also SHOW it (explicit closed
+  // wording, or a posted-date past the freshness limit). An LLM has no reliable
+  // sense of "now", so its date verdict alone must never delete a live job.
+  if (verdict.skipKind === FRESHNESS_KIND) {
+    const evidence = freshnessEvidence(text);
+    if (!evidence.stale) {
+      await keepForPass(
+        job,
+        {
+          ...verdict,
+          // The grader's score graded a conclusion we just rejected, so it is
+          // meaningless here — drop it rather than render "passed (score 20)".
+          score: null,
+          reason:
+            'Kept — the AI called this posting expired, but the page carries no closed/expired notice and its posted date is within the freshness limit.',
+        },
+        text.length
+      );
+      console.log(`${tag} KEPT (freshness verdict vetoed — no closed signal, posted age ${evidence.age ?? 'unknown'}d)`);
+      return;
+    }
+    if (!AUTO_REMOVE_ENABLED) {
+      await flagForMismatch(job, verdict, text.length, FRESHNESS_KIND);
+      console.log(`${tag} FLAGGED stale (auto-remove disabled) — ${evidence.why}`);
+      return;
+    }
+    const removed = await removeForStalePosting(job, verdict, text.length, evidence.why);
+    console.log(`${tag} ${removed ? `AUTO-REMOVED (stale posting) — ${evidence.why}` : 'stale, but already removed — verdict recorded'}`);
+    return;
+  }
+
+  // Step 4b: LOCATION → flag only. The job stays; an operator decides.
+  await flagForMismatch(job, verdict, text.length);
+  console.log(`${tag} FLAGGED location-mismatch (score ${verdict.score}) — kept, operator review`);
 }
 
 // Run one claimed job to completion (screen → verdict), converting a thrown
@@ -539,12 +721,6 @@ async function pollLoop() {
   if (Date.now() - lastRecoverMs > RECOVER_EVERY_MS) {
     lastRecoverMs = Date.now();
     recoverStaleJobs().catch((e) => console.warn('[SecondJudge] recover error:', e.message));
-  }
-  // Periodic sweep: move failed flags past their grace window to the Removed
-  // column. Fire-and-forget so it never delays claiming the next pending job.
-  if (Date.now() - lastAutoRemoveMs > AUTO_REMOVE_EVERY_MS) {
-    lastAutoRemoveMs = Date.now();
-    autoRemoveExpiredFailedFlags().catch((e) => console.warn('[SecondJudge] auto-remove error:', e.message));
   }
 
   let claimedAny = false;
@@ -581,10 +757,17 @@ export function startSecondJudgeWorker() {
   workerRunning = true;
   console.log('[SecondJudge] Starting second-stage screening worker');
   console.log(`[SecondJudge] Config: poll=${POLL_INTERVAL_MS}ms, concurrency=${CONCURRENCY}, maxAttempts=${MAX_ATTEMPTS}, threshold=${THRESHOLD}, model=${OPENAI_MODEL}`);
-  console.log(`[SecondJudge] Auto-remove: ${AUTO_REMOVE_ENABLED ? `on, grace=${REMOVE_GRACE_HOURS}h → "${AI_REMOVAL_STATUS}"` : 'off'}`);
+  console.log(
+    `[SecondJudge] Auto-remove: ${AUTO_REMOVE_ENABLED ? `on — CLOSED/EXPIRED postings only (>${STALE_POSTING_DAYS}d or explicit notice) → "${AI_REMOVAL_STATUS}"` : 'off'}; location mismatches are always flagged, never removed`
+  );
   console.log(`[SecondJudge] Scraper: ${SCRAPER_BASE_URL}${SCRAPER_EXTRACT_PATH}<url>`);
 
+  // Each boot step is best-effort: a failure is logged but must not stop the
+  // worker from polling.
   recoverStaleJobs()
+    .catch((err) => console.warn('[SecondJudge] stale recovery skipped:', err.message))
+    .then(() => requeueLegacyFreshnessFlags())
+    .catch((err) => console.warn('[SecondJudge] legacy flag re-queue skipped:', err.message))
     .then(() => pollLoop())
     .catch((err) => {
       console.error('[SecondJudge] Failed to start:', err);
@@ -614,6 +797,8 @@ export function getSecondJudgeStatus() {
       threshold: THRESHOLD,
       model: OPENAI_MODEL,
       scraper: `${SCRAPER_BASE_URL}${SCRAPER_EXTRACT_PATH}`,
+      autoRemove: AUTO_REMOVE_ENABLED ? 'stale-postings-only' : 'off',
+      staleAfterDays: STALE_POSTING_DAYS,
     },
   };
 }
