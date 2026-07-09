@@ -30,10 +30,18 @@ Your ONLY job is to check TWO things from the posting text:
    India city, or "candidate prefers remote but job is on-site". When in doubt,
    KEEP.
 
-2) FRESHNESS / DATE POSTED. Is the posting still open? Remove ONLY when it
-   CLEARLY shows it is closed / expired / filled / "no longer accepting
-   applications" → pick=false, skipKind="threshold". If the date/status is just
-   missing or unclear, KEEP. A normal current posting is fine.
+2) FRESHNESS / DATE POSTED. The user message gives you "today" and
+   "staleAfterDays". Judge freshness ONLY against that "today" value — you do
+   NOT otherwise know the current date, so never rely on your own sense of it.
+   Flag (pick=false, skipKind="threshold") ONLY when the posting text either
+     (a) explicitly states it is closed / expired / filled / "no longer
+         accepting applications", OR
+     (b) carries a posted / published date more than "staleAfterDays" days
+         BEFORE "today".
+   Everything else is OPEN. In particular, a posted date that is recent, or that
+   merely looks unusual or far in the future to you, is NOT evidence of closure —
+   compute the gap against "today" and keep it if the gap is small or negative.
+   A missing or unclear date is NOT evidence of closure. When in doubt, KEEP.
 
 DO NOT judge anything else. In particular:
  • DO NOT judge visa sponsorship / work authorization. That info usually lives
@@ -112,6 +120,24 @@ on-site, outside the allow-list. →
 
 Example 12 — KEEP. JD: "Hybrid · New York, NY or Remote." US hybrid/remote. →
 {"pick":true,"score":90,"reason":"Hybrid/remote in New York, NY (US).","skipKind":""}
+
+Example 13 — KEEP. today="2026-07-09", staleAfterDays=60. JD header: "Posted 07
+July 2026." That is 2 days before today — a current posting. The date alone
+never means closed. →
+{"pick":true,"score":88,"reason":"Posted 07 July 2026, two days ago — still open.","skipKind":""}
+
+Example 14 — FLAG. today="2026-07-09", staleAfterDays=60. JD header: "Date
+posted: 30 January 2024." That is far more than 60 days before today. →
+{"pick":false,"score":15,"reason":"Posted 30 January 2024, over two years before today — the listing is stale/expired.","skipKind":"threshold"}
+
+Example 15 — KEEP. today="2026-07-09". JD carries no posted date and no
+open/closed wording anywhere. Missing date → KEEP. →
+{"pick":true,"score":80,"reason":"No posted date or closure notice; defaulting to keep.","skipKind":""}
+
+Example 16 — KEEP. today="2026-07-09". JD header: "Posted 12 December 2026" (a
+date AFTER today, e.g. a site bug or timezone artifact). A future date is not
+an expired posting. →
+{"pick":true,"score":80,"reason":"Posted date is not in the past; treating the listing as open.","skipKind":""}
 
 Default whenever the evidence is thin, mixed, or ambiguous: KEEP (pick=true).`;
 
@@ -237,7 +263,7 @@ function extractRelevantJd(scrapedText) {
     return picked.length ? `${head}\n…\n${picked.join('\n')}` : head;
 }
 
-export function buildSecondJudgeUserPrompt({ profile, job, scrapedText, threshold }) {
+export function buildSecondJudgeUserPrompt({ profile, job, scrapedText, threshold, todayISO, staleAfterDays }) {
     // LOCATION + FRESHNESS only — give the grader just the location signals it
     // needs. Deliberately NO role/sponsorship/excluded fields (stage one owns
     // role; sponsorship is unreliable from scraped text) so the model can't be
@@ -263,7 +289,16 @@ export function buildSecondJudgeUserPrompt({ profile, job, scrapedText, threshol
         jd,
     };
 
+    // The model has no reliable notion of "now" (its own sense of the current
+    // date lags its training data), so the freshness check MUST be anchored to a
+    // date we supply. Without this it reads a recent posted date as a strange
+    // future date and calls a live posting "closed/expired".
+    const today = todayISO || new Date().toISOString().slice(0, 10);
+    const staleDays = Number.isFinite(Number(staleAfterDays)) ? Number(staleAfterDays) : 60;
+
     return `Threshold: ${threshold}
+today: ${today}
+staleAfterDays: ${staleDays}
 
 ${signalsBlock}
 ## Job to judge (real employer-site text — return ONE decision):
