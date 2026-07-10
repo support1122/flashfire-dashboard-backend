@@ -8,8 +8,11 @@ import { GmailPollState } from "../Schema_Models/GmailPollState.js";
 import { uploadFile } from "../Utils/storageService.js";
 import { getPresignedUrl } from "../Utils/r2Storage.js";
 import { pollOnce } from "../src/services/mailPollWorker.js";
+// This router talks to Gmail over native fetch + getAccessToken() below, not
+// through googleapis — its bundled node-fetch throws ERR_STREAM_PREMATURE_CLOSE
+// on Render. gmailClientForUser() is deliberately NOT imported here; only the
+// pure parsing helpers are. (mailPollWorker.js still uses the googleapis client.)
 import {
-  gmailClientForUser,
   decodeBase64Url,
   pickHeader,
   splitAddresses,
@@ -742,6 +745,16 @@ router.post("/star", async (req, res) => {
 router.post("/poll-now", async (_req, res) => {
   try {
     const summary = await pollOnce({ trigger: "manual" });
+    if (summary.disabled) {
+      // Mail capture → AI → Discord is switched off. Say so rather than
+      // reporting a successful poll that read nothing.
+      return res.status(503).json({
+        ok: false,
+        disabled: true,
+        reason: "mail_poll_disabled",
+        detail: "Mail capture and Discord digests are disabled. Set MAIL_POLL_ENABLED=1 to re-enable."
+      });
+    }
     if (summary.skipped) {
       // A cron tick is mid-flight; this request did no work.
       return res.status(409).json({ ok: false, skipped: true, reason: "poll_already_running" });

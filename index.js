@@ -349,8 +349,12 @@ app.use((err, req, res, next) => {
 
       // Inbound mail pipeline: hourly, reads each connected client mailbox,
       // summarizes new INBOX mail with gpt-4o-mini, and posts a rich embed
-      // (summary + links + .txt attachment) to Discord. A dead Google token
-      // (invalid_grant) raises a throttled "please reconnect" alert instead.
+      // (summary + links + .txt attachment) to Discord.
+      //
+      // DISABLED by default — we do not want client mail captured or forwarded
+      // to Discord. This call is a no-op unless MAIL_POLL_ENABLED=1. Left in
+      // place (rather than deleted) so re-enabling is one env var, and so the
+      // startup log states plainly that the pipeline is off.
       startMailPollWorker();
 
       // Recruiter email automation — fires at 11 PM IST every night.

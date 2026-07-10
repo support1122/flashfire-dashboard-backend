@@ -1,6 +1,14 @@
 // mailPollWorker — hourly Gmail → gpt-4o-mini → Discord pipeline.
 //
-// Every hour, for each connected Gmail mailbox (GmailUser):
+// OFF BY DEFAULT. We no longer want client mail captured, summarized, or posted
+// to Discord, so this whole pipeline is inert unless MAIL_POLL_ENABLED=1 is set
+// explicitly. The switch is enforced in BOTH entry points — startMailPollWorker()
+// (cron + boot tick) and pollOnce() itself, which the POST /gmail/poll-now route
+// calls directly and which would otherwise sail straight past the flag.
+// Reading a mailbox from the dashboard's Mails tab is unaffected; those routes
+// fetch on demand and never post to Discord.
+//
+// When enabled, every hour, for each connected Gmail mailbox (GmailUser):
 //   1. ask Gmail for INBOX messages newer than the stored cursor
 //   2. fetch each new message, flatten its body, decode its .txt attachments
 //   3. summarize it with gpt-4o-mini (fail-open — no summary still ships)
@@ -40,7 +48,14 @@ import { summarizeMail } from "./mailAiSummarizer.js";
 import { notifyMailDigest, notifyGmailAuthError, isGmailAuthError, errorText } from "../../Utils/discordMailNotify.js";
 
 const CRON_EXPR = process.env.MAIL_POLL_CRON || "0 * * * *"; // top of every hour
-const ENABLED = process.env.MAIL_POLL_ENABLED !== "0";
+// Opt-IN, not opt-out: an unset or malformed value leaves the pipeline off, so
+// nobody re-enables mail capture by forgetting an env var.
+const ENABLED = process.env.MAIL_POLL_ENABLED === "1";
+
+/** Whether the Gmail → AI → Discord pipeline may run at all. */
+export function isMailPollEnabled() {
+  return ENABLED;
+}
 const CONCURRENCY = Math.max(1, Number(process.env.MAIL_POLL_CONCURRENCY) || 2);
 
 // Hard cap on mails summarized per mailbox per tick. Overflow is not lost — the
@@ -566,6 +581,13 @@ async function handleMailboxError({ err, state, client, mailbox, partialPosted =
 // ─── Tick ───────────────────────────────────────────────────────────
 
 export async function pollOnce({ trigger = "cron" } = {}) {
+  // Checked here, not only in startMailPollWorker(): POST /gmail/poll-now calls
+  // pollOnce() directly. Without this, the route would still read every mailbox
+  // and post to Discord while the worker reported itself disabled.
+  if (!ENABLED) {
+    console.log(`[mail-poll] disabled (MAIL_POLL_ENABLED != 1) — ignoring ${trigger} trigger`);
+    return { disabled: true };
+  }
   if (running) {
     console.log("[mail-poll] previous tick still running — skip");
     return { skipped: true };
@@ -618,7 +640,7 @@ export async function pollOnce({ trigger = "cron" } = {}) {
 
 export function startMailPollWorker() {
   if (!ENABLED) {
-    console.log("[mail-poll] disabled (MAIL_POLL_ENABLED=0)");
+    console.log("[mail-poll] disabled — mail is not captured, summarized, or posted to Discord (set MAIL_POLL_ENABLED=1 to re-enable)");
     return null;
   }
   if (task) {
