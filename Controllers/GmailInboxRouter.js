@@ -8,8 +8,11 @@ import { GmailPollState } from "../Schema_Models/GmailPollState.js";
 import { uploadFile } from "../Utils/storageService.js";
 import { getPresignedUrl } from "../Utils/r2Storage.js";
 import { pollOnce } from "../src/services/mailPollWorker.js";
+// This router talks to Gmail over native fetch + getAccessToken() below, not
+// through googleapis — its bundled node-fetch throws ERR_STREAM_PREMATURE_CLOSE
+// on Render. gmailClientForUser() is deliberately NOT imported here; only the
+// pure parsing helpers are. (mailPollWorker.js still uses the googleapis client.)
 import {
-  gmailClientForUser,
   decodeBase64Url,
   pickHeader,
   splitAddresses,
