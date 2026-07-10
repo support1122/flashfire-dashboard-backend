@@ -176,7 +176,32 @@ function escapeRegExp(s) {
 //   • a false foreign hit (e.g. "London, Ontario") → escalates to the LLM,
 //     which confirms KEEP.
 const FOREIGN_LOCATION_RX = /\b(united kingdom|u\.k\.|uk|england|scotland|wales|ireland|dublin|london|manchester|edinburgh|germany|deutschland|berlin|munich|münchen|frankfurt|france|paris|spain|madrid|barcelona|portugal|lisbon|italy|rome|milan|netherlands|amsterdam|belgium|brussels|switzerland|zurich|geneva|sweden|stockholm|norway|oslo|denmark|copenhagen|finland|helsinki|poland|warsaw|krakow|austria|vienna|czech|prague|hungary|budapest|romania|bucharest|greece|athens|singapore|hong kong|japan|tokyo|osaka|china|shanghai|beijing|shenzhen|taiwan|taipei|south korea|seoul|australia|sydney|melbourne|brisbane|perth|new zealand|auckland|wellington|united arab emirates|u\.a\.e\.|uae|dubai|abu dhabi|qatar|doha|bahrain|kuwait|oman|saudi arabia|riyadh|jeddah|israel|tel aviv|turkey|istanbul|brazil|brasil|são paulo|sao paulo|rio de janeiro|argentina|buenos aires|chile|santiago|colombia|bogota|mexico|méxico|mexico city|philippines|manila|cebu|malaysia|kuala lumpur|indonesia|jakarta|vietnam|hanoi|ho chi minh|thailand|bangkok|pakistan|karachi|lahore|bangladesh|dhaka|sri lanka|colombo|south africa|johannesburg|cape town|nigeria|lagos|abuja|kenya|nairobi|egypt|cairo|morocco|casablanca|ghana|accra)\b/i;
-const CLOSED_POSTING_RX = /\b(no longer accepting applications?|this (job|position|posting|role|requisition|listing|opening) (has been |is )?(closed|filled|expired|no longer available)|position (has been )?filled|applications? (are |is )?(now )?closed|posting (is )?closed|job (has )?expired|we (are|'re) no longer (accepting|hiring)|not accepting (new )?applications?|requisition closed|position (is )?no longer available|this opportunity (has|is) (closed|no longer))\b/i;
+// A closure statement must be about the POSITION. "We are no longer accepting
+// paper resumes / applications by post" is about the SUBMISSION CHANNEL and the
+// job is open — the old pattern matched it via a bare "no longer accepting", and
+// the grader made the same mistake, so both keys agreed and an open job was
+// auto-removed. Every "accepting" branch now names what is not being accepted,
+// and a trailing channel word ("by post", "via email") vetoes the match.
+const NOT_A_CHANNEL = '(?!\\s+(?:by|via|through|in)\\b)';
+const CLOSED_POSTING_RX = new RegExp(
+  '\\b(?:' +
+    [
+      `no longer accepting (?:applications?|candidates?|applicants?)${NOT_A_CHANNEL}`,
+      `we (?:are|'re) no longer (?:accepting (?:applications?|candidates?|applicants?)${NOT_A_CHANNEL}|hiring)`,
+      'not accepting (?:new )?(?:applications?|candidates?|applicants?)',
+      'applications? (?:are|is) no longer being accepted',
+      'this (?:job|position|posting|role|requisition|listing|opening) (?:has been |is )?(?:closed|filled|expired|no longer (?:available|open|active))',
+      'position (?:has been )?filled',
+      "applications? (?:are |is )?(?:now )?closed",
+      'posting (?:is )?closed',
+      '(?:job|posting) (?:has )?expired',
+      'requisition closed',
+      'position (?:is )?no longer available',
+      'this opportunity (?:has|is) (?:closed|no longer)',
+    ].join('|') +
+    ')\\b',
+  'i'
+);
 
 // ─── Posted-date parsing (deterministic freshness evidence) ──────────
 // Only read a date that FOLLOWS an explicit "posted"/"published" label, so the
