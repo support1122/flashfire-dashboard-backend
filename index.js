@@ -156,6 +156,7 @@ import Routes from "./Routes.js";
 import { runRecruiterAutomationDailyJob } from "./Controllers/GmailRouter.js";
 import { startSummarySweepWorker } from "./src/services/summarySweepWorker.js";
 import { startSecondJudgeWorker } from "./src/services/secondJudgeWorker.js";
+import { startMailPollWorker } from "./src/services/mailPollWorker.js";
 import { startAutoOptimizationWorker } from "./src/services/autoOptimizationWorker.js";
 
 dotenv.config();
@@ -346,6 +347,12 @@ app.use((err, req, res, next) => {
       // DB-polled, no Redis.
       startSecondJudgeWorker();
 
+      // Inbound mail pipeline: hourly, reads each connected client mailbox,
+      // summarizes new INBOX mail with gpt-4o-mini, and posts a rich embed
+      // (summary + links + .txt attachment) to Discord. A dead Google token
+      // (invalid_grant) raises a throttled "please reconnect" alert instead.
+      startMailPollWorker();
+
       // Recruiter email automation — fires at 11 PM IST every night.
       // Must stay inside the instanceId === '0' guard so only one process
       // runs it even when PM2 spawns multiple cluster workers.
@@ -366,6 +373,7 @@ app.use((err, req, res, next) => {
     } else {
       console.log(`[AutoOptWorker] Skipping on cluster instance ${instanceId}`);
       console.log(`[summary-sweep] Skipping on cluster instance ${instanceId}`);
+      console.log(`[mail-poll] Skipping on cluster instance ${instanceId}`);
       console.log(`[RecruiterAutomation] Skipping cron on cluster instance ${instanceId}`);
     }
 

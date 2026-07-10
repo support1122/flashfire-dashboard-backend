@@ -239,6 +239,79 @@ export function parsePostedAgeDays(text, now = Date.now()) {
   return best;
 }
 
+// ─── Bot walls / error pages ─────────────────────────────────────────
+// Some ATS (Akamai-fronted Manulife, Cloudflare, Incapsula) serve a short
+// "Access Denied" page to our reader. The scraper returns it as ok:true /
+// confidence:'full-text', and it clears MIN_JD_CHARS, so without this check the
+// judge grades the block page, finds no foreign-location and no closed wording,
+// and reports the job as "second-stage screening passed" — a lie. Treat it as
+// UNSCREENABLE instead: keep the job, mark 'skipped', say why.
+const BOT_WALL_RX = /(access denied|you don'?t have permission to access|request unsuccessful|incapsula|attention required|checking your browser|just a moment|enable javascript and cookies|verify you are (?:a )?human|unusual traffic|are you a robot|recaptcha|captcha|error 403|403 forbidden|request blocked|access to this page has been denied|ddos protection|cf-browser-verification)/i;
+// A real JD is long. Only a SHORT page that also matches the phrases above is a
+// block page — otherwise a security-engineer JD mentioning "access denied" logs
+// would be thrown away.
+const BOT_WALL_MAX_CHARS = 1500;
+
+// Exported for tests.
+export function isBlockedPage(text, title = '') {
+  const t = String(text || '');
+  if (BOT_WALL_RX.test(String(title || ''))) return true;
+  return t.length < BOT_WALL_MAX_CHARS && BOT_WALL_RX.test(t);
+}
+
+// ─── "Recommended jobs" rails ────────────────────────────────────────
+// Most ATS append a "Similar jobs" / "Recommended for you" rail to the posting.
+// Its cards carry OTHER jobs' locations and posted dates, which would poison
+// both checks — a London card in the rail reads as a location mismatch, and a
+// fresh card in the rail can mask a stale posting. Cut the page at the rail so
+// every check (regex and LLM alike) only ever sees the role's own text.
+const RECOMMENDED_HEADING_RX = new RegExp(
+  '^(?:' +
+    [
+      '(?:recommended|similar|related|suggested|additional|other|more)\\s+(?:jobs?|roles?|positions?|openings?|opportunities)',
+      'recommended\\s+for\\s+you',
+      '(?:jobs?|roles?|opportunities)\\s+for\\s+you',
+      '(?:jobs?|roles?)\\s+you\\s+may\\s+(?:like|be\\s+interested\\s+in)',
+      'you\\s+may\\s+also\\s+(?:like|be\\s+interested)',
+      '(?:people|others?)\\s+also\\s+viewed',
+      'recently\\s+viewed(?:\\s+jobs?)?',
+      '(?:explore|browse|view|see)\\s+(?:all\\s+|more\\s+)?(?:jobs?|opportunities|openings?)',
+      '(?:other|more)\\s+jobs\\s+at\\b',
+    ].join('|') +
+    ')\\b',
+  'i'
+);
+// Phrases strong enough to cut on even when the page has no line breaks around
+// them. Deliberately narrower than the heading list — "more jobs" or "see jobs"
+// can legitimately appear in prose, "people also viewed" cannot.
+const RECOMMENDED_INLINE_RX = /(recommended\s+jobs?|similar\s+jobs?|related\s+jobs?|suggested\s+jobs?|recommended\s+for\s+you|people\s+also\s+viewed|jobs?\s+you\s+may\s+like)/i;
+// Never cut inside the first N chars: the role's own title/location/date live at
+// the top, and a nav link ("Explore jobs") up there must not truncate the page.
+const MIN_BODY_CHARS_BEFORE_CUT = 400;
+const MAX_HEADING_CHARS = 60; // a heading is a short standalone line
+
+// Exported for tests.
+export function stripRecommendedSections(text) {
+  const full = String(text || '');
+  if (full.length <= MIN_BODY_CHARS_BEFORE_CUT) return full;
+
+  // 1) Heading on its own short line — the common case.
+  const lines = full.split('\n');
+  let used = 0;
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i].trim();
+    if (used >= MIN_BODY_CHARS_BEFORE_CUT && line.length <= MAX_HEADING_CHARS && RECOMMENDED_HEADING_RX.test(line)) {
+      return lines.slice(0, i).join('\n').trim();
+    }
+    used += lines[i].length + 1;
+  }
+
+  // 2) Fallback for pages the scraper flattened into one long line.
+  const m = RECOMMENDED_INLINE_RX.exec(full);
+  if (m && m.index >= MIN_BODY_CHARS_BEFORE_CUT) return full.slice(0, m.index).trim();
+  return full;
+}
+
 // freshnessEvidence — the DETERMINISTIC key for auto-removal. The grader's
 // 'threshold' verdict alone never removes a job; this must agree.
 // Exported for tests.
@@ -271,6 +344,8 @@ export function fastScreen(text) {
 // in secondJudge.error for debugging; this is only the human-readable summary.
 function friendlySkipReason(raw) {
   const m = String(raw || '').toLowerCase();
+  if (m.includes('bot wall') || m.includes('blocked by the job site'))
+    return 'The job site blocked our reader (bot protection), so the posting couldn’t be checked. Job kept.';
   if (m.includes('not a scrapeable') || m.includes('bad_input'))
     return 'The saved link isn’t a job-site page we can open, so the second-stage check was skipped. Job kept.';
   if (m.includes('no client profile') || m.includes('profile'))
@@ -419,7 +494,9 @@ async function scrapeJobText(joblink) {
   const text = String(
     data?.pageText || data?.mainJd || data?.jobDescription || data?.description || ''
   ).trim();
-  return { text, finalUrl: data?.finalUrl || joblink };
+  // title is the block-page tell ("Access Denied", "Just a moment…") even when
+  // the body is too long for the length guard.
+  return { text, finalUrl: data?.finalUrl || joblink, title: String(data?.title || '') };
 }
 
 // ─── Call the OpenAI grader on the real-site text ────────────────────
@@ -621,7 +698,30 @@ async function processJob(job) {
   }
 
   // Step 2: scrape the real employer-site text.
-  const { text } = await scrapeJobText(job.joblink);
+  const { text: rawText, title } = await scrapeJobText(job.joblink);
+
+  // Step 2a: a bot wall / error page is NOT the posting. The scraper hands it
+  // back as a normal success (ok:true, 'full-text') and it is long enough to
+  // clear MIN_JD_CHARS, so it must be caught by content, not by length. Skip
+  // permanently (retrying the same URL from the same IP hits the same wall) and
+  // keep the job — never let a block page be graded as if it were the JD.
+  if (isBlockedPage(rawText, title)) {
+    await JobModel.findByIdAndUpdate(job._id, {
+      $set: {
+        'secondJudge.status': 'skipped',
+        'secondJudge.reason': friendlySkipReason('bot wall'),
+        'secondJudge.error': `Blocked by the job site (${title || 'bot protection'}) — kept`,
+        'secondJudge.scrapedChars': rawText.length,
+        'secondJudge.completedAt': new Date(),
+      },
+    });
+    console.warn(`${tag} Skipped: site blocked our reader (${title || 'bot wall'}, ${rawText.length} chars) — kept`);
+    return;
+  }
+
+  // Step 2b: drop the "recommended / similar jobs" rail. Its cards carry other
+  // postings' locations and dates; everything below judges the ROLE only.
+  const text = stripRecommendedSections(rawText);
   if (!text || text.length < MIN_JD_CHARS) {
     const err = new Error(`Thin/empty scrape (${text ? text.length : 0} chars, need >= ${MIN_JD_CHARS})`);
     err._stage = 'Scraper Content';

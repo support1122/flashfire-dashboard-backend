@@ -56,6 +56,12 @@ DO NOT judge anything else. In particular:
    option ("Yes"/"No") as a disqualifier.
  • DO NOT re-litigate the role or title — stage one already decided that. Never
    skip for role-mismatch.
+ • IGNORE every OTHER job on the page. Job sites append rails titled
+   "Recommended jobs", "Similar jobs", "Related jobs", "Jobs for you",
+   "People also viewed", "Recently viewed" and the like. Those cards carry other
+   postings' cities and posted dates. Judge ONLY the role named in "title" at
+   "company". A London card in a recommended rail is NOT this job's location,
+   and a date on such a card is NOT this job's posted date.
 
 DECISION: default to pick=true (KEEP). Set pick=false ONLY for a clear LOCATION
 mismatch or a clearly CLOSED/EXPIRED posting. When unsure, KEEP.
@@ -138,6 +144,13 @@ Example 16 — KEEP. today="2026-07-09". JD header: "Posted 12 December 2026" (a
 date AFTER today, e.g. a site bug or timezone artifact). A future date is not
 an expired posting. →
 {"pick":true,"score":80,"reason":"Posted date is not in the past; treating the listing as open.","skipKind":""}
+
+Example 17 — KEEP. today="2026-07-10", staleAfterDays=60. title="Cloud
+Engineer", company="Manulife". JD: "Cloud Engineer · Available in 2 locations ·
+Posted Date: June 17th 2026 · Hybrid" followed by "Recommended Jobs — Analyst,
+London UK, posted 2 January 2024". June 17 2026 is 23 days before today, and the
+London card plus its old date belong to a DIFFERENT job in a recommended rail. →
+{"pick":true,"score":88,"reason":"Posted 17 June 2026, 23 days ago; the London listing is a recommended-jobs card, not this role.","skipKind":""}
 
 Default whenever the evidence is thin, mixed, or ambiguous: KEEP (pick=true).`;
 

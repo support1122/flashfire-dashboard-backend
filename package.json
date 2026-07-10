@@ -12,7 +12,8 @@
     "health": "curl http://localhost:8001/health",
     "migrate:r2": "node scripts/migrate-resume-data-to-r2.js --batch-size=50 --use-url-in-key",
     "migrate:r2:dry": "node scripts/migrate-resume-data-to-r2.js --dry-run",
-    "migrate:r2:user": "node scripts/migrate-resume-data-to-r2.js --user=someone@example.com"
+    "migrate:r2:user": "node scripts/migrate-resume-data-to-r2.js --user=someone@example.com",
+    "verify:mail": "node scripts/verify-mail-pipeline.mjs"
   },
   "keywords": [
     "flashfire",
