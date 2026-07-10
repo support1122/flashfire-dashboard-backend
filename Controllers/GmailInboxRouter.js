@@ -745,6 +745,16 @@ router.post("/star", async (req, res) => {
 router.post("/poll-now", async (_req, res) => {
   try {
     const summary = await pollOnce({ trigger: "manual" });
+    if (summary.disabled) {
+      // Mail capture → AI → Discord is switched off. Say so rather than
+      // reporting a successful poll that read nothing.
+      return res.status(503).json({
+        ok: false,
+        disabled: true,
+        reason: "mail_poll_disabled",
+        detail: "Mail capture and Discord digests are disabled. Set MAIL_POLL_ENABLED=1 to re-enable."
+      });
+    }
     if (summary.skipped) {
       // A cron tick is mid-flight; this request did no work.
       return res.status(409).json({ ok: false, skipped: true, reason: "poll_already_running" });
