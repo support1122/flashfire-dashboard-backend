@@ -357,7 +357,7 @@ app.use((err, req, res, next) => {
       // Must stay inside the instanceId === '0' guard so only one process
       // runs it even when PM2 spawns multiple cluster workers.
       cron.schedule(
-        "0 23 * * *",
+        "5 23 * * *",
         async () => {
           try {
             await runRecruiterAutomationDailyJob();
@@ -369,7 +369,7 @@ app.use((err, req, res, next) => {
           timezone: "Asia/Kolkata"
         }
       );
-      console.log("[RecruiterAutomation] Nightly cron registered on instance 0 (11 PM IST)");
+      console.log("[RecruiterAutomation] Nightly cron registered on instance 0 (11:05 PM IST)");
     } else {
       console.log(`[AutoOptWorker] Skipping on cluster instance ${instanceId}`);
       console.log(`[summary-sweep] Skipping on cluster instance ${instanceId}`);

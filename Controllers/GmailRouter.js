@@ -131,7 +131,25 @@ router.get("/auth/google/callback", async (req, res) => {
   const { code, state } = req.query;
   if (!code) return res.status(400).send("Missing code");
   try {
-    const { tokens } = await oauth2Client.getToken(code);
+    // Use native fetch (Node 18+) instead of googleapis' bundled node-fetch
+    // to avoid ERR_STREAM_PREMATURE_CLOSE on Render's network.
+    const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        code,
+        client_id: process.env.GOOGLE_CLIENT_ID,
+        client_secret: process.env.GOOGLE_CLIENT_SECRET,
+        redirect_uri: process.env.GOOGLE_REDIRECT_URI,
+        grant_type: "authorization_code"
+      }).toString()
+    });
+    if (!tokenRes.ok) {
+      const errText = await tokenRes.text();
+      console.error("Token exchange failed:", tokenRes.status, errText);
+      return res.status(500).send("Google OAuth error: token exchange failed");
+    }
+    const tokens = await tokenRes.json();
     const email = await getEmail(tokens.access_token);
     const ownerEmail = typeof state === "string" ? decodeURIComponent(state) : undefined;
     await GmailUser.findOneAndUpdate(
@@ -687,11 +705,13 @@ router.post("/automation/resend", async (req, res) => {
 });
 
 async function getEmail(accessToken) {
-  const tmpAuth = new google.auth.OAuth2();
-  tmpAuth.setCredentials({ access_token: accessToken });
-  const gmail = google.gmail({ version: "v1", auth: tmpAuth });
-  const profile = await gmail.users.getProfile({ userId: "me" });
-  return profile.data.emailAddress;
+  // Use native fetch to avoid ERR_STREAM_PREMATURE_CLOSE from googleapis' bundled node-fetch
+  const res = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/profile", {
+    headers: { Authorization: `Bearer ${accessToken}` }
+  });
+  if (!res.ok) throw new Error(`getEmail failed: ${res.status} ${await res.text()}`);
+  const data = await res.json();
+  return data.emailAddress;
 }
 
 function encodeFilename(filename) {
@@ -746,14 +766,34 @@ function createMimeMessage(from, to, subject, text, attachment = null) {
   return lines.join("\r\n");
 }
 
-async function sendGmail(user, { to, subject, text, attachment = null }) {
-  const client = new google.auth.OAuth2(
-    process.env.GOOGLE_CLIENT_ID,
-    process.env.GOOGLE_CLIENT_SECRET
-  );
+// In-memory access token cache: refreshToken -> { accessToken, expiresAt }
+const _tokenCache = new Map();
 
-  client.setCredentials({ refresh_token: user.refreshToken });
-  const gmail = google.gmail({ version: "v1", auth: client });
+async function getAccessToken(refreshToken) {
+  const cached = _tokenCache.get(refreshToken);
+  if (cached && cached.expiresAt > Date.now() + 60_000) return cached.accessToken;
+
+  const res = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      client_id: process.env.GOOGLE_CLIENT_ID,
+      client_secret: process.env.GOOGLE_CLIENT_SECRET,
+      refresh_token: refreshToken,
+      grant_type: "refresh_token"
+    }).toString()
+  });
+  if (!res.ok) throw new Error(`Token refresh failed: ${res.status} ${await res.text()}`);
+  const data = await res.json();
+  _tokenCache.set(refreshToken, {
+    accessToken: data.access_token,
+    expiresAt: Date.now() + (data.expires_in || 3600) * 1000
+  });
+  return data.access_token;
+}
+
+async function sendGmail(user, { to, subject, text, attachment = null }) {
+  const accessToken = await getAccessToken(user.refreshToken);
 
   const mimeMessage = createMimeMessage(user.email, to, subject, text, attachment);
   const raw = Buffer.from(mimeMessage)
@@ -762,10 +802,18 @@ async function sendGmail(user, { to, subject, text, attachment = null }) {
     .replace(/\//g, "_")
     .replace(/=+$/, "");
 
-  await gmail.users.messages.send({
-    userId: "me",
-    requestBody: { raw }
+  const res = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/messages/send", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({ raw })
   });
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`Gmail send failed: ${res.status} ${errText}`);
+  }
 }
 
 async function runAiTemplatePrePass() {
@@ -976,6 +1024,9 @@ export async function runRecruiterAutomationDailyJob() {
     } catch (e) {
       console.error(`[RecruiterAutomation] error for ${automation?.ownerEmail}:`, e?.message);
     }
+    // 3s gap between users so OAuth token refreshes don't all hit Google
+    // simultaneously and cause "Premature close" connection drops on Render.
+    await new Promise(r => setTimeout(r, 3000));
   }
 }
 
