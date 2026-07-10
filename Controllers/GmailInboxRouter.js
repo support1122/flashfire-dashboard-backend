@@ -3,8 +3,19 @@ import multer from "multer";
 import { GmailUser } from "../Schema_Models/GmailUser.js";
 import { InboxThread } from "../Schema_Models/InboxThread.js";
 import { InboxMessage } from "../Schema_Models/InboxMessage.js";
+import { MailDigest } from "../Schema_Models/MailDigest.js";
+import { GmailPollState } from "../Schema_Models/GmailPollState.js";
 import { uploadFile } from "../Utils/storageService.js";
 import { getPresignedUrl } from "../Utils/r2Storage.js";
+import { pollOnce } from "../src/services/mailPollWorker.js";
+import {
+  gmailClientForUser,
+  decodeBase64Url,
+  pickHeader,
+  splitAddresses,
+  extractBodies,
+  normalizeMessageMeta
+} from "../Utils/gmailMessage.js";
 
 const router = express.Router();
 
@@ -124,7 +135,6 @@ async function getAccessToken(refreshToken) {
   return data.access_token;
 }
 
-
 async function resolveGmailUser(ownerEmail, gmailEmail) {
   const owner = (ownerEmail || "").toLowerCase().trim();
   if (!owner) return null;
@@ -135,113 +145,6 @@ async function resolveGmailUser(ownerEmail, gmailEmail) {
     });
   }
   return GmailUser.findOne({ ownerEmail: owner }).sort({ createdAt: -1 });
-}
-
-// =========================
-// Body / header parsing
-// =========================
-function decodeBase64Url(b64) {
-  if (!b64) return Buffer.alloc(0);
-  const norm = b64.replace(/-/g, "+").replace(/_/g, "/");
-  const pad = norm.length % 4 === 0 ? "" : "=".repeat(4 - (norm.length % 4));
-  return Buffer.from(norm + pad, "base64");
-}
-
-function pickHeader(headers, name) {
-  if (!Array.isArray(headers)) return "";
-  const lc = name.toLowerCase();
-  const h = headers.find((x) => (x.name || "").toLowerCase() === lc);
-  return h ? String(h.value || "") : "";
-}
-
-function splitAddresses(value) {
-  if (!value) return [];
-  // Naive split — Gmail comma-separates address lists, commas inside quoted display names need handling.
-  const out = [];
-  let buf = "";
-  let depth = 0;
-  let inQ = false;
-  for (const ch of value) {
-    if (ch === '"') inQ = !inQ;
-    else if (!inQ && (ch === "(" || ch === "<")) depth++;
-    else if (!inQ && (ch === ")" || ch === ">")) depth--;
-    if (!inQ && depth === 0 && ch === ",") {
-      out.push(buf.trim());
-      buf = "";
-    } else {
-      buf += ch;
-    }
-  }
-  if (buf.trim()) out.push(buf.trim());
-  return out;
-}
-
-function walkParts(payload, accumulator) {
-  if (!payload) return;
-  const mime = (payload.mimeType || "").toLowerCase();
-  const filename = payload.filename || "";
-  const body = payload.body || {};
-  const parts = payload.parts || [];
-
-  if (filename && body.attachmentId) {
-    // Named file attachment
-    accumulator.attachments.push({
-      attachmentId: body.attachmentId,
-      filename,
-      mimetype: payload.mimeType || "application/octet-stream",
-      size: Number(body.size || 0)
-    });
-  } else if (!filename && body.attachmentId) {
-    // Gmail stores large body parts (> ~2 MB) as anonymous attachments.
-    // body.data is absent; we must fetch via messages.attachments.get.
-    accumulator.inlineBodyParts.push({
-      attachmentId: body.attachmentId,
-      mimeType: mime,
-      size: Number(body.size || 0)
-    });
-  } else if (mime === "text/plain" && body.data) {
-    accumulator.text += decodeBase64Url(body.data).toString("utf8");
-  } else if (mime === "text/html" && body.data) {
-    accumulator.html += decodeBase64Url(body.data).toString("utf8");
-  }
-
-  for (const p of parts) walkParts(p, accumulator);
-}
-
-function extractBodies(payload) {
-  const acc = { text: "", html: "", attachments: [], inlineBodyParts: [] };
-  walkParts(payload, acc);
-  return acc;
-}
-
-function normalizeMessageMeta(gmailMsg) {
-  const headers = gmailMsg.payload?.headers || [];
-  const from = pickHeader(headers, "From");
-  const to = splitAddresses(pickHeader(headers, "To"));
-  const cc = splitAddresses(pickHeader(headers, "Cc"));
-  const bcc = splitAddresses(pickHeader(headers, "Bcc"));
-  const replyTo = pickHeader(headers, "Reply-To");
-  const subject = pickHeader(headers, "Subject");
-  const dateHdr = pickHeader(headers, "Date");
-  const rfcMessageId = pickHeader(headers, "Message-ID");
-  const inReplyTo = pickHeader(headers, "In-Reply-To");
-  const references = pickHeader(headers, "References");
-  const internalDate = gmailMsg.internalDate ? new Date(Number(gmailMsg.internalDate)) : (dateHdr ? new Date(dateHdr) : null);
-  const labels = gmailMsg.labelIds || [];
-  return {
-    from,
-    to,
-    cc,
-    bcc,
-    replyTo,
-    subject,
-    rfcMessageId,
-    inReplyTo,
-    referencesHeader: references,
-    date: internalDate,
-    labels,
-    isUnread: labels.includes("UNREAD")
-  };
 }
 
 // =========================
@@ -826,6 +729,62 @@ router.post("/star", async (req, res) => {
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err?.message || "star_failed" });
+  }
+});
+
+// =========================
+// Mail → AI → Discord pipeline
+// =========================
+
+// Manual trigger for the hourly poll. Useful for ops ("I just sent a test mail")
+// and for verifying a freshly reconnected mailbox without waiting for the hour.
+// The worker's own overlap guard makes a concurrent cron tick a no-op.
+router.post("/poll-now", async (_req, res) => {
+  try {
+    const summary = await pollOnce({ trigger: "manual" });
+    if (summary.skipped) {
+      // A cron tick is mid-flight; this request did no work.
+      return res.status(409).json({ ok: false, skipped: true, reason: "poll_already_running" });
+    }
+    res.json({ ok: !summary.error, ...summary });
+  } catch (err) {
+    res.status(500).json({ error: err?.message || "poll_failed" });
+  }
+});
+
+// Stored AI digests for a mailbox — backs a future "AI summaries" view in the
+// Mails tab and lets ops confirm what was pushed to Discord.
+router.post("/digests", async (req, res) => {
+  try {
+    const { ownerEmail, gmailEmail, limit, before } = req.body || {};
+    const user = await resolveGmailUser(ownerEmail, gmailEmail);
+    if (!user) return res.status(404).json({ error: "no_connected_gmail" });
+
+    const query = { gmailEmail: user.email };
+    if (before) query.date = { $lt: new Date(before) };
+
+    const digests = await MailDigest.find(query)
+      .sort({ date: -1 })
+      .limit(Math.min(100, Number(limit) || 25))
+      .lean();
+
+    const state = await GmailPollState.findOne({ gmailEmail: user.email }).lean();
+
+    res.json({
+      gmailEmail: user.email,
+      pollState: state
+        ? {
+            lastPolledAt: state.lastPolledAt,
+            lastSuccessAt: state.lastSuccessAt,
+            totalNotified: state.totalNotified,
+            authError: state.authErrorAt ? state.authErrorMessage : null,
+            authErrorAt: state.authErrorAt
+          }
+        : null,
+      digests
+    });
+  } catch (err) {
+    res.status(500).json({ error: err?.message || "digests_failed" });
   }
 });
 
