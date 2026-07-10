@@ -30,18 +30,19 @@ Your ONLY job is to check TWO things from the posting text:
    India city, or "candidate prefers remote but job is on-site". When in doubt,
    KEEP.
 
-2) FRESHNESS / DATE POSTED. The user message gives you "today" and
-   "staleAfterDays". Judge freshness ONLY against that "today" value — you do
-   NOT otherwise know the current date, so never rely on your own sense of it.
+2) FRESHNESS / DATE POSTED. The user message opens with a "TODAY'S DATE" block
+   giving today's date and a STALE CUTOFF date. Judge freshness ONLY against
+   those — you do NOT otherwise know the current date, so never rely on your own
+   sense of it, and never assume a date you find surprising is in the future.
    Flag (pick=false, skipKind="threshold") ONLY when the posting text either
      (a) explicitly states it is closed / expired / filled / "no longer
          accepting applications", OR
-     (b) carries a posted / published date more than "staleAfterDays" days
-         BEFORE "today".
-   Everything else is OPEN. In particular, a posted date that is recent, or that
-   merely looks unusual or far in the future to you, is NOT evidence of closure —
-   compute the gap against "today" and keep it if the gap is small or negative.
-   A missing or unclear date is NOT evidence of closure. When in doubt, KEEP.
+     (b) carries a posted / published date that falls BEFORE the stale cutoff
+         date you were given.
+   Everything else is OPEN. Compare the posted date to the cutoff date directly;
+   do not try to count the days between them. A posted date on or after the
+   cutoff is fresh. A posted date after today is a site bug, not an expiry. A
+   missing or unclear date is NOT evidence of closure. When in doubt, KEEP.
 
 DO NOT judge anything else. In particular:
  • DO NOT judge visa sponsorship / work authorization. That info usually lives
@@ -127,29 +128,30 @@ on-site, outside the allow-list. →
 Example 12 — KEEP. JD: "Hybrid · New York, NY or Remote." US hybrid/remote. →
 {"pick":true,"score":90,"reason":"Hybrid/remote in New York, NY (US).","skipKind":""}
 
-Example 13 — KEEP. today="2026-07-09", staleAfterDays=60. JD header: "Posted 07
-July 2026." That is 2 days before today — a current posting. The date alone
-never means closed. →
+Example 13 — KEEP. Today is 2026-07-09, stale cutoff is 2026-05-10. JD header:
+"Posted 07 July 2026." That is after the cutoff — a current posting. The date
+alone never means closed. →
 {"pick":true,"score":88,"reason":"Posted 07 July 2026, two days ago — still open.","skipKind":""}
 
-Example 14 — FLAG. today="2026-07-09", staleAfterDays=60. JD header: "Date
-posted: 30 January 2024." That is far more than 60 days before today. →
+Example 14 — FLAG. Today is 2026-07-09, stale cutoff is 2026-05-10. JD header:
+"Date posted: 30 January 2024." 2024-01-30 falls before the cutoff. →
 {"pick":false,"score":15,"reason":"Posted 30 January 2024, over two years before today — the listing is stale/expired.","skipKind":"threshold"}
 
-Example 15 — KEEP. today="2026-07-09". JD carries no posted date and no
+Example 15 — KEEP. Today is 2026-07-09. The JD carries no posted date and no
 open/closed wording anywhere. Missing date → KEEP. →
 {"pick":true,"score":80,"reason":"No posted date or closure notice; defaulting to keep.","skipKind":""}
 
-Example 16 — KEEP. today="2026-07-09". JD header: "Posted 12 December 2026" (a
-date AFTER today, e.g. a site bug or timezone artifact). A future date is not
-an expired posting. →
+Example 16 — KEEP. Today is 2026-07-09. JD header: "Posted 12 December 2026" — a
+date AFTER today (a site bug or timezone artifact). A future date is not an
+expired posting. →
 {"pick":true,"score":80,"reason":"Posted date is not in the past; treating the listing as open.","skipKind":""}
 
-Example 17 — KEEP. today="2026-07-10", staleAfterDays=60. title="Cloud
-Engineer", company="Manulife". JD: "Cloud Engineer · Available in 2 locations ·
-Posted Date: June 17th 2026 · Hybrid" followed by "Recommended Jobs — Analyst,
-London UK, posted 2 January 2024". June 17 2026 is 23 days before today, and the
-London card plus its old date belong to a DIFFERENT job in a recommended rail. →
+Example 17 — KEEP. Today is 2026-07-10, stale cutoff is 2026-05-11.
+title="Cloud Engineer", company="Manulife". JD: "Cloud Engineer · Available in 2
+locations · Posted Date: June 17th 2026 · Hybrid", followed by "Recommended Jobs
+— Analyst, London UK, posted 2 January 2024". 2026-06-17 is after the cutoff, and
+the London card plus its old date belong to a DIFFERENT job in a recommended
+rail. →
 {"pick":true,"score":88,"reason":"Posted 17 June 2026, 23 days ago; the London listing is a recommended-jobs card, not this role.","skipKind":""}
 
 Default whenever the evidence is thin, mixed, or ambiguous: KEEP (pick=true).`;
@@ -276,6 +278,22 @@ function extractRelevantJd(scrapedText) {
     return picked.length ? `${head}\n…\n${picked.join('\n')}` : head;
 }
 
+// longDate — "2026-07-10" → "Friday, 10 July 2026". Giving the grader both forms
+// lets it match a posting that spells its date out ("June 17th 2026") without
+// first having to normalize it. Pinned to UTC so the server's TZ can't shift the
+// day, and falls back to the raw string if the ISO date is unparseable.
+function longDate(iso) {
+    const ms = Date.parse(`${iso}T00:00:00Z`);
+    if (Number.isNaN(ms)) return String(iso);
+    return new Date(ms).toLocaleDateString('en-GB', {
+        timeZone: 'UTC',
+        weekday: 'long',
+        day: 'numeric',
+        month: 'long',
+        year: 'numeric',
+    });
+}
+
 export function buildSecondJudgeUserPrompt({ profile, job, scrapedText, threshold, todayISO, staleAfterDays }) {
     // LOCATION + FRESHNESS only — give the grader just the location signals it
     // needs. Deliberately NO role/sponsorship/excluded fields (stage one owns
@@ -306,14 +324,36 @@ export function buildSecondJudgeUserPrompt({ profile, job, scrapedText, threshol
     // date lags its training data), so the freshness check MUST be anchored to a
     // date we supply. Without this it reads a recent posted date as a strange
     // future date and calls a live posting "closed/expired".
+    //
+    // We also hand it the CUTOFF DATE rather than a day count, because LLMs are
+    // unreliable at date arithmetic ("is 17 June 2026 more than 60 days before
+    // 10 July 2026?"). Comparing two dates is something it can do; subtracting
+    // them is not. The comparison is spelled out in both ISO and long form.
     const today = todayISO || new Date().toISOString().slice(0, 10);
     const staleDays = Number.isFinite(Number(staleAfterDays)) ? Number(staleAfterDays) : 60;
+    const todayMs = Date.parse(`${today}T00:00:00Z`);
+    const cutoff = Number.isNaN(todayMs)
+        ? today
+        : new Date(todayMs - staleDays * 86400000).toISOString().slice(0, 10);
 
     return `Threshold: ${threshold}
-today: ${today}
-staleAfterDays: ${staleDays}
+
+## TODAY'S DATE — this is "now". Judge the posting against it.
+Today is ${longDate(today)} (${today}).
+You do NOT otherwise know the current date, so never rely on your own sense of it.
+
+A posting is STALE only if its posted date falls BEFORE ${longDate(cutoff)} (${cutoff}),
+i.e. more than ${staleDays} days before today. Compare the two dates directly — do not
+try to count days.
+  • posted on or after ${cutoff}  → FRESH, keep it (pick=true)
+  • posted after today (${today}) → a site bug, still FRESH, keep it
+  • no posted date at all         → keep it
+  • posted before ${cutoff}       → STALE (pick=false, skipKind="threshold")
 
 ${signalsBlock}
-## Job to judge (real employer-site text — return ONE decision):
+## The content to check — the real employer-site text for ONE job.
+Judge ONLY the role in "title" at "company". Ignore any other job the page lists
+(recommended / similar / related jobs), including its city and its posted date.
+Return ONE decision:
 ${JSON.stringify(slim, null, 2)}`;
 }
