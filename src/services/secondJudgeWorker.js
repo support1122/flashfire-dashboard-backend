@@ -39,7 +39,8 @@ import { JobModel } from '../../Schema_Models/JobModel.js';
 import { ProfileModel } from '../../Schema_Models/ProfileModel.js';
 import { UserModel } from '../../Schema_Models/UserModel.js';
 import {
-  SECOND_JUDGE_SYSTEM_PROMPT,
+  STALE_POSTING_DAYS,
+  buildSecondJudgeSystemPrompt,
   buildSecondJudgeUserPrompt,
 } from '../../Utils/secondJudgePrompt.js';
 
@@ -79,11 +80,14 @@ const VALID_FLAGS = new Set([LOCATION_KIND, FRESHNESS_KIND]);
 // operator. Master switch for the removal half only (flagging always happens).
 const AUTO_REMOVE_ENABLED = process.env.SECOND_JUDGE_AUTO_REMOVE_ENABLED !== 'false';
 const AI_REMOVAL_STATUS = 'removed by AI'; // mirrors reconcileExclusionJobs.js → lands in Removed column
-// A posting whose own posted-date is older than this many days counts as stale
-// (deterministic half of the two-key freshness gate).
-const STALE_POSTING_DAYS = Number.isFinite(Number(process.env.SECOND_JUDGE_STALE_DAYS))
-  ? Number(process.env.SECOND_JUDGE_STALE_DAYS)
-  : 60;
+// STALE_POSTING_DAYS (3) is imported, not read from the environment: it is the
+// deterministic half of the two-key freshness gate (freshnessEvidence), and the
+// grader's worked examples are generated from the very same constant, so the
+// prompt and this gate cannot disagree about what "expired" means. See
+// Utils/secondJudgePrompt.js.
+//
+// Built once: identical on every request, so it stays prompt-cacheable.
+const SYSTEM_PROMPT = buildSecondJudgeSystemPrompt();
 // One-shot migration at boot: rows flagged 'failed' by the OLD grader (which was
 // never told today's date, so it read fresh postings as "expired") carry no
 // skipKind. Re-queue the freshness-looking ones for a clean re-screen instead of
@@ -226,6 +230,9 @@ function ageFromSnippet(snippet, now) {
 
   let m = s.match(/^(\d{1,4})\s*\+?\s*days?\s+ago/i);
   if (m) return Number(m[1]);
+  // 30 and 365 here are UNIT CONVERSIONS (days per month / per year), not a
+  // freshness threshold — that is STALE_POSTING_DAYS (3) and nothing else. Any
+  // "N months ago" therefore lands at >= 30 days, i.e. comfortably expired.
   m = s.match(/^(\d{1,3})\s*\+?\s*months?\s+ago/i);
   if (m) return Number(m[1]) * 30;
   m = s.match(/^(\d{1,2})\s*\+?\s*years?\s+ago/i);
@@ -450,6 +457,81 @@ async function requeueLegacyFreshnessFlags() {
   console.log(`[SecondJudge] Re-queued ${ids.length} legacy freshness flag(s) for a clean re-screen`);
 }
 
+// ─── One-shot AUDIT (read-only): location flags the old sweep removed ─────
+// An earlier version of this worker moved EVERY failed flag to the Removed column
+// after a 24h grace, location mismatches included. That policy is gone — a
+// location flag is now a judgement only an operator may act on — but any job the
+// old sweep caught is still sitting in Removed, wrongly, and inflates the
+// "AI removed" column on the client-job-analysis page.
+//
+// This ONLY COUNTS them. It writes nothing. Restoring a job means guessing its
+// pre-removal status out of the timeline array, which is not something to do
+// unattended; read the log, then decide.
+//
+// Signature of an old-sweep removal:
+//   removedBy 'AI'  (so: not an operator delete)
+//   secondJudge.reason present and secondJudge.status 'reviewed'
+//                   (so: the second judge decided it, not the exclusion list —
+//                    exclusion removals carry no secondJudge at all)
+//   secondJudge.skipKind absent   (so: written before skipKind existed)
+//   reason is NOT freshness-worded (so: it was a LOCATION mismatch)
+const AUDIT_LEGACY_REMOVALS = process.env.SECOND_JUDGE_AUDIT_LEGACY_REMOVALS !== 'false';
+
+async function auditLegacyLocationRemovals() {
+  if (!AUDIT_LEGACY_REMOVALS) return;
+  const rows = await JobModel.find({
+    removedBy: 'AI',
+    currentStatus: { $regex: /^(removed|deleted)/i },
+    'secondJudge.status': 'reviewed',
+    'secondJudge.skipKind': null, // matches missing OR null — pre-upgrade rows only
+    'secondJudge.reason': { $exists: true, $nin: [null, ''] },
+  })
+    .select('_id userID secondJudge.reason')
+    .limit(5000)
+    .lean();
+
+  // Two distinct populations, both wrong, for different reasons:
+  //   location  — removed under a policy we have since reversed.
+  //   freshness — removed by the grader that was never told today's date, so a
+  //               3-day-old posting could be called "closed/expired". Some of
+  //               these were genuinely expired; the reason text cannot tell us
+  //               which, only a re-scrape can.
+  const location = rows.filter((j) => !isLegacyFreshnessReason(j.secondJudge?.reason));
+  const freshness = rows.filter((j) => isLegacyFreshnessReason(j.secondJudge?.reason));
+
+  if (!rows.length) {
+    console.log('[SecondJudge] Legacy audit: no AI removals predate skipKind — nothing to review');
+    return;
+  }
+
+  const report = (label, list, note) => {
+    if (!list.length) return;
+    const perUser = new Map();
+    for (const j of list) {
+      if (!j.userID) continue;
+      perUser.set(j.userID, (perUser.get(j.userID) || 0) + 1);
+    }
+    const top = [...perUser.entries()].sort((a, b) => b[1] - a[1]);
+    console.warn(`[SecondJudge] Legacy audit: ${list.length} ${label} — ${note}`);
+    for (const [email, n] of top.slice(0, 20)) console.warn(`[SecondJudge]     ${email}: ${n}`);
+    if (top.length > 20) console.warn(`[SecondJudge]     …and ${top.length - 20} more client(s)`);
+    console.warn(`[SecondJudge]     e.g. "${String(list[0].secondJudge?.reason || '').slice(0, 120)}"`);
+  };
+
+  console.warn('[SecondJudge] Legacy audit — READ ONLY, NOTHING WAS MODIFIED.');
+  report(
+    'job(s) removed for a LOCATION mismatch',
+    location,
+    'the old 24h sweep removed these; current policy never removes a location flag'
+  );
+  report(
+    'job(s) removed as EXPIRED before the grader knew today\'s date',
+    freshness,
+    'some were genuinely closed; only a re-scrape can separate them'
+  );
+  console.warn('[SecondJudge]   Set SECOND_JUDGE_AUDIT_LEGACY_REMOVALS=false to silence this.');
+}
+
 // ─── Claim Next Pending Job (Atomic) ─────────────────────────────────
 async function claimNextJob() {
   return JobModel.findOneAndUpdate(
@@ -535,7 +617,7 @@ async function judgeRealSite({ profile, job, scrapedText }) {
   const body = {
     model: OPENAI_MODEL,
     messages: [
-      { role: 'system', content: SECOND_JUDGE_SYSTEM_PROMPT },
+      { role: 'system', content: SYSTEM_PROMPT },
       {
         role: 'user',
         content: buildSecondJudgeUserPrompt({
@@ -893,6 +975,8 @@ export function startSecondJudgeWorker() {
     .catch((err) => console.warn('[SecondJudge] stale recovery skipped:', err.message))
     .then(() => requeueLegacyFreshnessFlags())
     .catch((err) => console.warn('[SecondJudge] legacy flag re-queue skipped:', err.message))
+    .then(() => auditLegacyLocationRemovals())
+    .catch((err) => console.warn('[SecondJudge] legacy removal audit skipped:', err.message))
     .then(() => pollLoop())
     .catch((err) => {
       console.error('[SecondJudge] Failed to start:', err);

@@ -13,12 +13,75 @@
 // not to be trusted blindly.
 //
 // Exports:
-//   SECOND_JUDGE_SYSTEM_PROMPT — the grader instructions (single-job variant).
+//   buildSecondJudgeSystemPrompt({ staleAfterDays }) — the grader instructions.
+//     The freshness WORKED EXAMPLES are generated from the configured window, not
+//     hardcoded: at a 60-day window "Posted 30+ days ago" is a KEEP, at a 3-day
+//     window it is a REMOVE. Baking one window into the examples while the user
+//     message carries another teaches the model the opposite of the rule, and the
+//     examples win often enough to matter.
 //   buildSecondJudgeUserPrompt({ profile, job, scrapedText, threshold, todayISO,
 //     staleAfterDays }) — the user message: today's date + freshness rule,
 //     candidate context, and the real-site JD for one job.
 
-export const SECOND_JUDGE_SYSTEM_PROMPT = `You are the SECOND-STAGE screener for a job-search assistant. A FIRST stage
+// ─── THE FRESHNESS WINDOW ────────────────────────────────────────────
+// A posting older than this many days is EXPIRED: the second judge moves it to
+// the Removed column. Deliberately NOT an env var — this is product policy, not
+// deployment config, and a number this consequential should be reviewable in a
+// diff rather than silently different per environment.
+//
+// 3 days, on purpose and aggressively: a role open longer than that has usually
+// taken its shortlist, so applying is wasted effort for the client.
+//
+// This is the SINGLE SOURCE OF TRUTH. secondJudgeWorker.js imports it for the
+// deterministic gate (freshnessEvidence / fastScreen) and the grader's worked
+// examples below are generated from it, so the prompt and the gate cannot drift
+// apart. Change it here and both follow.
+export const STALE_POSTING_DAYS = 3;
+
+// Anchor date for the worked examples. Fixed, so the system prompt is identical
+// on every request and stays prompt-cacheable.
+const EX_TODAY = '2026-07-09';
+const DAY_MS = 86400000;
+const addDays = (iso, n) => new Date(Date.parse(`${iso}T00:00:00Z`) + n * DAY_MS).toISOString().slice(0, 10);
+
+/**
+ * @param {{staleAfterDays?: number}} opts  window override — tests only; production
+ *   always uses STALE_POSTING_DAYS.
+ * @returns {string} the grader system prompt, with freshness examples matching the window.
+ */
+export function buildSecondJudgeSystemPrompt({ staleAfterDays = STALE_POSTING_DAYS } = {}) {
+  const W = Math.max(1, Number(staleAfterDays) || STALE_POSTING_DAYS);
+  const freshFrom = addDays(EX_TODAY, -W);       // oldest date that is still fresh
+  const staleUpTo = addDays(EX_TODAY, -(W + 1)); // newest date that is stale
+  // A date comfortably inside the window, whatever W is.
+  const clearlyFresh = addDays(EX_TODAY, -Math.min(2, W));
+  const dates = `Today is ${EX_TODAY}, FRESH FROM ${freshFrom}, STALE UP TO ${staleUpTo}`;
+
+  // "Posted 30+ days ago" is read as exactly 30 (see the user-message rule), so
+  // whether it survives depends entirely on W.
+  const thirtyPlusKept = 30 <= W;
+  const ex30 = thirtyPlusKept
+    ? `Example 19 — KEEP. The freshness window is ${W} days. JD header: "Posted 30+ days
+ago." Read "30+" as exactly 30 — never guess a bigger number — and 30 is inside
+the ${W}-day window. →
+{"pick":true,"score":85,"reason":"Posted about 30 days ago, inside the freshness window.","skipKind":""}`
+    : `Example 19 — FLAG. The freshness window is ${W} days. JD header: "Posted 30+ days
+ago." Read "30+" as exactly 30 — never guess a bigger number — and 30 is well
+beyond the ${W}-day window. →
+{"pick":false,"score":20,"reason":"Posted about 30 days ago, beyond the ${W}-day freshness window — the listing is stale.","skipKind":"threshold"}`;
+
+  // The boundary pair, in relative form. At W=3 these are "3 days ago" (keep) and
+  // "4 days ago" (flag) — the distinction the model gets wrong most often.
+  const exBoundaryRel = `Example 20 — KEEP (BOUNDARY, relative form). The freshness window is ${W} days.
+JD header: "Posted ${W} day${W === 1 ? '' : 's'} ago." Exactly ${W} is INSIDE the window. →
+{"pick":true,"score":84,"reason":"Posted ${W} day${W === 1 ? '' : 's'} ago, on the edge of the freshness window — still open.","skipKind":""}
+
+Example 21 — FLAG (BOUNDARY, the other side). The freshness window is ${W} days.
+JD header: "Posted ${W + 1} days ago." One day past the window is stale, even though it
+"feels" recent, and even though the location is fine. →
+{"pick":false,"score":25,"reason":"Posted ${W + 1} days ago, past the ${W}-day freshness window — the listing is stale.","skipKind":"threshold"}`;
+
+  return `You are the SECOND-STAGE screener for a job-search assistant. A FIRST stage
 already judged ROLE FIT and PASSED this job. Decide whether to KEEP this job or
 flag it.
 
@@ -156,58 +219,54 @@ on-site, outside the allow-list. →
 Example 12 — KEEP. JD: "Hybrid · New York, NY or Remote." US hybrid/remote. →
 {"pick":true,"score":90,"reason":"Hybrid/remote in New York, NY (US).","skipKind":""}
 
-Example 13 — KEEP. Today is 2026-07-09, FRESH FROM 2026-05-10, STALE UP TO
-2026-05-09. JD header: "Posted 07 July 2026." 2026-07-07 is later than
-2026-05-10, so the posting is current. A date alone never means closed. →
-{"pick":true,"score":88,"reason":"Posted 07 July 2026, still an open listing.","skipKind":""}
+Example 13 — KEEP. ${dates}. JD header: "Posted ${clearlyFresh}." That is later than
+${freshFrom}, so the posting is current. A date alone never means closed. →
+{"pick":true,"score":88,"reason":"Posted ${clearlyFresh}, still an open listing.","skipKind":""}
 
-Example 14 — FLAG. Today is 2026-07-09, FRESH FROM 2026-05-10, STALE UP TO
-2026-05-09. JD header: "Date posted: 30 January 2024." 2024-01-30 is earlier
-than 2026-05-09. →
+Example 14 — FLAG. ${dates}. JD header: "Date posted: 30 January 2024." 2024-01-30
+is earlier than ${staleUpTo}. →
 {"pick":false,"score":15,"reason":"Posted 30 January 2024, long before the freshness cutoff — the listing is stale.","skipKind":"threshold"}
 
-Example 15 — KEEP. Today is 2026-07-09. The JD carries no posted date and no
+Example 15 — KEEP. Today is ${EX_TODAY}. The JD carries no posted date and no
 open/closed wording anywhere. Missing date → KEEP. →
 {"pick":true,"score":80,"reason":"No posted date or closure notice; defaulting to keep.","skipKind":""}
 
-Example 16 — KEEP. Today is 2026-07-09. JD header: "Posted 12 December 2026" — a
+Example 16 — KEEP. Today is ${EX_TODAY}. JD header: "Posted 12 December 2026" — a
 date AFTER today (a site bug or timezone artifact). A future date is not an
 expired posting. →
 {"pick":true,"score":80,"reason":"Posted date is not in the past; treating the listing as open.","skipKind":""}
 
-Example 17 — KEEP (BOUNDARY). Today is 2026-07-09, FRESH FROM 2026-05-10, STALE
-UP TO 2026-05-09. JD header: "Date posted: 10 May 2026" — exactly the FRESH FROM
-date, so it is fresh. Do not count days. →
-{"pick":true,"score":82,"reason":"Posted 10 May 2026, on the freshness cutoff — still open.","skipKind":""}
+Example 17 — KEEP (BOUNDARY). ${dates}. JD header: "Date posted: ${freshFrom}" —
+exactly the FRESH FROM date, so it is fresh. Do not count days. →
+{"pick":true,"score":82,"reason":"Posted ${freshFrom}, on the freshness cutoff — still open.","skipKind":""}
 
-Example 18 — FLAG (BOUNDARY, the other side). Today is 2026-07-09, FRESH FROM
-2026-05-10, STALE UP TO 2026-05-09. JD header: "Date posted: 09 May 2026" —
-exactly the STALE UP TO date, so it is stale, even though nine weeks "feels"
-recent and the location is fine. →
-{"pick":false,"score":25,"reason":"Posted 09 May 2026, before the freshness cutoff — the listing is stale.","skipKind":"threshold"}
+Example 18 — FLAG (BOUNDARY, the other side). ${dates}. JD header: "Date posted:
+${staleUpTo}" — exactly the STALE UP TO date, so it is stale, even though the
+location is fine. →
+{"pick":false,"score":25,"reason":"Posted ${staleUpTo}, before the freshness cutoff — the listing is stale.","skipKind":"threshold"}
 
-Example 19 — KEEP. Freshness window is 60 days. JD header: "Posted 30+ days
-ago." Read "30+" as exactly 30 — never guess a bigger number — and 30 is inside
-the 60-day window. →
-{"pick":true,"score":85,"reason":"Posted about 30 days ago, inside the freshness window.","skipKind":""}
+${ex30}
 
-Example 20 — FLAG. Freshness window is 60 days. JD header: "Posted 4 months
-ago." Four months is well beyond 60 days. →
-{"pick":false,"score":20,"reason":"Posted about four months ago, beyond the freshness window — the listing is stale.","skipKind":"threshold"}
+${exBoundaryRel}
 
-Example 21 — KEEP. JD: "Software Engineer · Austin, TX · Posted 1 July 2026.
-We are no longer accepting paper resumes; please apply online." That sentence is
-about the SUBMISSION CHANNEL, not the position. The job is open. →
+Example 22 — FLAG. The freshness window is ${W} days. JD header: "Posted 4 months
+ago." Four months is far beyond ${W} days. →
+{"pick":false,"score":20,"reason":"Posted about four months ago, beyond the ${W}-day freshness window — the listing is stale.","skipKind":"threshold"}
+
+Example 23 — KEEP. ${dates}. JD: "Software Engineer · Austin, TX · Posted
+${clearlyFresh}. We are no longer accepting paper resumes; please apply online."
+That sentence is about the SUBMISSION CHANNEL, not the position. The job is open. →
 {"pick":true,"score":88,"reason":"Role is in Austin, TX (US) and the listing is open; the paper-resume note is only about how to apply.","skipKind":""}
 
-Example 22 — KEEP. Today is 2026-07-10. title="Cloud Engineer",
-company="Manulife". JD: "Cloud Engineer · Available in 2 locations · Posted
-Date: June 17th 2026 · Hybrid", followed by "Recommended Jobs — Analyst, London
-UK, posted 2 January 2024". 2026-06-17 is inside the freshness window, and the
-London card plus its old date belong to a DIFFERENT job in a recommended rail. →
-{"pick":true,"score":88,"reason":"Posted 17 June 2026 and hybrid; the London listing is a recommended-jobs card, not this role.","skipKind":""}
+Example 24 — KEEP. ${dates}. title="Cloud Engineer", company="Manulife". JD:
+"Cloud Engineer · Available in 2 locations · Posted Date: ${clearlyFresh} ·
+Hybrid", followed by "Recommended Jobs — Analyst, London UK, posted 2 January
+2024". The role's own date is inside the window, and the London card plus its old
+date belong to a DIFFERENT job in a recommended rail — judge neither. →
+{"pick":true,"score":88,"reason":"Posted ${clearlyFresh} and hybrid; the London listing is a recommended-jobs card, not this role.","skipKind":""}
 
 Default whenever the evidence is thin, mixed, or ambiguous: KEEP (pick=true).`;
+}
 
 // fmtList — normalize a locations field into clean, individual entries. The
 // value may be a plain delimited string, a proper array, OR an array whose
@@ -281,7 +340,7 @@ export function buildSecondJudgeUserPrompt({ profile, job, scrapedText, threshol
     // ago") can only be judged that way. Each form gets its own rule line, so
     // the model never has to convert between them.
     const today = todayISO || new Date().toISOString().slice(0, 10);
-    const staleDays = Number.isFinite(Number(staleAfterDays)) ? Number(staleAfterDays) : 60;
+    const staleDays = Number.isFinite(Number(staleAfterDays)) ? Number(staleAfterDays) : STALE_POSTING_DAYS;
     const todayMs = Date.parse(`${today}T00:00:00Z`);
     // Two dates, not one. A single "cutoff" forces the model to decide whether a
     // date is ON it or one day BEFORE it, and it gets that wrong in both
@@ -292,9 +351,22 @@ export function buildSecondJudgeUserPrompt({ profile, job, scrapedText, threshol
     const iso = (ms) => new Date(ms).toISOString().slice(0, 10);
     const freshFrom = Number.isNaN(todayMs) ? today : iso(todayMs - staleDays * 86400000);
     const staleUpTo = Number.isNaN(todayMs) ? today : iso(todayMs - (staleDays + 1) * 86400000);
-    // parsePostedAgeDays() scores "N months ago" as N*30 days, so the month
-    // limit must be derived the same way or the two gates disagree at the edge.
+    // parsePostedAgeDays() scores "N months ago" as N*30 days, so the month rule
+    // must be derived the same way or the two gates disagree at the edge. Below a
+    // 30-day window EVERY "N months ago" is stale, and a "N ≤ 0 → FRESH" line
+    // would be dead text the model has to reason past — so emit one flat rule.
     const monthsLimit = Math.floor(staleDays / 30);
+    const monthsRule = monthsLimit < 1
+        ? `  • "posted N months ago" (any N ≥ 1)          → STALE, pick=false, skipKind="threshold"`
+        : `  • "posted N months ago", N ≤ ${monthsLimit}          → FRESH, keep
+  • "posted N months ago", N > ${monthsLimit}          → STALE, pick=false, skipKind="threshold"`;
+    // "30+ days ago" is read as exactly 30, so whether it survives depends on the
+    // window. Stating the verdict outright beats making the model derive it.
+    const thirtyPlusNote = 30 <= staleDays
+        ? `        "30+ days ago" means "at least 30". Take it as exactly 30, so it is
+        FRESH. Never guess a number larger than the posting actually states.`
+        : `        "30+ days ago" means "at least 30". Take it as exactly 30 — never guess
+        a bigger number — and 30 is beyond ${staleDays}, so it is STALE.`;
 
     const dateBlock = `## TODAY'S DATE — this is "now". Judge the posting against it.
 Today is ${longDate(today)} (${today}).
@@ -310,11 +382,9 @@ FRESHNESS RULE — take the ONE line that matches what the posting actually says
   • a calendar date of ${staleUpTo} or earlier → STALE, pick=false, skipKind="threshold"
   • a calendar date after today (${today})     → a site bug, FRESH, keep
   • "posted N days ago", N ≤ ${staleDays}            → FRESH, keep
-        "30+ days ago" means "at least 30". Take it as exactly 30, so it is
-        FRESH. Never guess a number larger than the posting actually states.
+${thirtyPlusNote}
   • "posted N days ago", N > ${staleDays}            → STALE, pick=false, skipKind="threshold"
-  • "posted N months ago", N ≤ ${monthsLimit}          → FRESH, keep
-  • "posted N months ago", N > ${monthsLimit}          → STALE, pick=false, skipKind="threshold"
+${monthsRule}
   • "posted today" / "yesterday" / "N hours ago" → FRESH, keep
   • no posted date anywhere                     → keep
 Compare calendar dates directly. Do NOT count the days between two dates, and do
