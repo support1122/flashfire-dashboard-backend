@@ -39,7 +39,7 @@ import { JobModel } from '../../Schema_Models/JobModel.js';
 import { ProfileModel } from '../../Schema_Models/ProfileModel.js';
 import { UserModel } from '../../Schema_Models/UserModel.js';
 import {
-  SECOND_JUDGE_SYSTEM_PROMPT,
+  buildSecondJudgeSystemPrompt,
   buildSecondJudgeUserPrompt,
 } from '../../Utils/secondJudgePrompt.js';
 
@@ -79,11 +79,22 @@ const VALID_FLAGS = new Set([LOCATION_KIND, FRESHNESS_KIND]);
 // operator. Master switch for the removal half only (flagging always happens).
 const AUTO_REMOVE_ENABLED = process.env.SECOND_JUDGE_AUTO_REMOVE_ENABLED !== 'false';
 const AI_REMOVAL_STATUS = 'removed by AI'; // mirrors reconcileExclusionJobs.js → lands in Removed column
-// A posting whose own posted-date is older than this many days counts as stale
-// (deterministic half of the two-key freshness gate).
+// A posting whose own posted-date is older than this many days counts as expired
+// and is auto-removed. It is also the deterministic half of the two-key freshness
+// gate (see freshnessEvidence), so nothing is removed on the LLM's word alone.
+//
+// 3 days: the board is meant to carry only what a client can realistically still
+// win, and a posting a week old has usually taken its shortlist. This is the
+// single most consequential number in this file — raise it and stale jobs linger,
+// lower it and live jobs get deleted — so it stays an env var, tunable without a
+// deploy. The grader's worked examples are generated from it (see
+// buildSecondJudgeSystemPrompt), so prompt and gate can never disagree.
 const STALE_POSTING_DAYS = Number.isFinite(Number(process.env.SECOND_JUDGE_STALE_DAYS))
   ? Number(process.env.SECOND_JUDGE_STALE_DAYS)
-  : 60;
+  : 3;
+
+// Built once: identical on every request, so it stays prompt-cacheable.
+const SYSTEM_PROMPT = buildSecondJudgeSystemPrompt({ staleAfterDays: STALE_POSTING_DAYS });
 // One-shot migration at boot: rows flagged 'failed' by the OLD grader (which was
 // never told today's date, so it read fresh postings as "expired") carry no
 // skipKind. Re-queue the freshness-looking ones for a clean re-screen instead of
@@ -610,7 +621,7 @@ async function judgeRealSite({ profile, job, scrapedText }) {
   const body = {
     model: OPENAI_MODEL,
     messages: [
-      { role: 'system', content: SECOND_JUDGE_SYSTEM_PROMPT },
+      { role: 'system', content: SYSTEM_PROMPT },
       {
         role: 'user',
         content: buildSecondJudgeUserPrompt({
