@@ -39,6 +39,7 @@ import { JobModel } from '../../Schema_Models/JobModel.js';
 import { ProfileModel } from '../../Schema_Models/ProfileModel.js';
 import { UserModel } from '../../Schema_Models/UserModel.js';
 import {
+  STALE_POSTING_DAYS,
   buildSecondJudgeSystemPrompt,
   buildSecondJudgeUserPrompt,
 } from '../../Utils/secondJudgePrompt.js';
@@ -79,22 +80,14 @@ const VALID_FLAGS = new Set([LOCATION_KIND, FRESHNESS_KIND]);
 // operator. Master switch for the removal half only (flagging always happens).
 const AUTO_REMOVE_ENABLED = process.env.SECOND_JUDGE_AUTO_REMOVE_ENABLED !== 'false';
 const AI_REMOVAL_STATUS = 'removed by AI'; // mirrors reconcileExclusionJobs.js → lands in Removed column
-// A posting whose own posted-date is older than this many days counts as expired
-// and is auto-removed. It is also the deterministic half of the two-key freshness
-// gate (see freshnessEvidence), so nothing is removed on the LLM's word alone.
+// STALE_POSTING_DAYS (3) is imported, not read from the environment: it is the
+// deterministic half of the two-key freshness gate (freshnessEvidence), and the
+// grader's worked examples are generated from the very same constant, so the
+// prompt and this gate cannot disagree about what "expired" means. See
+// Utils/secondJudgePrompt.js.
 //
-// 3 days: the board is meant to carry only what a client can realistically still
-// win, and a posting a week old has usually taken its shortlist. This is the
-// single most consequential number in this file — raise it and stale jobs linger,
-// lower it and live jobs get deleted — so it stays an env var, tunable without a
-// deploy. The grader's worked examples are generated from it (see
-// buildSecondJudgeSystemPrompt), so prompt and gate can never disagree.
-const STALE_POSTING_DAYS = Number.isFinite(Number(process.env.SECOND_JUDGE_STALE_DAYS))
-  ? Number(process.env.SECOND_JUDGE_STALE_DAYS)
-  : 3;
-
 // Built once: identical on every request, so it stays prompt-cacheable.
-const SYSTEM_PROMPT = buildSecondJudgeSystemPrompt({ staleAfterDays: STALE_POSTING_DAYS });
+const SYSTEM_PROMPT = buildSecondJudgeSystemPrompt();
 // One-shot migration at boot: rows flagged 'failed' by the OLD grader (which was
 // never told today's date, so it read fresh postings as "expired") carry no
 // skipKind. Re-queue the freshness-looking ones for a clean re-screen instead of
@@ -237,6 +230,9 @@ function ageFromSnippet(snippet, now) {
 
   let m = s.match(/^(\d{1,4})\s*\+?\s*days?\s+ago/i);
   if (m) return Number(m[1]);
+  // 30 and 365 here are UNIT CONVERSIONS (days per month / per year), not a
+  // freshness threshold — that is STALE_POSTING_DAYS (3) and nothing else. Any
+  // "N months ago" therefore lands at >= 30 days, i.e. comfortably expired.
   m = s.match(/^(\d{1,3})\s*\+?\s*months?\s+ago/i);
   if (m) return Number(m[1]) * 30;
   m = s.match(/^(\d{1,2})\s*\+?\s*years?\s+ago/i);

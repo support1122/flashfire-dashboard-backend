@@ -23,18 +23,34 @@
 //     staleAfterDays }) — the user message: today's date + freshness rule,
 //     candidate context, and the real-site JD for one job.
 
+// ─── THE FRESHNESS WINDOW ────────────────────────────────────────────
+// A posting older than this many days is EXPIRED: the second judge moves it to
+// the Removed column. Deliberately NOT an env var — this is product policy, not
+// deployment config, and a number this consequential should be reviewable in a
+// diff rather than silently different per environment.
+//
+// 3 days, on purpose and aggressively: a role open longer than that has usually
+// taken its shortlist, so applying is wasted effort for the client.
+//
+// This is the SINGLE SOURCE OF TRUTH. secondJudgeWorker.js imports it for the
+// deterministic gate (freshnessEvidence / fastScreen) and the grader's worked
+// examples below are generated from it, so the prompt and the gate cannot drift
+// apart. Change it here and both follow.
+export const STALE_POSTING_DAYS = 3;
+
 // Anchor date for the worked examples. Fixed, so the system prompt is identical
-// on every request for a given window and stays prompt-cacheable.
+// on every request and stays prompt-cacheable.
 const EX_TODAY = '2026-07-09';
 const DAY_MS = 86400000;
 const addDays = (iso, n) => new Date(Date.parse(`${iso}T00:00:00Z`) + n * DAY_MS).toISOString().slice(0, 10);
 
 /**
- * @param {{staleAfterDays?: number}} opts
+ * @param {{staleAfterDays?: number}} opts  window override — tests only; production
+ *   always uses STALE_POSTING_DAYS.
  * @returns {string} the grader system prompt, with freshness examples matching the window.
  */
-export function buildSecondJudgeSystemPrompt({ staleAfterDays = 60 } = {}) {
-  const W = Math.max(1, Number(staleAfterDays) || 60);
+export function buildSecondJudgeSystemPrompt({ staleAfterDays = STALE_POSTING_DAYS } = {}) {
+  const W = Math.max(1, Number(staleAfterDays) || STALE_POSTING_DAYS);
   const freshFrom = addDays(EX_TODAY, -W);       // oldest date that is still fresh
   const staleUpTo = addDays(EX_TODAY, -(W + 1)); // newest date that is stale
   // A date comfortably inside the window, whatever W is.
@@ -324,7 +340,7 @@ export function buildSecondJudgeUserPrompt({ profile, job, scrapedText, threshol
     // ago") can only be judged that way. Each form gets its own rule line, so
     // the model never has to convert between them.
     const today = todayISO || new Date().toISOString().slice(0, 10);
-    const staleDays = Number.isFinite(Number(staleAfterDays)) ? Number(staleAfterDays) : 60;
+    const staleDays = Number.isFinite(Number(staleAfterDays)) ? Number(staleAfterDays) : STALE_POSTING_DAYS;
     const todayMs = Date.parse(`${today}T00:00:00Z`);
     // Two dates, not one. A single "cutoff" forces the model to decide whether a
     // date is ON it or one day BEFORE it, and it gets that wrong in both

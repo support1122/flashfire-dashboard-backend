@@ -12,21 +12,22 @@
 // and is not wired into any automated run. RUNS>1 catches flakiness that a
 // single temperature-0 call hides.
 //
-// Freshness cases are written RELATIVE to the window (W), because the system
-// prompt's worked examples are generated from it. Change SECOND_JUDGE_STALE_DAYS
-// and this battery still asserts the right thing.
+// Freshness cases are written RELATIVE to the window (W), which is read from the
+// SAME constant production uses (STALE_POSTING_DAYS = 3, hardcoded in
+// secondJudgePrompt.js). Change that constant and this battery still asserts the
+// right thing — it cannot silently test a window the product does not run.
 //
 // Every location case must FLAG at most — location mismatches are never
 // auto-removed. Freshness cases feed freshnessEvidence() in secondJudgeWorker.js,
 // which independently vetoes any removal the model gets wrong.
 const MOD = process.argv[2] || '../secondJudgePrompt.js';
-const { buildSecondJudgeSystemPrompt, buildSecondJudgeUserPrompt } = await import(MOD);
+const { STALE_POSTING_DAYS, buildSecondJudgeSystemPrompt, buildSecondJudgeUserPrompt } = await import(MOD);
 const KEY = process.env.OPENAI_API_KEY;
 const RUNS = Number(process.env.RUNS || 2);
-const W = Number(process.env.SECOND_JUDGE_STALE_DAYS || 3);
+const W = STALE_POSTING_DAYS; // the real window — no env override
 const TODAY = '2026-07-13';
 
-const SYSTEM = buildSecondJudgeSystemPrompt({ staleAfterDays: W });
+const SYSTEM = buildSecondJudgeSystemPrompt(); // exactly what production sends
 
 const DAY = 86400000;
 const iso = (n) => new Date(Date.parse(`${TODAY}T00:00:00Z`) - n * DAY).toISOString().slice(0, 10);
