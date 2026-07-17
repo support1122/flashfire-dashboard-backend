@@ -19,7 +19,7 @@
 //       targetJobCount, effectiveCap, isDefaultCap,
 //       currentOpsCount, currentOpsToday, currentAllCount,
 //       capRemaining, capStatus,
-//       latestRemoval: { reason, jobTitle, companyName, removedAt, removedBy } | null,
+//       latestRemoval: { jobID, reason, jobTitle, companyName, removedAt, removedBy } | null,
 //       summaryFromRemoval,
 //       operatorBreakdown: [{ operator, count, lastPushAt, todayCount }],
 //       extensionStats: { captures, linkedinSkipped, lastSessionAt }
@@ -348,6 +348,7 @@ export default async function SummariesOverview(req, res) {
         const lrf = p.latestRemovalFeedback;
         const latestRemoval = lrf?.reason
           ? {
+              jobID: lrf.jobID || "",
               reason: lrf.reason,
               jobTitle: lrf.jobTitle || "",
               companyName: lrf.companyName || "",
