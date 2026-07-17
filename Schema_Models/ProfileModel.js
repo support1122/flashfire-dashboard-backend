@@ -511,6 +511,12 @@ export const profileSchema = new mongoose.Schema({
       notes: { type: Boolean, required: false, default: false },
       resume: { type: Boolean, required: false, default: false },
       profile: { type: Boolean, required: false, default: true },
+      // True when profile.removalFeedback had at least one reasoned entry at
+      // build time, i.e. the client's own removal reasons were injected into
+      // the prompt. Drives the "Removal feedback" input pill in
+      // clients-tracking so operators can see the summary reflects the
+      // client's latest removals.
+      removalFeedback: { type: Boolean, required: false, default: false },
     },
     // Sampling temperature used for this build. Surfaced in the UI so
     // operators can tell whether a brief was generated with the strict
@@ -552,6 +558,23 @@ export const profileSchema = new mongoose.Schema({
     updatedAt: { type: Date, required: false, default: null },
     updatedBy: { type: String, required: false, default: "" },
   },
+  // Client-authored removal feedback. When the client drags a job card to
+  // Removed on their dashboard they must say why; UpdateChanges pushes each
+  // reason here (newest first, capped via $slice) and fires an auto summary
+  // rebuild. BuildAiSummary injects these as a high-priority signal block —
+  // second only to operator aiNotes — so the picker stops surfacing jobs
+  // matching the complaint. Kept separate from aiNotes on purpose: aiNotes
+  // is operator-edited directive text with strict SCRAP/SKIP semantics;
+  // this is raw client feedback with its own routing rules.
+  removalFeedback: [{
+    _id: false,
+    jobID: { type: String, required: false, default: "" },
+    jobTitle: { type: String, required: false, default: "" },
+    companyName: { type: String, required: false, default: "" },
+    reason: { type: String, required: false, default: "" },
+    removedAt: { type: Date, required: false, default: null },
+    removedBy: { type: String, required: false, default: "user" },
+  }],
   // Per-client scrape-source allowlist for the JR-direct extension. Values are
   // site slugs: "jobright" and/or "indeed" (ca.indeed.com). The extension only
   // captures cards from sites in this list for the selected client. Empty/unset

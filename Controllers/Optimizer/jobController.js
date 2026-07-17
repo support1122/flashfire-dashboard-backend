@@ -128,17 +128,19 @@ export const saveChangedSession = async (req, res) => {
                          showProjects: optimizedResume.showProjects ?? false,
                          showLeadership: optimizedResume.showLeadership ?? true,
                          showPublications: optimizedResume.showPublications ?? false,
+                         showTherapeuticAreas: optimizedResume.showTherapeuticAreas ?? false,
                          version: (job.optimizedResume?.version || 0) + 1, // Increment version
                          createdAt: new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }),
                          sectionOrder: optimizedResume.sectionOrder || [
                               "personalInfo",
-                              "summary", 
+                              "summary",
                               "workExperience",
                               "projects",
                               "leadership",
                               "skills",
                               "education",
-                              "publications"
+                              "publications",
+                              "therapeuticAreas"
                          ],
                          storageType: 'r2' // Mark as R2 storage
                     };

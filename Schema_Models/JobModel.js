@@ -156,17 +156,23 @@ export const JobSchema = new mongoose.Schema({
       type: Boolean,
       default: false
     },
+    // Medical resume "Therapeutic Areas" section (plain text, never AI-optimized)
+    showTherapeuticAreas: {
+      type: Boolean,
+      default: false
+    },
     sectionOrder: {
       type: [String],
       default: [
         "personalInfo",
-        "summary", 
+        "summary",
         "workExperience",
         "projects",
         "leadership",
         "skills",
         "education",
-        "publications"
+        "publications",
+        "therapeuticAreas"
       ]
     },
     version: {
