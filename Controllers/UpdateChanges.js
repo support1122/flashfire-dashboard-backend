@@ -1,9 +1,14 @@
 // controllers/UpdateChanges.js
 import { JobModel } from "../Schema_Models/JobModel.js";
 import { UserModel } from "../Schema_Models/UserModel.js";
+import { ProfileModel } from "../Schema_Models/ProfileModel.js";
 import { DiscordConnect } from "../Utils/DiscordConnect.js";
+import { buildSummaryForEmail } from "./BuildAiSummary.js";
 
 const REMOVAL_LIMIT = 100;
+// Newest-first cap on profile.removalFeedback — enough history for the AI
+// summary prompt (it reads the top 10) without unbounded doc growth.
+const REMOVAL_FEEDBACK_CAP = 20;
 const OPERATIONS_EMAIL_DOMAIN = 'operations@flashfirehq';
 const USER_EMAIL_DOMAIN = 'user@flashfirehq';
 const TIMEZONE = 'Asia/Kolkata';
@@ -141,6 +146,60 @@ const sendDiscordNotification = async (userDetails, job, newStatus, oldStatus, r
   }
 };
 
+// Fire-and-forget: persist the client's removal reason on their profile as
+// "removal feedback" (newest first, capped) and rebuild the AI summary so
+// the next scrape run stops picking jobs that match the complaint. Runs on
+// setImmediate and swallows every error — the status update must succeed
+// even when the profile is missing or OpenAI is down. Mirrors the
+// triggerSummaryRebuild pattern in Add_Update_Profile.js.
+const recordRemovalFeedbackAndRebuild = (userEmail, job, jobID, reason, removedBy) => {
+  setImmediate(async () => {
+    try {
+      const entry = {
+        jobID: jobID || "",
+        jobTitle: job?.jobTitle || "",
+        companyName: job?.companyName || "",
+        reason: String(reason).trim().slice(0, 1000),
+        removedAt: new Date(),
+        removedBy: removedBy || "user",
+      };
+      const feedbackUpdate = {
+        $push: {
+          removalFeedback: { $each: [entry], $position: 0, $slice: REMOVAL_FEEDBACK_CAP },
+        },
+        $set: { summaryStale: true },
+      };
+      // Same email matching as buildSummaryForEmail: exact lowercase first,
+      // case-insensitive fallback for legacy mixed-case profile emails.
+      let profile = await ProfileModel.findOneAndUpdate(
+        { email: String(userEmail).toLowerCase() },
+        feedbackUpdate,
+        { new: true },
+      ).lean();
+      if (!profile) {
+        const escaped = String(userEmail).replace(/[-/\\^$*+?.()|[\]{}]/g, "\\$&");
+        profile = await ProfileModel.findOneAndUpdate(
+          { email: { $regex: new RegExp(`^${escaped}$`, "i") } },
+          feedbackUpdate,
+          { new: true },
+        ).lean();
+      }
+      if (!profile) {
+        console.warn(`[removal-feedback] no profile for ${userEmail} — reason kept on the job only`);
+        return;
+      }
+      const result = await buildSummaryForEmail(userEmail, "job-removal");
+      if (result?.success) {
+        console.log(`[summary-rebuild:job-removal] ok email=${userEmail} words=${result.wordCount} source=${result.source}`);
+      } else {
+        console.warn(`[summary-rebuild:job-removal] fail email=${userEmail} err=${result?.error} msg=${result?.message}`);
+      }
+    } catch (err) {
+      console.error(`[removal-feedback] threw email=${userEmail}`, err);
+    }
+  });
+};
+
 // Action Handlers
 const handleUpdateStatus = async (req, res, jobID, userEmail, userDetails) => {
   const { status: baseStatus = '', role, removalReason } = req.body;
@@ -174,8 +233,9 @@ const handleUpdateStatus = async (req, res, jobID, userEmail, userDetails) => {
   }
 
   // Save removal reason if job is being moved to deleted
-  if (isRemovalStatus(trimmedStatus) && removalReason) {
-    const removedByName = isOperationsUser(role) 
+  const isReasonedRemoval = isRemovalStatus(trimmedStatus) && !!removalReason;
+  if (isReasonedRemoval) {
+    const removedByName = isOperationsUser(role)
       ? (req.body?.operationsName  || 'operations')
       : 'user';
     updateFields.removalReason = removalReason;
@@ -196,6 +256,12 @@ const handleUpdateStatus = async (req, res, jobID, userEmail, userDetails) => {
   const incrementPromise = incrementRemovalCount(userEmail, trimmedStatus, role);
 
   await Promise.all([updatePromise, incrementPromise]);
+
+  // Reasoned removal → store the feedback on the profile and auto-rebuild
+  // the AI summary so the picker learns from it (non-blocking).
+  if (isReasonedRemoval) {
+    recordRemovalFeedbackAndRebuild(userEmail, currentJob, jobID, removalReason, updateFields.removedBy);
+  }
 
   // Send Discord notification asynchronously (non-blocking)
   sendDiscordNotification(

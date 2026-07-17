@@ -508,7 +508,7 @@ async function processJob(job) {
   // Step 5: Update job in MongoDB with optimized resume + metadata
   const sectionOrder = resumePayload.sectionOrder || [
     'personalInfo', 'summary', 'workExperience', 'projects',
-    'leadership', 'skills', 'education', 'publications'
+    'leadership', 'skills', 'education', 'publications', 'therapeuticAreas'
   ];
 
   // Baseline must match the exact JSON sent to optimize-with-gemini
@@ -525,6 +525,7 @@ async function processJob(job) {
         showProjects: checkboxStates.showProjects || false,
         showLeadership: checkboxStates.showLeadership || false,
         showPublications: checkboxStates.showPublications || false,
+        showTherapeuticAreas: checkboxStates.showTherapeuticAreas || false,
         version: (job.optimizedResume?.version || 0) + 1,
         createdAt: new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }),
         sectionOrder,

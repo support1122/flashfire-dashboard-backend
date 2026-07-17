@@ -19,6 +19,8 @@
 //       targetJobCount, effectiveCap, isDefaultCap,
 //       currentOpsCount, currentOpsToday, currentAllCount,
 //       capRemaining, capStatus,
+//       latestRemoval: { reason, jobTitle, companyName, removedAt, removedBy } | null,
+//       summaryFromRemoval,
 //       operatorBreakdown: [{ operator, count, lastPushAt, todayCount }],
 //       extensionStats: { captures, linkedinSkipped, lastSessionAt }
 //     }]
@@ -72,6 +74,12 @@ export default async function SummariesOverview(req, res) {
             summaryStale: 1,
             hasSummary: {
               $gt: [{ $strLenCP: { $ifNull: ["$aiSummary", ""] } }, 0],
+            },
+            // Only the newest removal-feedback entry — the list payload
+            // shows "latest removal reason" per client; full history stays
+            // behind /get-profile.
+            latestRemovalFeedback: {
+              $arrayElemAt: [{ $ifNull: ["$removalFeedback", []] }, 0],
             },
           },
         },
@@ -332,6 +340,25 @@ export default async function SummariesOverview(req, res) {
         const flaggedByAI = flaggedBy.get(email) || 0;
         flaggedByAITotal += flaggedByAI;
 
+        // Latest client removal reason (newest removalFeedback entry) + whether
+        // the CURRENT summary was built with removal feedback in the prompt.
+        // summaryFromRemoval drives the "summary reflects removal feedback"
+        // badge; the [auto:job-removal] source-tag fallback covers builds from
+        // before builtInputs.removalFeedback existed.
+        const lrf = p.latestRemovalFeedback;
+        const latestRemoval = lrf?.reason
+          ? {
+              reason: lrf.reason,
+              jobTitle: lrf.jobTitle || "",
+              companyName: lrf.companyName || "",
+              removedAt: lrf.removedAt || null,
+              removedBy: lrf.removedBy || "user",
+            }
+          : null;
+        const summaryFromRemoval =
+          p.aiSummaryMeta?.builtInputs?.removalFeedback === true ||
+          /\[auto:job-removal\]/.test(p.aiSummaryMeta?.source || "");
+
         // Per-client operator chips. Carries the full ExtensionSessionStat
         // rollup so the UI can render an English breakdown sentence per
         // operator (scraped X · LinkedIn Y · rejected Z · saved W).
@@ -379,6 +406,8 @@ export default async function SummariesOverview(req, res) {
           removed: rem.removed,
           removedByAI: rem.removedByAI,
           flaggedByAI,
+          latestRemoval,
+          summaryFromRemoval,
           capRemaining: Math.max(0, effectiveCap - opsTodayCount),
           capStatus,
           operatorBreakdown: ops,

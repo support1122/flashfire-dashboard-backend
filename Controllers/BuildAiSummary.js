@@ -423,6 +423,62 @@ ${text}
 ═══════════════════════════════════════════════════════════════════════`;
 }
 
+// renderRemovalFeedbackBlock: client-authored removal feedback. When the
+// client removes a job card from their dashboard they say why; UpdateChanges
+// pushes each reason onto profile.removalFeedback (newest first) and fires an
+// auto rebuild. Rendered directly BELOW the operator-notes block — HIGH
+// priority, but operator notes always win on conflict. These are candidate
+// preference signals, not operator directives, so they carry their own
+// routing rules instead of the SCRAP/SKIP contract. Empty → empty string.
+const REMOVAL_FEEDBACK_PROMPT_LIMIT = 10;
+function renderRemovalFeedbackBlock(profile) {
+    const items = Array.isArray(profile?.removalFeedback)
+        ? profile.removalFeedback.filter((i) => i?.reason && String(i.reason).trim())
+        : [];
+    if (!items.length) return "";
+    const recent = items.slice(0, REMOVAL_FEEDBACK_PROMPT_LIMIT);
+    const lines = recent.map((i) => {
+        const when = i.removedAt ? new Date(i.removedAt).toISOString().slice(0, 10) : "";
+        const jobBits = [i.jobTitle, i.companyName].filter(Boolean).join(" @ ");
+        return `  • ${when ? `[${when}] ` : ""}${jobBits ? `${jobBits} — ` : ""}"${String(i.reason).trim()}"`;
+    });
+    return `## CLIENT REMOVAL FEEDBACK (HIGH PRIORITY — direct candidate signal, second only to operator notes)
+The candidate removed these jobs from their own tracker and told us why
+(newest first). Every reason below is the candidate saying "stop sending me
+jobs like this one" — treat it as a high-priority preference signal.
+
+${lines.join("\n")}
+
+ROUTING RULES for removal feedback (apply mechanically):
+- DURABLE preference — the reason expresses wrong role family, wrong
+  seniority, undesired industry or company type, unworkable location,
+  salary below range, visa/sponsorship mismatch, or tech-stack mismatch:
+  add ONE clean "Skip <pattern>." bullet under # Hard Disqualifiers that
+  captures the PATTERN, not the posting (e.g. "this is a QA role, I only
+  want data engineering" → "Skip QA roles."). Never emit one bullet per
+  individual job posting.
+- REPEATED complaint — several reasons express the same pattern: emit ONE
+  consolidated bullet, never duplicates.
+- COMPANY rejection — the reason rejects a specific company ("bad reviews",
+  "don't want to work there"): add "Skip <Company> jobs." under
+  # Hard Disqualifiers.
+- ONE-OFF / LOGISTICAL — duplicate card, already applied on their own,
+  posting expired or closed, applied via referral: IGNORE it; it carries
+  no preference signal.
+- CONFLICTS — removal feedback NEVER overrides operator notes, the
+  profile's preferred roles, or work-authorisation facts. On any conflict
+  the higher input wins and the feedback is at most a caution sentence
+  under # Notes for Grader.
+- Add ONE sentence under # Notes for Grader telling the grader to
+  down-rank postings that match patterns the candidate has removed before.
+- Bullets derived from this block are candidate-driven: tag them with the
+  [I] provenance marker and do NOT suffix them with "— operator priority".
+
+(End of removal feedback. Continue with the normal inputs below.)
+
+`;
+}
+
 // renderAiNotesBlock: top-priority operator guidance. Sits ABOVE every other
 // block in the user prompt so the model treats it as authoritative when
 // composing the brief. Empty / missing notes → empty string (no block).
@@ -740,24 +796,26 @@ updated profile. Hard rules:
 
 Output the FULL updated summary in the same format as before — do not
 output a diff or a list of changes.${renderLockedSectionsBlock(overlay)}`;
-    return `${renderAiNotesBlock(profile)}${diffPathBody}`;
+    return `${renderAiNotesBlock(profile)}${renderRemovalFeedbackBlock(profile)}${diffPathBody}`;
   }
   // Priority order in the prompt body: Notes (rendered above by
-  // renderAiNotesBlock) > Resume > Profile. When the resume conflicts with
-  // the profile, the resume wins (resume = ground truth of what the
-  // candidate actually did; profile = self-reported preferences).
+  // renderAiNotesBlock) > Removal feedback (renderRemovalFeedbackBlock) >
+  // Resume > Profile. When the resume conflicts with the profile, the
+  // resume wins (resume = ground truth of what the candidate actually did;
+  // profile = self-reported preferences).
   const freshBody = `## INPUT PRIORITY (for any conflict, higher beats lower)
 1. Operator notes (above) — DIRECTIVES, always win
-2. Parsed resume (below) — ground truth of actual experience
-3. Onboarding profile (below) — self-reported preferences / exclusions / work auth
+2. Client removal feedback (above, when present) — candidate preference signals
+3. Parsed resume (below) — ground truth of actual experience
+4. Onboarding profile (below) — self-reported preferences / exclusions / work auth
 
-## Parsed resume (PRIORITY 2 — ground truth of experience; cite YOE, titles, companies, skills from here)
+## Parsed resume (PRIORITY 3 — ground truth of experience; cite YOE, titles, companies, skills from here)
 ${resumeBlob}
 
-## Onboarding profile (PRIORITY 3 — preference signals; use for preferredRoles, preferredLocations, work auth, target/excluded companies)
+## Onboarding profile (PRIORITY 4 — preference signals; use for preferredRoles, preferredLocations, work auth, target/excluded companies)
 ${profileBlob}
 ${rolesBlock}${employersBlock}${renderLockedSectionsBlock(overlay)}`;
-  return `${renderAiNotesBlock(profile)}${freshBody}`;
+  return `${renderAiNotesBlock(profile)}${renderRemovalFeedbackBlock(profile)}${freshBody}`;
 }
 
 async function fetchResume(email) {
@@ -966,6 +1024,8 @@ async function runForProfileCore(profile, apiKey, reasonTag = "manual") {
     notes: !!(profile?.aiNotes?.text && profile.aiNotes.text.trim()),
     resume: !!resume,
     profile: true,
+    removalFeedback: !!(Array.isArray(profile?.removalFeedback)
+      && profile.removalFeedback.some((i) => i?.reason && String(i.reason).trim())),
   };
   // OpenAI gpt-4o-mini is the sole summary builder. Gemini path removed —
   // it repeatedly miscategorised operator-notes directives (excluded
