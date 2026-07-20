@@ -7,6 +7,7 @@
 // The extension falls back to OpenAI in-worker if this returns a non-ok body.
 
 import { judgeBatchViaGemini } from "../../Utils/vertexGeminiJudge.js";
+import { recordAiUsage, AI_USAGE_SOURCES } from "../../Utils/aiUsage.js";
 
 export async function GeminiJudge(req, res) {
     try {
@@ -26,6 +27,12 @@ export async function GeminiJudge(req, res) {
             // back to OpenAI for the batch, counting one Gemini error.
             return res.status(502).json(result);
         }
+
+        recordAiUsage({
+            source: AI_USAGE_SOURCES.FIRST_JUDGE,
+            model: result.model || "gemini-2.5-flash-lite",
+            usage: result.usage,
+        });
 
         return res.status(200).json({
             ok: true,

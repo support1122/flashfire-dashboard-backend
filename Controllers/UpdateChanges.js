@@ -9,6 +9,13 @@ const REMOVAL_LIMIT = 100;
 // Newest-first cap on profile.removalFeedback — enough history for the AI
 // summary prompt (it reads the top 10) without unbounded doc growth.
 const REMOVAL_FEEDBACK_CAP = 20;
+// Clients often clean their board in bursts (several removals within a
+// minute). Each removal pushes its feedback entry immediately, but the
+// summary rebuild is debounced per client so a burst produces ONE build
+// containing ALL the new reasons — instead of N racing builds where a
+// stale early build could finish last and win.
+const REBUILD_DEBOUNCE_MS = 20_000;
+const pendingRebuilds = new Map(); // email -> Timeout
 const OPERATIONS_EMAIL_DOMAIN = 'operations@flashfirehq';
 const USER_EMAIL_DOMAIN = 'user@flashfirehq';
 const TIMEZONE = 'Asia/Kolkata';
@@ -146,6 +153,23 @@ const sendDiscordNotification = async (userDetails, job, newStatus, oldStatus, r
   }
 };
 
+// Purely logistical removal reasons carry ZERO preference signal — the
+// client isn't rejecting a job pattern, just tidying their board. Duplicates
+// in particular are already prevented upstream (CheckForDuplicateJobs on
+// /api/jobs), so a "Duplicate job" removal is bookkeeping, not feedback.
+// These reasons still land on the job record + Discord, but must NOT enter
+// removalFeedback or trigger a summary rebuild. A reason is filtered only
+// when EVERY segment is logistical — "Duplicate job; Company isn't a fit"
+// still carries signal and goes through.
+const LOGISTICAL_SEGMENT = /^(duplicate(\s+job)?|already\s+applied(\s+(on\s+my\s+own|elsewhere|myself))?|applied\s+(already|myself|on\s+my\s+own|elsewhere|via\s+referral)|(job|posting|position|role)\s+(closed|expired|no\s+longer\s+(available|active|open))|(closed|expired)\s+(job|posting))$/i;
+const isPureLogisticalReason = (reason) => {
+  const segments = String(reason)
+    .split(/[;.]/)
+    .map((s) => s.trim().replace(/[!?,]+$/, ""))
+    .filter(Boolean);
+  return segments.length > 0 && segments.every((s) => LOGISTICAL_SEGMENT.test(s));
+};
+
 // Fire-and-forget: persist the client's removal reason on their profile as
 // "removal feedback" (newest first, capped) and rebuild the AI summary so
 // the next scrape run stops picking jobs that match the complaint. Runs on
@@ -153,6 +177,10 @@ const sendDiscordNotification = async (userDetails, job, newStatus, oldStatus, r
 // even when the profile is missing or OpenAI is down. Mirrors the
 // triggerSummaryRebuild pattern in Add_Update_Profile.js.
 const recordRemovalFeedbackAndRebuild = (userEmail, job, jobID, reason, removedBy) => {
+  if (isPureLogisticalReason(reason)) {
+    console.log(`[removal-feedback] skipped (logistical, no preference signal) email=${userEmail} reason="${String(reason).slice(0, 120)}"`);
+    return;
+  }
   setImmediate(async () => {
     try {
       const entry = {
@@ -188,6 +216,25 @@ const recordRemovalFeedbackAndRebuild = (userEmail, job, jobID, reason, removedB
         console.warn(`[removal-feedback] no profile for ${userEmail} — reason kept on the job only`);
         return;
       }
+      scheduleDebouncedRebuild(userEmail);
+    } catch (err) {
+      console.error(`[removal-feedback] threw email=${userEmail}`, err);
+    }
+  });
+};
+
+// One rebuild per client per burst: every removal resets the client's timer;
+// the build fires REBUILD_DEBOUNCE_MS after the LAST removal, so it always
+// sees the complete set of new feedback entries. summaryStale stays true
+// until the build succeeds, so the cron sweep is the backstop if the
+// process dies inside the window.
+const scheduleDebouncedRebuild = (userEmail) => {
+  const key = String(userEmail).toLowerCase();
+  const existing = pendingRebuilds.get(key);
+  if (existing) clearTimeout(existing);
+  const timer = setTimeout(async () => {
+    pendingRebuilds.delete(key);
+    try {
       const result = await buildSummaryForEmail(userEmail, "job-removal");
       if (result?.success) {
         console.log(`[summary-rebuild:job-removal] ok email=${userEmail} words=${result.wordCount} source=${result.source}`);
@@ -195,9 +242,11 @@ const recordRemovalFeedbackAndRebuild = (userEmail, job, jobID, reason, removedB
         console.warn(`[summary-rebuild:job-removal] fail email=${userEmail} err=${result?.error} msg=${result?.message}`);
       }
     } catch (err) {
-      console.error(`[removal-feedback] threw email=${userEmail}`, err);
+      console.error(`[summary-rebuild:job-removal] threw email=${userEmail}`, err);
     }
-  });
+  }, REBUILD_DEBOUNCE_MS);
+  timer.unref?.();
+  pendingRebuilds.set(key, timer);
 };
 
 // Action Handlers

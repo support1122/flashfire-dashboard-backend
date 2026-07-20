@@ -14,6 +14,7 @@
 //           504 TIMEOUT on hung upstream
 
 import "dotenv/config";
+import { recordAiUsage, AI_USAGE_SOURCES } from "../../Utils/aiUsage.js";
 
 const OPENAI_URL = "https://api.openai.com/v1/chat/completions";
 const OPENAI_MODEL = process.env.OPENAI_JUDGE_MODEL || "gpt-4o-mini";
@@ -82,6 +83,11 @@ export async function OpenAiJudge(req, res) {
             });
         }
         const data = await upstream.json();
+        recordAiUsage({
+            source: AI_USAGE_SOURCES.FIRST_JUDGE,
+            model: data?.model || OPENAI_MODEL,
+            usage: data?.usage,
+        });
         const content = data?.choices?.[0]?.message?.content;
         if (typeof content !== "string") {
             return res.status(502).json({ ok: false, error: "EMPTY_RESPONSE", message: "OpenAI returned no content", durationMs: Date.now() - startedAt });

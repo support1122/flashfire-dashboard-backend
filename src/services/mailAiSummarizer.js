@@ -15,6 +15,7 @@
 //  • temperature 0 + response_format json_object for stable, parseable output.
 
 import { extractUrls } from "../../Utils/gmailMessage.js";
+import { recordAiUsage, AI_USAGE_SOURCES } from "../../Utils/aiUsage.js";
 
 // Overridable so the pipeline can be pointed at a proxy / Azure deployment,
 // and so tests can exercise the real request path against a local stub.
@@ -178,6 +179,11 @@ export async function summarizeMail(mail) {
     }
 
     const data = await res.json();
+    recordAiUsage({
+      source: AI_USAGE_SOURCES.MAIL_SUMMARY,
+      model: data?.model || MODEL,
+      usage: data?.usage,
+    });
     const content = data?.choices?.[0]?.message?.content;
     if (!content) return { ...failOpen("OpenAI returned no content"), urls };
 

@@ -82,6 +82,7 @@ import OperatorActivity from "./Controllers/OperatorActivity.js";
 import ExtensionTodayStats from "./Controllers/ExtensionTodayStats.js";
 import ExtensionDailyHistory from "./Controllers/ExtensionDailyHistory.js";
 import PricingInfo from "./Controllers/PricingInfo.js";
+import AiCostReport from "./Controllers/AiCostReport.js";
 import { generateSessionKey, listSessionKeys, revokeSession, revokeUserSessions, listActiveSessions, verifySessionKey } from "./Controllers/operations/SessionKeys.js";
 import gmailRouter from "./Controllers/GmailRouter.js";
 import gmailInboxRouter from "./Controllers/GmailInboxRouter.js";
@@ -332,6 +333,9 @@ app.get("/admin/operator-activity", OperatorActivity);
 app.get("/extension/today-stats", ExtensionTodayStats);
 app.get("/extension/daily-history", ExtensionDailyHistory);
 app.get("/admin/pricing-info", PricingInfo);
+// Real AI spend for an IST day, by pipeline + model. Reconciles the Discord
+// milestone embed against the OpenAI usage dashboard.
+app.get("/admin/ai-cost", AiCostReport);
 app.post("/upload-profile-file", upload.single('file'), uploadProfileFile);
 
 // Generic file upload routes (supports both Cloudinary and R2)
