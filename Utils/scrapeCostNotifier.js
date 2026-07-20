@@ -102,31 +102,89 @@ function todayMatch() {
     };
 }
 
-// Sum today's captures AND the real judge-token usage the extension reported.
-async function getTodayExtensionTotals() {
-    const r = await ExtensionSessionStat.aggregate([
-        { $match: todayMatch() },
-        {
-            $group: {
-                _id: null,
-                captures: { $sum: "$captures" },
-                openaiBatches: { $sum: "$modelStats.openaiBatches" },
-                geminiBatches: { $sum: "$modelStats.geminiBatches" },
-                inputTokens: { $sum: "$modelStats.inputTokens" },
-                outputTokens: { $sum: "$modelStats.outputTokens" },
-                cachedTokens: { $sum: "$modelStats.cachedTokens" },
-            },
-        },
-    ]);
-    const g = r?.[0] || {};
-    return {
-        captures: g.captures || 0,
-        openaiBatches: g.openaiBatches || 0,
-        geminiBatches: g.geminiBatches || 0,
-        inputTokens: g.inputTokens || 0,
-        outputTokens: g.outputTokens || 0,
-        cachedTokens: g.cachedTokens || 0,
+// ─── Collapse service-worker-eviction duplicates ─────────────────────
+// Chrome evicts an MV3 service worker after ~30s idle. The extension's
+// restoreState() brings back capture.jobs (the full cumulative capture count)
+// but NOT capture.sessionId — it is absent from PERSIST_KEYS. So the next
+// heartbeat POSTs sessionId:'' , ExtensionSessionStatLog falls out of its
+// upsert branch into create(), and a SECOND row appears for the same capture
+// session carrying the SAME cumulative captures. Summing rows therefore
+// double-counts every job captured before the eviction — which is why the
+// milestone totals read high.
+//
+// Rows from one capture session are identified by (operator, client, startedAt):
+// startedAt IS persisted and restored, so it survives eviction unchanged, while
+// a genuinely new session gets a fresh ISO-millisecond timestamp.
+//
+// The two counter families then merge DIFFERENTLY, because they behave
+// differently across an eviction:
+//   captures / linkedinSkipped — restored from the persisted jobs Map, so each
+//       row already holds the running total → take the MAX (they overlap).
+//   tokens / judged / picks / pushed — live in auto.stats, which is NOT
+//       persisted, so each row holds only the increments since the last
+//       eviction → SUM them (they are disjoint).
+// Get this backwards and you either double-count captures or throw away tokens.
+//
+// Exported for tests. Pure — takes rows, returns totals.
+export function mergeSessionRows(rows) {
+    const bySession = new Map();
+    for (const r of rows || []) {
+        // Null startedAt (pre-sessionId rows) can't be grouped safely: fall back
+        // to the row id so those stay distinct instead of collapsing together.
+        const key = r.startedAt
+            ? `${r.operatorName || ""}|${r.clientEmail || ""}|${new Date(r.startedAt).toISOString()}`
+            : `row:${r._id}`;
+        const m = r.modelStats || {};
+        const cur = bySession.get(key);
+        if (!cur) {
+            bySession.set(key, {
+                captures: r.captures || 0,
+                openaiBatches: m.openaiBatches || 0,
+                geminiBatches: m.geminiBatches || 0,
+                inputTokens: m.inputTokens || 0,
+                outputTokens: m.outputTokens || 0,
+                cachedTokens: m.cachedTokens || 0,
+                rows: 1,
+            });
+            continue;
+        }
+        cur.captures = Math.max(cur.captures, r.captures || 0); // overlapping
+        cur.openaiBatches += m.openaiBatches || 0;              // disjoint
+        cur.geminiBatches += m.geminiBatches || 0;
+        cur.inputTokens += m.inputTokens || 0;
+        cur.outputTokens += m.outputTokens || 0;
+        cur.cachedTokens += m.cachedTokens || 0;
+        cur.rows += 1;
+    }
+    const out = {
+        captures: 0, openaiBatches: 0, geminiBatches: 0,
+        inputTokens: 0, outputTokens: 0, cachedTokens: 0,
+        sessions: bySession.size,
+        // How many rows were folded away. Non-zero means evictions happened and
+        // the OLD totals were inflated by exactly this much duplication.
+        duplicateRows: 0,
     };
+    for (const s of bySession.values()) {
+        out.captures += s.captures;
+        out.openaiBatches += s.openaiBatches;
+        out.geminiBatches += s.geminiBatches;
+        out.inputTokens += s.inputTokens;
+        out.outputTokens += s.outputTokens;
+        out.cachedTokens += s.cachedTokens;
+        out.duplicateRows += s.rows - 1;
+    }
+    return out;
+}
+
+// Today's captures + real judge-token usage, with eviction duplicates collapsed.
+// Deliberately a find() + JS merge rather than an aggregation: the merge rule
+// differs per field (max vs sum), which is far clearer — and unit-testable —
+// in code than in a pipeline. Volume is one row per operator-session per day.
+async function getTodayExtensionTotals() {
+    const rows = await ExtensionSessionStat.find(todayMatch())
+        .select("captures modelStats startedAt operatorName clientEmail")
+        .lean();
+    return mergeSessionRows(rows);
 }
 
 // Count today's second-stage screening outcomes (IST). `fastKept` is the
@@ -226,6 +284,10 @@ export async function buildCostReport({ scrapedJobs, ext, usage, secondStats }) 
         // True only when every priced call reported real tokens.
         fullyMeasured: s1.measured && usage.complete,
         callsMissingUsage: usage.callsMissingUsage || 0,
+        // Eviction-duplicate rows folded away. Non-zero proves SW evictions are
+        // happening; the pre-fix totals were inflated by exactly this overlap.
+        sessions: ext.sessions || 0,
+        duplicateRows: ext.duplicateRows || 0,
     };
 }
 
@@ -308,6 +370,9 @@ async function fireDiscord(milestone, r, today) {
     }
     if (r.callsMissingUsage > 0) {
         caveats.push(`⚠️ ${r.callsMissingUsage} backend call(s) returned no usage block — total is a FLOOR.`);
+    }
+    if (r.duplicateRows > 0) {
+        caveats.push(`🧹 Collapsed ${r.duplicateRows} duplicate session row(s) across ${r.sessions} session(s) — Chrome evicted the extension's service worker mid-capture. Before this fix those rows were summed, inflating the job count.`);
     }
     if (!caveats.length) {
         caveats.push("✅ Every figure above is measured from provider-reported token counts.");

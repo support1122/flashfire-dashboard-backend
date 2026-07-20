@@ -22,7 +22,7 @@ process.env.OPENAI_JUDGE_MODEL = 'gpt-4o';
 
 const { priceTokens, rateFor, FX_USD_INR, inr } = await import('../aiRateCard.js');
 const { normaliseUsage } = await import('../aiUsage.js');
-const { stage1Cost, buildCostReport } = await import('../scrapeCostNotifier.js');
+const { stage1Cost, buildCostReport, mergeSessionRows } = await import('../scrapeCostNotifier.js');
 
 // Await every case: several are async, and an un-awaited rejection would be
 // reported as an unhandled rejection rather than a named failing assertion.
@@ -140,6 +140,102 @@ await t('the fallback no longer under-reports 2.3x — it is >= the observed inv
     );
     // And the old default really was far too low — this is the regression guard.
     assert.ok(3900 < OBSERVED_PER_REQUEST * 0.5, 'sanity: the old 3900 was <50% of reality');
+});
+
+console.log('\n── service-worker eviction duplicates ──');
+
+// The exact shipped-extension failure: SW evicted mid-session. restoreState()
+// brings back capture.jobs (full cumulative captures) but NOT sessionId, so the
+// backend inserts a SECOND row for the same session with the same capture total.
+// auto.stats is not restored either, so its tokens restart from zero.
+const SESSION_START = '2026-07-20T04:00:00.000Z';
+const EVICTED = [
+    { _id: 'a', operatorName: 'op1', clientEmail: 'c@x.com', startedAt: SESSION_START,
+      captures: 6000, modelStats: { openaiBatches: 750, inputTokens: 6_600_000, outputTokens: 375_000, cachedTokens: 1_350_000 } },
+    { _id: 'b', operatorName: 'op1', clientEmail: 'c@x.com', startedAt: SESSION_START,
+      captures: 10000, modelStats: { openaiBatches: 500, inputTokens: 4_400_000, outputTokens: 250_000, cachedTokens: 900_000 } },
+];
+
+await t('captures are NOT double-counted across an eviction', () => {
+    const m = mergeSessionRows(EVICTED);
+    assert.equal(m.captures, 10000);              // max, not 6000+10000
+    assert.equal(m.sessions, 1);
+    assert.equal(m.duplicateRows, 1);
+});
+
+await t('the old naive sum really did inflate — this is the bug being fixed', () => {
+    const naive = EVICTED.reduce((a, r) => a + r.captures, 0);
+    assert.equal(naive, 16000);
+    assert.equal(mergeSessionRows(EVICTED).captures, 10000);
+    assert.ok(naive > mergeSessionRows(EVICTED).captures, 'naive sum over-reports by 60% here');
+});
+
+await t('tokens ARE summed across an eviction (they restart from zero, so disjoint)', () => {
+    const m = mergeSessionRows(EVICTED);
+    assert.equal(m.inputTokens, 11_000_000);
+    assert.equal(m.outputTokens, 625_000);
+    assert.equal(m.openaiBatches, 1250);
+});
+
+await t('genuinely separate sessions still add up', () => {
+    const m = mergeSessionRows([
+        { _id: 'a', operatorName: 'op1', clientEmail: 'c@x.com', startedAt: '2026-07-20T04:00:00.000Z', captures: 5000, modelStats: { inputTokens: 100 } },
+        { _id: 'b', operatorName: 'op1', clientEmail: 'c@x.com', startedAt: '2026-07-20T09:00:00.000Z', captures: 4000, modelStats: { inputTokens: 200 } },
+    ]);
+    assert.equal(m.captures, 9000);
+    assert.equal(m.sessions, 2);
+    assert.equal(m.duplicateRows, 0);
+});
+
+await t('different operators on the same client never merge', () => {
+    const m = mergeSessionRows([
+        { _id: 'a', operatorName: 'op1', clientEmail: 'c@x.com', startedAt: SESSION_START, captures: 5000, modelStats: {} },
+        { _id: 'b', operatorName: 'op2', clientEmail: 'c@x.com', startedAt: SESSION_START, captures: 4000, modelStats: {} },
+    ]);
+    assert.equal(m.captures, 9000);
+    assert.equal(m.sessions, 2);
+});
+
+await t('same operator, two different clients, never merge', () => {
+    const m = mergeSessionRows([
+        { _id: 'a', operatorName: 'op1', clientEmail: 'c1@x.com', startedAt: SESSION_START, captures: 5000, modelStats: {} },
+        { _id: 'b', operatorName: 'op1', clientEmail: 'c2@x.com', startedAt: SESSION_START, captures: 4000, modelStats: {} },
+    ]);
+    assert.equal(m.captures, 9000);
+});
+
+await t('legacy rows with no startedAt stay distinct instead of collapsing', () => {
+    const m = mergeSessionRows([
+        { _id: 'a', operatorName: 'op1', clientEmail: 'c@x.com', startedAt: null, captures: 5000, modelStats: {} },
+        { _id: 'b', operatorName: 'op1', clientEmail: 'c@x.com', startedAt: null, captures: 4000, modelStats: {} },
+    ]);
+    assert.equal(m.captures, 9000, 'null startedAt must not merge unrelated rows');
+    assert.equal(m.sessions, 2);
+});
+
+await t('equivalent startedAt in a different string form still merges', () => {
+    const m = mergeSessionRows([
+        { _id: 'a', operatorName: 'op1', clientEmail: 'c@x.com', startedAt: '2026-07-20T04:00:00.000Z', captures: 6000, modelStats: {} },
+        { _id: 'b', operatorName: 'op1', clientEmail: 'c@x.com', startedAt: new Date('2026-07-20T04:00:00.000Z'), captures: 9000, modelStats: {} },
+    ]);
+    assert.equal(m.sessions, 1);
+    assert.equal(m.captures, 9000);
+});
+
+await t('empty / missing modelStats does not throw or poison totals', () => {
+    const m = mergeSessionRows([
+        { _id: 'a', operatorName: 'op1', clientEmail: 'c@x.com', startedAt: SESSION_START, captures: 10 },
+        { _id: 'b', operatorName: 'op1', clientEmail: 'c@x.com', startedAt: SESSION_START, captures: 20, modelStats: {} },
+    ]);
+    assert.equal(m.captures, 20);
+    assert.equal(m.inputTokens, 0);
+});
+
+await t('no rows at all → all zeros, no crash', () => {
+    const m = mergeSessionRows([]);
+    assert.equal(m.captures, 0);
+    assert.equal(m.sessions, 0);
+    assert.equal(mergeSessionRows(null).captures, 0);
 });
 
 console.log('\n── whole-day report ──');
