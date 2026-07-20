@@ -59,5 +59,15 @@ export function priceTokens({ model, inputTokens = 0, cachedTokens = 0, outputTo
     return { usd, cacheSavedUsd, inputTokens: inTok, cachedTokens: cached, outputTokens: outTok };
 }
 
-export const FX_USD_INR = Number(process.env.USD_INR_FIXED) || 94;
+// ─── FX ──────────────────────────────────────────────────────────────
+// Fixed USD→INR rate for the ₹ figures shown alongside every $ figure.
+// Deliberately NOT an env var and deliberately NOT a live lookup:
+//   • env — a per-environment FX rate means staging and production quote
+//     different rupee costs for the same tokens, and nobody notices which is
+//     which. This is a presentation constant, so it belongs in the diff.
+//   • live rate — the ₹ number would drift day to day while the underlying
+//     token spend was flat, making cost trends unreadable. A fixed rate keeps
+//     ₹ movement meaning "we spent more", never "the rupee moved".
+// Update here when it drifts far enough to matter, and the change is reviewable.
+export const FX_USD_INR = 94;
 export const inr = (usd) => usd * FX_USD_INR;

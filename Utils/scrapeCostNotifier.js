@@ -34,20 +34,45 @@ import { JobModel } from "../Schema_Models/JobModel.js";
 import { getDailyUsage, istDay } from "./aiUsage.js";
 import { priceTokens, inr, FX_USD_INR } from "./aiRateCard.js";
 
+// ─── Constants: all in code, none from the environment ───────────────
+// Every number below is product/measurement fact, not deployment config. An
+// env-tunable cost constant is how the 2.3x under-report survived unnoticed for
+// as long as it did: the correct value sat in env.example while production
+// silently ran a different one from a code default. Nothing here is overridable,
+// so the value you read in this file is the value that shipped.
+
 const MILESTONE_STEP = 5000;
-const BATCH_SIZE = Number(process.env.AI_BATCH_SIZE) || 8;
+
+// Jobs per judge batch. Mirrors the extension's DEFAULTS.autoBatchSize (8).
+// Display + fallback only — real batch counts now come from the extension's
+// reported openaiBatches/geminiBatches, so this cannot skew a measured figure.
+const BATCH_SIZE = 8;
+
+// The stage-1 judge model, HARDCODED to match the extension, which pins
+// `model: 'gpt-4o-mini'` in background.js with the comment "Locked — judging is
+// tuned for gpt-4o-mini's reasoning + cost profile."
+// This used to read process.env.OPENAI_MODEL, which was a live mis-pricing bug:
+// setting that var to gpt-4o (as the recruiter pipeline does for itself) would
+// have priced stage 1 at ~16x while the extension still called mini. The judge
+// model is not a deployment choice, so it is not read from the environment.
+//
+// Caveat, deliberate: ExtensionSessionStat.modelStats carries ONE token pool for
+// the session, not a per-model split, so if a future build routes some batches
+// to Gemini those tokens get priced at mini's rate too. Gemini Flash Lite is
+// CHEAPER than mini ($0.10/$0.40 vs $0.15/$0.60), so that over-states rather
+// than flatters. Splitting the pool needs an extension change, not a change here.
+const STAGE1_MODEL = "gpt-4o-mini";
 
 // ─── FALLBACK-ONLY estimate ──────────────────────────────────────────
-// Used ONLY when an extension build reports no token usage at all. These are
-// calibrated against the real invoice (~8,990 tok/request observed over 33,571
-// requests), NOT the old "conservative" 3,500 which under-reported by 2.3x.
-// A cost estimate that is deliberately low is worse than no estimate: it reads
-// as reassurance. Bias these HIGH so the fallback over-states, never flatters.
-const EST_TOKENS_IN_PER_BATCH = Number(process.env.AI_TOKENS_IN_PER_BATCH) || 8800;
-const EST_TOKENS_OUT_PER_BATCH = Number(process.env.AI_TOKENS_OUT_PER_BATCH) || 500;
-const EST_CACHED_PER_BATCH = Number(process.env.AI_CACHED_TOKENS_PER_BATCH) || 1800;
-
-const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4o-mini";
+// Used ONLY when an extension build is too old to report token usage at all.
+// Calibrated against the real invoice (~8,990 tok/request observed over 33,571
+// requests), NOT the old "conservative" 3,500 that under-reported by 2.3x.
+// Biased deliberately HIGH: a cost estimate that reads low is worse than no
+// estimate, because it reads as reassurance. Any figure derived from these is
+// labelled ESTIMATED in the embed and turns the card amber.
+const EST_TOKENS_IN_PER_BATCH = 8800;
+const EST_TOKENS_OUT_PER_BATCH = 500;
+const EST_CACHED_PER_BATCH = 1800;
 
 // Human labels for the AiUsageDaily `source` keys.
 const SOURCE_LABEL = {
@@ -133,7 +158,7 @@ export function stage1Cost(ext, scrapedJobs) {
     const hasRealTokens = (ext.inputTokens || 0) > 0 || (ext.outputTokens || 0) > 0;
     if (hasRealTokens) {
         const p = priceTokens({
-            model: OPENAI_MODEL,
+            model: STAGE1_MODEL,
             inputTokens: ext.inputTokens,
             cachedTokens: ext.cachedTokens,
             outputTokens: ext.outputTokens,
@@ -153,7 +178,7 @@ export function stage1Cost(ext, scrapedJobs) {
     const inputTokens = batches * EST_TOKENS_IN_PER_BATCH;
     const outputTokens = batches * EST_TOKENS_OUT_PER_BATCH;
     const cachedTokens = Math.min(inputTokens, batches * EST_CACHED_PER_BATCH);
-    const p = priceTokens({ model: OPENAI_MODEL, inputTokens, cachedTokens, outputTokens });
+    const p = priceTokens({ model: STAGE1_MODEL, inputTokens, cachedTokens, outputTokens });
     return {
         measured: false,
         batches,
@@ -188,7 +213,7 @@ export async function buildCostReport({ scrapedJobs, ext, usage, secondStats }) 
 
     return {
         scraped: n,
-        model: OPENAI_MODEL,
+        model: STAGE1_MODEL,
         stage1: s1,
         rows,
         backendUsd,
