@@ -18,6 +18,7 @@
 // instead of a generic "no detail".
 
 import axios from "axios";
+import { recordAiUsage, AI_USAGE_SOURCES } from "../Utils/aiUsage.js";
 import { ProfileModel } from "../Schema_Models/ProfileModel.js";
 import { getAppSettings } from "../Schema_Models/AppSettings.js";
 import { mergeOverlay, mergeWithLocks, countOverlayBullets, parseSections, extractProvenance } from "../Utils/summaryOverlay.js";
@@ -444,35 +445,88 @@ function renderRemovalFeedbackBlock(profile) {
     });
     return `## CLIENT REMOVAL FEEDBACK (HIGH PRIORITY — direct candidate signal, second only to operator notes)
 The candidate removed these jobs from their own tracker and told us why
-(newest first). Every reason below is the candidate saying "stop sending me
-jobs like this one" — treat it as a high-priority preference signal.
+(newest first). Every entry is the candidate saying "stop sending me jobs
+like this one". Each entry carries the REMOVED JOB'S TITLE and COMPANY —
+when the reason text is generic, the job context IS the signal: read the
+pattern off the title/company, not off the reason wording.
 
 ${lines.join("\n")}
 
-ROUTING RULES for removal feedback (apply mechanically):
-- DURABLE preference — the reason expresses wrong role family, wrong
-  seniority, undesired industry or company type, unworkable location,
-  salary below range, visa/sponsorship mismatch, or tech-stack mismatch:
-  add ONE clean "Skip <pattern>." bullet under # Hard Disqualifiers that
-  captures the PATTERN, not the posting (e.g. "this is a QA role, I only
-  want data engineering" → "Skip QA roles."). Never emit one bullet per
-  individual job posting.
-- REPEATED complaint — several reasons express the same pattern: emit ONE
-  consolidated bullet, never duplicates.
-- COMPANY rejection — the reason rejects a specific company ("bad reviews",
-  "don't want to work there"): add "Skip <Company> jobs." under
-  # Hard Disqualifiers.
-- ONE-OFF / LOGISTICAL — duplicate card, already applied on their own,
-  posting expired or closed, applied via referral: IGNORE it; it carries
-  no preference signal.
-- CONFLICTS — removal feedback NEVER overrides operator notes, the
-  profile's preferred roles, or work-authorisation facts. On any conflict
-  the higher input wins and the feedback is at most a caution sentence
-  under # Notes for Grader.
-- Add ONE sentence under # Notes for Grader telling the grader to
-  down-rank postings that match patterns the candidate has removed before.
-- Bullets derived from this block are candidate-driven: tag them with the
-  [I] provenance marker and do NOT suffix them with "— operator priority".
+REASON FORMAT: the dashboard lets the client pick quick-reason phrases
+(joined by ";") and/or type free text (appended after ". "). So a reason
+may be chip-phrases only, free text only, or both. Process EVERY phrase in
+an entry as its own signal about the SAME job.
+
+CHIP LEXICON (exact phrases → mechanical routing):
+- "Not my target role" → the signal is the removed job's TITLE. Identify
+  its role family (e.g. "Software Engineer II, Backend" → backend software
+  engineering). If that family is NOT among the profile's preferredRoles →
+  # Hard Disqualifiers: "Skip <role family> roles." If it OVERLAPS a
+  preferred role, do NOT skip the family — add one # Notes for Grader
+  sentence to down-rank near-identical postings instead.
+- "Wrong seniority level" → read the title's seniority marker (Junior,
+  Senior, Staff, Lead, II/III, L4…) and compare with the candidate's level
+  → # Hard Disqualifiers: "Skip <that seniority band> roles." (e.g. a
+  junior candidate removing "Staff Engineer" → "Skip Staff/Principal-level
+  roles.").
+- "Location doesn't work for me" → if the title/company pins a location,
+  # Notes for Grader: down-rank that location; NEVER contradict the
+  profile's preferredLocations.
+- "Salary is below my range" → # Notes for Grader: treat postings at or
+  below that job's apparent level/pay band as below the candidate's floor.
+- "No visa sponsorship" → this company is CONFIRMED not to sponsor →
+  # Hard Disqualifiers: "Skip <Company> jobs." If the profile needs
+  sponsorship, also make sure sponsorship-providing employers appear as a
+  Strong Signal.
+- "Company isn't a fit" → # Hard Disqualifiers: "Skip <Company> jobs."
+- "Already applied on my own" / "Duplicate job" → IGNORE ENTIRELY. Zero
+  bullets, zero grader notes. These are logistics, not preference.
+
+FREE-TEXT RULES (casual client typing — "i don't want jobs from google"):
+- Naming a company negatively → "Skip <Company> jobs."
+- Expressing a durable preference (role family, seniority, industry,
+  staffing agencies, location, salary, visa, tech stack) → ONE clean
+  "Skip <pattern>." bullet capturing the PATTERN, never the single posting.
+- One-off/logistical text (duplicate, already applied, posting closed,
+  applied via referral) → IGNORE.
+
+CONSOLIDATION + RECENCY:
+- One bullet per pattern/company across ALL entries — never duplicates,
+  never one bullet per posting.
+- Entries are newest-first; newer feedback outweighs older. If two entries
+  conflict, follow the newer one and drop the older signal.
+
+HARD GUARDS:
+- Removal feedback NEVER overrides operator notes, the profile's
+  preferredRoles, or work-authorisation facts. On conflict the higher
+  input wins and the feedback becomes at most a grader-note caution.
+- NEVER emit a skip bullet that would exclude a preferred role family
+  outright — a client removing one bad posting does not mean they stopped
+  wanting their target role.
+- Bullets from this block are candidate-driven: tag with the [I]
+  provenance marker; NEVER suffix with "— operator priority".
+- Add ONE # Notes for Grader sentence: down-rank postings matching
+  patterns the candidate has removed before.
+
+WORKED EXAMPLES:
+- Entry: Software Engineer II, Backend @ Affirm — "Not my target role;
+  Company isn't a fit" (client targets Product Manager roles):
+  ✓ "Skip Affirm jobs." AND "Skip backend software engineering roles."
+    (backend engineering is not among their preferred roles)
+  ✗ NOT "Skip Software Engineer II, Backend at Affirm." (posting-specific)
+- Entry: Software Engineer, (L2) CDP @ Twilio — "Duplicate job":
+  ✓ Nothing. No bullet, no note.
+- Entry: Software Engineer III @ Google — "i don't want jobs from google":
+  ✓ "Skip Google jobs."
+- Entry: Business Analyst @ Deloitte — "they don't sponsor h1b visa"
+  (client needs sponsorship):
+  ✓ "Skip Deloitte jobs." + sponsorship-providing employers as a Strong
+    Signal.
+
+SELF-CHECK before output: walk the entries once more — every durable
+signal has exactly ONE consolidated bullet in the right section; every
+"Duplicate job"/"Already applied" entry produced NOTHING; no bullet
+contradicts a preferred role, operator note, or work-auth fact.
 
 (End of removal feedback. Continue with the normal inputs below.)
 
@@ -869,6 +923,11 @@ async function callOpenAI(profile, resume, existingSummary, profileDiff, apiKey,
         authorization: `Bearer ${apiKey || OPENAI_API_KEY}`,
       },
     });
+    recordAiUsage({
+      source: AI_USAGE_SOURCES.AI_SUMMARY,
+      model: res.data?.model || OPENAI_MODEL,
+      usage: res.data?.usage,
+    });
     const summary = (res.data?.choices?.[0]?.message?.content || "").trim();
     return { ok: true, summary, usage: res.data?.usage || null };
   } catch (err) {
@@ -906,6 +965,11 @@ Rules:
       messages: [{ role: "system", content: sys }, { role: "user", content: user }],
       temperature: 0,
     }, { timeout: 60_000, headers: { "content-type": "application/json", authorization: `Bearer ${apiKey || OPENAI_API_KEY}` } });
+    recordAiUsage({
+      source: AI_USAGE_SOURCES.AI_SUMMARY,
+      model: res.data?.model || OPENAI_MODEL,
+      usage: res.data?.usage,
+    });
     const fixed = (res.data?.choices?.[0]?.message?.content || "").trim();
     return fixed.length > 50 ? fixed : brief; // sanity: ignore a truncated/empty rewrite
   } catch (e) {
