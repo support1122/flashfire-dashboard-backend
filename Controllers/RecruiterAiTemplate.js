@@ -1,4 +1,5 @@
 import axios from "axios";
+import { recordAiUsage, AI_USAGE_SOURCES } from "../Utils/aiUsage.js";
 import { ProfileModel } from "../Schema_Models/ProfileModel.js";
 import { UserModel } from "../Schema_Models/UserModel.js";
 import { RecruiterEmailTemplate } from "../Schema_Models/RecruiterEmailTemplate.js";
@@ -309,6 +310,7 @@ export async function generateAiRecruiterTemplate(ownerEmail) {
       raw = g.content || "";
       usedModel = g.model || GEMINI_RECRUITER_MODEL;
       usage = g.usage || null;
+      recordAiUsage({ source: AI_USAGE_SOURCES.RECRUITER_TEMPLATE, model: usedModel, usage });
     } else {
       console.warn(`[RecruiterAiTemplate] Gemini failed (${g.error}: ${g.message}) — falling back to OpenAI`);
     }
@@ -333,8 +335,9 @@ export async function generateAiRecruiterTemplate(ownerEmail) {
       }
     });
     raw = res.data?.choices?.[0]?.message?.content || "";
-    usedModel = OPENAI_MODEL;
+    usedModel = res.data?.model || OPENAI_MODEL;
     usage = res.data?.usage || null;
+    recordAiUsage({ source: AI_USAGE_SOURCES.RECRUITER_TEMPLATE, model: usedModel, usage });
   }
 
   let parsed;

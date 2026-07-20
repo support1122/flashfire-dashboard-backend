@@ -1,4 +1,5 @@
 import { callGemini, HAS_GEMINI_CREDENTIALS } from "../../Utils/vertexGeminiJudge.js";
+import { recordAiUsage, AI_USAGE_SOURCES } from "../../Utils/aiUsage.js";
 
 const PREFER_GEMINI = process.env.FF_EXTRACT_PREFER_GEMINI !== "0";
 
@@ -28,6 +29,11 @@ ${content.substring(0, 15000)}`;
             const g = await callGemini({ system: systemMsg, user: prompt, temperature: 0.3, json: true });
             if (g.ok) {
                 contentText = (g.content || '').trim();
+                recordAiUsage({
+                    source: AI_USAGE_SOURCES.JOB_EXTRACT,
+                    model: g.model || 'gemini-2.5-flash-lite',
+                    usage: g.usage,
+                });
             } else {
                 console.warn(`[extractJobData] Gemini failed (${g.error}: ${g.message}) — falling back to OpenAI`);
             }
@@ -72,6 +78,11 @@ ${content.substring(0, 15000)}`;
             }
 
             const data = await response.json();
+            recordAiUsage({
+                source: AI_USAGE_SOURCES.JOB_EXTRACT,
+                model: data?.model || openaiModel,
+                usage: data?.usage,
+            });
             contentText = data.choices?.[0]?.message?.content?.trim() || '{}';
         }
 

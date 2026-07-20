@@ -4,56 +4,61 @@
 // AppSettings so a duplicate POST never fires even when the backend
 // restarts mid-day.
 //
-// Cost model (OpenAI gpt-4o-mini, server-side — no extension reporting needed)
+// Cost model — MEASURED, not guessed
 // ---------------------------------------------------------------------------
-// Backend only knows the scrape count (from ExtensionSessionStat captures), so
-// cost is derived from per-batch averages:
-//   batches      = ceil(jobs / AI_BATCH_SIZE)
-//   input tokens = batches × AI_TOKENS_IN_PER_BATCH   (avg)
-//   output       = batches × AI_TOKENS_OUT_PER_BATCH  (avg)
-//   cached input = batches × AI_CACHED_TOKENS_PER_BATCH (the fixed grader
-//                  prompt, reused across batches; OpenAI bills cached at 50%)
-//   gpt-4o-mini  = $0.15 / 1M in · $0.60 / 1M out · cached in at 50%
-//   FX (fixed)   = ₹94 / USD
-// Override via env: OPENAI_INPUT_PER_M, OPENAI_OUTPUT_PER_M, USD_INR_FIXED,
-//   AI_TOKENS_IN_PER_BATCH, AI_TOKENS_OUT_PER_BATCH,
-//   AI_BATCH_SIZE.
+// This used to price the day from hardcoded per-batch averages
+// (ceil(jobs/8) × 3500 input tokens, etc.). Measured against the real OpenAI
+// invoice that ran ~2x LOW: the card assumed 3,900 tok/request while the
+// account's actual figure was ~8,990 tok/request. It also silently EXCLUDED
+// every non-judge pipeline (resume summaries, recruiter templates on gpt-4o,
+// job extraction) while calling its number "TOTAL cost".
+//
+// Both are fixed. Cost now comes from token counts the providers actually
+// reported:
+//   Stage 1 (first judge)  — ExtensionSessionStat.modelStats, summed from the
+//                            `usage` block on each judge response. The
+//                            extension calls OpenAI directly, so this is the
+//                            only place stage-1 usage exists.
+//   Everything else        — AiUsageDaily, written by Utils/aiUsage.js at each
+//                            backend call site (second judge, AI summaries,
+//                            recruiter templates, job extraction, mail).
+//
+// The per-batch estimate survives ONLY as a fallback for old extension builds
+// that predate token reporting, and when it is used the embed says so out loud
+// rather than passing a guess off as a measurement.
 
 import axios from "axios";
 import { AppSettingsModel } from "../Schema_Models/AppSettings.js";
 import { ExtensionSessionStat } from "../Schema_Models/ExtensionSessionStat.js";
 import { JobModel } from "../Schema_Models/JobModel.js";
+import { getDailyUsage, istDay } from "./aiUsage.js";
+import { priceTokens, inr, FX_USD_INR } from "./aiRateCard.js";
 
 const MILESTONE_STEP = 5000;
 const BATCH_SIZE = Number(process.env.AI_BATCH_SIZE) || 8;
-// Low-end averages: first judge runs on JobRight's own short description (no
-// scraper enrichment), so input/batch is small. Conservative (lower) defaults.
-const TOKENS_PER_BATCH_IN = Number(process.env.AI_TOKENS_IN_PER_BATCH) || 3500;
-const TOKENS_PER_BATCH_OUT = Number(process.env.AI_TOKENS_OUT_PER_BATCH) || 400;
-// Fixed grader prompt reused every batch → cached after the first hit. Billed
-// at 50%. Conservative ≈ the system prompt size.
-const CACHED_TOKENS_PER_BATCH = 1800;
-// Second-stage screening (secondJudgeWorker). A FAST regex pre-screen keeps
-// most jobs with NO OpenAI call; only foreign/closed-signal pages reach the
-// LLM. When the LLM runs it gets the TRIMMED JD (location/freshness lines
-// only) + a fixed system prompt that OpenAI prompt-caches at 50%.
-//   SECOND_SYS_TOKENS — fixed grader prompt, cached every call (billed 50%).
-//   SECOND_VAR_IN      — variable input/call (trimmed JD ~900 + framing).
-const SECOND_SYS_TOKENS = 1450;
-const SECOND_VAR_IN = 1100;
-const SECOND_TOKENS_OUT = 120;
-const FX_USD_INR = Number(process.env.USD_INR_FIXED) || 94;
+
+// ─── FALLBACK-ONLY estimate ──────────────────────────────────────────
+// Used ONLY when an extension build reports no token usage at all. These are
+// calibrated against the real invoice (~8,990 tok/request observed over 33,571
+// requests), NOT the old "conservative" 3,500 which under-reported by 2.3x.
+// A cost estimate that is deliberately low is worse than no estimate: it reads
+// as reassurance. Bias these HIGH so the fallback over-states, never flatters.
+const EST_TOKENS_IN_PER_BATCH = Number(process.env.AI_TOKENS_IN_PER_BATCH) || 8800;
+const EST_TOKENS_OUT_PER_BATCH = Number(process.env.AI_TOKENS_OUT_PER_BATCH) || 500;
+const EST_CACHED_PER_BATCH = Number(process.env.AI_CACHED_TOKENS_PER_BATCH) || 1800;
 
 const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4o-mini";
-const OPENAI_INPUT_PER_M = Number(process.env.OPENAI_INPUT_PER_M) || 0.15;
-const OPENAI_OUTPUT_PER_M = Number(process.env.OPENAI_OUTPUT_PER_M) || 0.60;
 
-// Asia/Kolkata day bucket — matches /addjob daily cap window so all
-// milestone counts align with what the AI Summaries UI shows.
-function istDateKey(now = new Date()) {
-    const ist = new Date(now.getTime() + 5.5 * 60 * 60 * 1000);
-    return ist.toISOString().slice(0, 10);
-}
+// Human labels for the AiUsageDaily `source` keys.
+const SOURCE_LABEL = {
+    "first-judge": "Stage 1 · first judge",
+    "second-judge": "Stage 2 · second judge",
+    "ai-summary": "AI summaries",
+    "recruiter-template": "Recruiter templates",
+    "job-extract": "Job extraction",
+    "mail-summary": "Mail summaries",
+};
+
 function startOfTodayIST() {
     const offsetMs = 5.5 * 60 * 60 * 1000;
     const istNow = new Date(Date.now() + offsetMs);
@@ -72,21 +77,35 @@ function todayMatch() {
     };
 }
 
-// Sum captures across ALL ExtensionSessionStat rows for today (IST).
-async function getTodayTotalScraped() {
+// Sum today's captures AND the real judge-token usage the extension reported.
+async function getTodayExtensionTotals() {
     const r = await ExtensionSessionStat.aggregate([
         { $match: todayMatch() },
-        { $group: { _id: null, captures: { $sum: "$captures" } } },
+        {
+            $group: {
+                _id: null,
+                captures: { $sum: "$captures" },
+                openaiBatches: { $sum: "$modelStats.openaiBatches" },
+                geminiBatches: { $sum: "$modelStats.geminiBatches" },
+                inputTokens: { $sum: "$modelStats.inputTokens" },
+                outputTokens: { $sum: "$modelStats.outputTokens" },
+                cachedTokens: { $sum: "$modelStats.cachedTokens" },
+            },
+        },
     ]);
-    return r?.[0]?.captures || 0;
+    const g = r?.[0] || {};
+    return {
+        captures: g.captures || 0,
+        openaiBatches: g.openaiBatches || 0,
+        geminiBatches: g.geminiBatches || 0,
+        inputTokens: g.inputTokens || 0,
+        outputTokens: g.outputTokens || 0,
+        cachedTokens: g.cachedTokens || 0,
+    };
 }
 
-// Count today's second-stage screening outcomes (IST). Returns:
-//   completed — all terminal secondJudge jobs today
-//   fastKept  — kept by the regex fast-screen (NO OpenAI call)
-//   skipped   — could not screen / non-employer URL (NO OpenAI call)
-//   llm       — actual OpenAI calls = completed − fastKept − skipped
-// Only `llm` is billed; fastKept is the saving the fast-screen bought us.
+// Count today's second-stage screening outcomes (IST). `fastKept` is the
+// saving the regex fast-screen bought us — those jobs never hit OpenAI.
 async function getTodaySecondJudgeRuns() {
     const start = startOfTodayIST();
     try {
@@ -102,79 +121,86 @@ async function getTodaySecondJudgeRuns() {
                 "secondJudge.status": "skipped",
             }),
         ]);
-        const llm = Math.max(0, completed - fastKept - skipped);
-        return { completed, fastKept, skipped, llm };
+        return { completed, fastKept, skipped, llm: Math.max(0, completed - fastKept - skipped) };
     } catch {
         return { completed: 0, fastKept: 0, skipped: 0, llm: 0 };
     }
 }
 
-// estimateScrapeCost — pure math, no I/O. OpenAI gpt-4o-mini only, priced from
-// per-batch averages + the cached (prompt-reuse) portion at 50%.
-export function estimateScrapeCost(scrapedJobs, secondStats = {}) {
+// ─── Stage 1 cost: measured when possible ────────────────────────────
+// Returns { measured, batches, inputTokens, cachedTokens, outputTokens, usd, cacheSavedUsd }
+export function stage1Cost(ext, scrapedJobs) {
+    const hasRealTokens = (ext.inputTokens || 0) > 0 || (ext.outputTokens || 0) > 0;
+    if (hasRealTokens) {
+        const p = priceTokens({
+            model: OPENAI_MODEL,
+            inputTokens: ext.inputTokens,
+            cachedTokens: ext.cachedTokens,
+            outputTokens: ext.outputTokens,
+        });
+        return {
+            measured: true,
+            batches: (ext.openaiBatches || 0) + (ext.geminiBatches || 0),
+            inputTokens: ext.inputTokens,
+            cachedTokens: ext.cachedTokens,
+            outputTokens: ext.outputTokens,
+            usd: p.usd,
+            cacheSavedUsd: p.cacheSavedUsd,
+        };
+    }
+    // Fallback — extension build too old to report usage.
+    const batches = Math.ceil(Math.max(0, Number(scrapedJobs) || 0) / BATCH_SIZE);
+    const inputTokens = batches * EST_TOKENS_IN_PER_BATCH;
+    const outputTokens = batches * EST_TOKENS_OUT_PER_BATCH;
+    const cachedTokens = Math.min(inputTokens, batches * EST_CACHED_PER_BATCH);
+    const p = priceTokens({ model: OPENAI_MODEL, inputTokens, cachedTokens, outputTokens });
+    return {
+        measured: false,
+        batches,
+        inputTokens,
+        cachedTokens,
+        outputTokens,
+        usd: p.usd,
+        cacheSavedUsd: p.cacheSavedUsd,
+    };
+}
+
+// buildCostReport — the whole day's AI spend, measured where the data exists.
+export async function buildCostReport({ scrapedJobs, ext, usage, secondStats }) {
+    const s1 = stage1Cost(ext, scrapedJobs);
+
+    // AiUsageDaily rows. `first-judge` rows only appear if a future extension
+    // build routes through the backend proxy; today it calls OpenAI directly,
+    // so those rows are empty and there is no double-count with s1.
+    const rows = usage.rows || [];
+    const backendUsd = rows.reduce((a, r) => a + r.usd, 0);
+    const second = rows.find((r) => r.source === "second-judge") || null;
+
+    // What the stage-2 fast-screen avoided: price ONE measured LLM run and
+    // multiply by the jobs it skipped. With no measured run yet, contribute 0
+    // rather than inventing a per-run token count.
+    const perLlmUsd = second && second.calls > 0 ? second.usd / second.calls : 0;
+    const fastScreenSavedUsd = (secondStats.fastKept || 0) * perLlmUsd;
+
+    const totalUsd = s1.usd + backendUsd;
+    const cacheSavedUsd = s1.cacheSavedUsd + (usage.cacheSavedUsd || 0);
     const n = Math.max(0, Number(scrapedJobs) || 0);
-    const batches = Math.ceil(n / BATCH_SIZE);
-    const inputTokens = batches * TOKENS_PER_BATCH_IN;
-    const outputTokens = batches * TOKENS_PER_BATCH_OUT;
-    const cachedTokens = Math.min(inputTokens, batches * CACHED_TOKENS_PER_BATCH);
-
-    // Stage 1 — first judge (extension, batched on JobRight desc).
-    const usd =
-        ((inputTokens - cachedTokens) / 1_000_000) * OPENAI_INPUT_PER_M +
-        (cachedTokens / 1_000_000) * (OPENAI_INPUT_PER_M * 0.5) +
-        (outputTokens / 1_000_000) * OPENAI_OUTPUT_PER_M;
-    const cacheSavedUsd = (cachedTokens / 1_000_000) * (OPENAI_INPUT_PER_M * 0.5);
-
-    // Stage 2 — second judge. Only `llm` runs hit OpenAI; `fastKept` were kept
-    // by the regex fast-screen with NO call (that's the saving). Each LLM run:
-    // variable JD input (full price) + fixed system prompt (prompt-cached, 50%)
-    // + output.
-    const llm = Math.max(0, Number(secondStats.llm) || 0);
-    const fastKept = Math.max(0, Number(secondStats.fastKept) || 0);
-    const secondVarIn = llm * SECOND_VAR_IN;
-    const secondSysIn = llm * SECOND_SYS_TOKENS;
-    const secondOut = llm * SECOND_TOKENS_OUT;
-    const secondUsd =
-        (secondVarIn / 1_000_000) * OPENAI_INPUT_PER_M +
-        (secondSysIn / 1_000_000) * (OPENAI_INPUT_PER_M * 0.5) +
-        (secondOut / 1_000_000) * OPENAI_OUTPUT_PER_M;
-    const secondCacheSavedUsd = (secondSysIn / 1_000_000) * (OPENAI_INPUT_PER_M * 0.5);
-    // What ONE LLM run costs → ×fastKept = $ the fast-screen avoided.
-    const perLlmUsd =
-        (SECOND_VAR_IN / 1_000_000) * OPENAI_INPUT_PER_M +
-        (SECOND_SYS_TOKENS / 1_000_000) * (OPENAI_INPUT_PER_M * 0.5) +
-        (SECOND_TOKENS_OUT / 1_000_000) * OPENAI_OUTPUT_PER_M;
-    const fastScreenSavedUsd = fastKept * perLlmUsd;
-
-    const totalUsd = usd + secondUsd;
-    const totalCacheSavedUsd = cacheSavedUsd + secondCacheSavedUsd;
 
     return {
         scraped: n,
-        batches,
-        inputTokens,
-        outputTokens,
-        cachedTokens,
-        usd: Number(usd.toFixed(6)),
-        inr: Number((usd * FX_USD_INR).toFixed(2)),
-        cacheSavedUsd: Number(totalCacheSavedUsd.toFixed(6)),
-        cacheSavedInr: Number((totalCacheSavedUsd * FX_USD_INR).toFixed(2)),
-        second: {
-            llm,
-            fastKept,
-            inputTokens: secondVarIn + secondSysIn,
-            outputTokens: secondOut,
-            usd: Number(secondUsd.toFixed(6)),
-            inr: Number((secondUsd * FX_USD_INR).toFixed(2)),
-            savedUsd: Number(fastScreenSavedUsd.toFixed(6)),
-            savedInr: Number((fastScreenSavedUsd * FX_USD_INR).toFixed(2)),
-        },
-        totalUsd: Number(totalUsd.toFixed(6)),
-        totalInr: Number((totalUsd * FX_USD_INR).toFixed(2)),
-        perJobUsd: n ? Number((totalUsd / n).toFixed(6)) : 0,
-        perJobInr: n ? Number(((totalUsd * FX_USD_INR) / n).toFixed(4)) : 0,
-        fxRate: FX_USD_INR,
         model: OPENAI_MODEL,
+        stage1: s1,
+        rows,
+        backendUsd,
+        secondStats,
+        fastScreenSavedUsd,
+        cacheSavedUsd,
+        totalUsd,
+        perJobUsd: n ? totalUsd / n : 0,
+        fxRate: FX_USD_INR,
+        // True only when every priced call reported real tokens.
+        fullyMeasured: s1.measured && usage.complete,
+        callsMissingUsage: usage.callsMissingUsage || 0,
     };
 }
 
@@ -199,60 +225,108 @@ async function claimMilestone(today, currentTotal) {
     return target;
 }
 
+const usd = (v) => `$${v.toFixed(4)}`;
+const both = (v) => `$${v.toFixed(4)} · ₹${inr(v).toFixed(2)}`;
+
 // fireDiscord: post the embed. Pulls webhook from env on each call so
 // .env edits take effect without restart. No-op when webhook missing.
-async function fireDiscord(milestone, costInfo, today) {
+async function fireDiscord(milestone, r, today) {
     const webhook = (process.env.DISCORD_SCRAPE_WEBHOOK_URL || "").trim();
     if (!webhook) {
         console.log(`[scrapeCostNotifier] milestone ${milestone} reached but DISCORD_SCRAPE_WEBHOOK_URL not set — skipping`);
         return;
     }
 
-    const cachePct = costInfo.inputTokens ? Math.round((costInfo.cachedTokens / costInfo.inputTokens) * 100) : 0;
+    const s1 = r.stage1;
+    const cachePct = s1.inputTokens ? Math.round((s1.cachedTokens / s1.inputTokens) * 100) : 0;
+    const tag = s1.measured ? "measured" : "ESTIMATED";
+
+    // One line per pipeline that actually spent money today — this is the
+    // breakdown that did not exist before, and the reason the old "TOTAL"
+    // never matched the OpenAI invoice.
+    const breakdown = r.rows.length
+        ? r.rows
+            .map((x) => `\`${(SOURCE_LABEL[x.source] || x.source).padEnd(22)}\` ${both(x.usd)} · ${x.calls} calls · ${x.model}`)
+            .join("\n")
+        : "_no backend AI calls recorded today_";
+
     const fields = [
-        { name: "Today scraped", value: `**${costInfo.scraped.toLocaleString()}** jobs`, inline: true },
-        { name: "AI batches", value: `${costInfo.batches.toLocaleString()} × ${BATCH_SIZE} jobs`, inline: true },
-        { name: "Model", value: `\`${costInfo.model}\``, inline: true },
-        { name: "Input tokens", value: costInfo.inputTokens.toLocaleString(), inline: true },
-        { name: "Output tokens", value: costInfo.outputTokens.toLocaleString(), inline: true },
-        { name: "Cached input (50% off)", value: `${costInfo.cachedTokens.toLocaleString()} (${cachePct}%)`, inline: true },
-        { name: "💰 Prompt-cache saved", value: `$${costInfo.cacheSavedUsd.toFixed(4)} · ₹${costInfo.cacheSavedInr.toFixed(2)}`, inline: true },
-        { name: "FX rate (fixed)", value: `₹${costInfo.fxRate} / USD`, inline: true },
-        { name: "Stage 1 — first judge", value: `$${costInfo.usd.toFixed(4)} · ₹${costInfo.inr.toFixed(2)}`, inline: true },
-        { name: "Stage 2 — second judge", value: `${costInfo.second.llm.toLocaleString()} LLM runs · $${costInfo.second.usd.toFixed(4)} · ₹${costInfo.second.inr.toFixed(2)}`, inline: true },
-        { name: "🟢 Fast-screen saved", value: `${costInfo.second.fastKept.toLocaleString()} jobs kept w/o LLM · $${costInfo.second.savedUsd.toFixed(4)} · ₹${costInfo.second.savedInr.toFixed(2)}`, inline: true },
-        { name: "💵 TOTAL cost", value: `**$${costInfo.totalUsd.toFixed(4)} · ₹${costInfo.totalInr.toFixed(2)}**`, inline: true },
-        { name: "Per-job (all-in)", value: `$${costInfo.perJobUsd.toFixed(6)} · ₹${costInfo.perJobInr.toFixed(4)}`, inline: true },
+        { name: "Today scraped", value: `**${r.scraped.toLocaleString()}** jobs`, inline: true },
+        { name: "Judge batches", value: `${s1.batches.toLocaleString()} × ${BATCH_SIZE} jobs`, inline: true },
+        { name: "Model", value: `\`${r.model}\``, inline: true },
+
+        { name: `Input tokens (${tag})`, value: s1.inputTokens.toLocaleString(), inline: true },
+        { name: `Output tokens (${tag})`, value: s1.outputTokens.toLocaleString(), inline: true },
+        { name: "Cached input (50% off)", value: `${s1.cachedTokens.toLocaleString()} (${cachePct}%)`, inline: true },
+
+        { name: `Stage 1 — first judge (${tag})`, value: both(s1.usd), inline: true },
+        {
+            name: "Stage 2 — second judge",
+            value: `${r.secondStats.llm.toLocaleString()} LLM runs · ${both(r.rows.find((x) => x.source === "second-judge")?.usd || 0)}`,
+            inline: true,
+        },
+        { name: "🟢 Fast-screen saved", value: `${r.secondStats.fastKept.toLocaleString()} jobs w/o LLM · ${both(r.fastScreenSavedUsd)}`, inline: true },
+
+        { name: "💰 Prompt-cache saved", value: both(r.cacheSavedUsd), inline: true },
+        { name: "FX rate (fixed)", value: `₹${r.fxRate} / USD`, inline: true },
+        { name: "Per-job (all-in)", value: `$${r.perJobUsd.toFixed(6)} · ₹${(inr(r.perJobUsd)).toFixed(4)}`, inline: true },
+
+        { name: "📊 Spend by pipeline (today, measured)", value: breakdown, inline: false },
+        { name: "💵 TOTAL AI spend today", value: `**${both(r.totalUsd)}**`, inline: false },
     ];
+
+    // Say plainly how trustworthy the number is. A cost report that cannot be
+    // reconciled against the invoice is worse than useless.
+    const caveats = [];
+    if (!s1.measured) {
+        caveats.push(`⚠️ Stage 1 is ESTIMATED (${EST_TOKENS_IN_PER_BATCH}/${EST_TOKENS_OUT_PER_BATCH} tok/batch) — this extension build does not report token usage. Update the extension for exact numbers.`);
+    }
+    if (r.callsMissingUsage > 0) {
+        caveats.push(`⚠️ ${r.callsMissingUsage} backend call(s) returned no usage block — total is a FLOOR.`);
+    }
+    if (!caveats.length) {
+        caveats.push("✅ Every figure above is measured from provider-reported token counts.");
+    }
+    caveats.push("Covers this backend's OpenAI/Vertex calls only — it will not match the OpenAI invoice if other services share the key.");
 
     const embed = {
         title: `📈 Scrape milestone: ${milestone.toLocaleString()} jobs today`,
-        description: `Today (${today} IST) the JR-Direct extension has captured **${milestone.toLocaleString()}** jobs across all operators.`,
-        color: 0x10b981,
+        description:
+            `Today (${today} IST) the JR-Direct extension has captured **${milestone.toLocaleString()}** jobs across all operators.\n\n` +
+            caveats.join("\n"),
+        color: r.fullyMeasured ? 0x10b981 : 0xf59e0b,
         fields,
-        footer: { text: `OpenAI ${costInfo.model} · $${OPENAI_INPUT_PER_M}/1M in · $${OPENAI_OUTPUT_PER_M}/1M out · stage1 ${TOKENS_PER_BATCH_IN}/${TOKENS_PER_BATCH_OUT} tok/batch (~${CACHED_TOKENS_PER_BATCH} cached, 50% off) · stage2 ${SECOND_VAR_IN}+${SECOND_SYS_TOKENS}-cached/${SECOND_TOKENS_OUT} tok/LLM-run · fast-screen skips most stage-2 calls` },
+        footer: {
+            text: `Priced from provider-reported tokens · rate card in Utils/aiRateCard.js · ₹${r.fxRate}/USD`,
+        },
         timestamp: new Date().toISOString(),
     };
     try {
         await axios.post(webhook, { embeds: [embed] }, { timeout: 8000 });
-        console.log(`[scrapeCostNotifier] fired milestone ${milestone} → Discord`);
+        console.log(`[scrapeCostNotifier] fired milestone ${milestone} → Discord (fullyMeasured=${r.fullyMeasured})`);
     } catch (err) {
         console.warn(`[scrapeCostNotifier] Discord POST failed for milestone ${milestone}:`, err.message);
     }
 }
 
 // checkAndNotify: call after every ExtensionSessionStat upsert. Cheap when
-// no milestone — one aggregation + one findOneAndUpdate. No-op when webhook
-// env unset. Always fire-and-forget from the caller.
+// no milestone. No-op when webhook env unset. Always fire-and-forget.
 export async function checkAndNotifyScrapeMilestone() {
     try {
-        const today = istDateKey();
-        const total = await getTodayTotalScraped();
-        if (total < MILESTONE_STEP) return; // nothing to do under first threshold
-        const milestone = await claimMilestone(today, total);
+        const today = istDay();
+        const ext = await getTodayExtensionTotals();
+        if (ext.captures < MILESTONE_STEP) return; // nothing to do under first threshold
+        const milestone = await claimMilestone(today, ext.captures);
         if (!milestone) return; // already announced
-        const secondStats = await getTodaySecondJudgeRuns();
-        await fireDiscord(milestone, estimateScrapeCost(milestone, secondStats), today);
+        const [secondStats, usage] = await Promise.all([
+            getTodaySecondJudgeRuns(),
+            getDailyUsage(today),
+        ]);
+        // Report on the ACTUAL scraped count, not the rounded milestone: the
+        // token totals are real and belong to real jobs, so rounding the job
+        // count down would silently inflate per-job cost.
+        const report = await buildCostReport({ scrapedJobs: ext.captures, ext, usage, secondStats });
+        await fireDiscord(milestone, report, today);
     } catch (err) {
         console.warn("[scrapeCostNotifier] check failed:", err.message);
     }

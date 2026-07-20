@@ -36,6 +36,7 @@
 //   skipped    → could not screen after retries (kept, fail-open)
 
 import { JobModel } from '../../Schema_Models/JobModel.js';
+import { recordAiUsage, AI_USAGE_SOURCES } from '../../Utils/aiUsage.js';
 import { ProfileModel } from '../../Schema_Models/ProfileModel.js';
 import { UserModel } from '../../Schema_Models/UserModel.js';
 import {
@@ -658,6 +659,13 @@ async function judgeRealSite({ profile, job, scrapedText }) {
     throw err;
   }
   const data = await resp.json();
+  // Real token usage → the milestone cost report. Fire-and-forget: a cost
+  // datapoint must never be able to fail a job screen.
+  recordAiUsage({
+    source: AI_USAGE_SOURCES.SECOND_JUDGE,
+    model: data?.model || OPENAI_MODEL,
+    usage: data?.usage,
+  });
   const content = data?.choices?.[0]?.message?.content || '{}';
   let parsed = null;
   try { parsed = JSON.parse(content); } catch { /* ignore */ }
