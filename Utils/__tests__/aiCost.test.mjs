@@ -291,19 +291,37 @@ const USAGE = {
 };
 const SECOND = { completed: 524, fastKept: 324, skipped: 0, llm: 200 };
 
-await t('total includes EVERY pipeline, not just judging', async () => {
+await t('total is EXACTLY stage 1 + stage 2 — the scrape pipeline, nothing else', async () => {
     const r = await buildCostReport({ scrapedJobs: 20000, ext: REAL_EXT, usage: USAGE, secondStats: SECOND });
-    const expected = r.stage1.usd + 0.05 + 0.90 + 0.17;
-    assert.equal(Number(r.totalUsd.toFixed(6)), Number(expected.toFixed(6)));
-    // The old report would have shown stage1 + second only, hiding $1.07.
-    assert.ok(r.totalUsd - (r.stage1.usd + 0.05) > 1.0, 'recruiter+summary spend must be visible');
+    assert.equal(Number(r.totalUsd.toFixed(6)), Number((r.stage1.usd + 0.05).toFixed(6)));
 });
 
-await t('gpt-4o recruiter spend is the single biggest line — the thing nobody could see', async () => {
+await t('auto-optimization / summaries / recruiter are EXCLUDED from the total', async () => {
     const r = await buildCostReport({ scrapedJobs: 20000, ext: REAL_EXT, usage: USAGE, secondStats: SECOND });
-    assert.equal(r.rows[0].source, 'second-judge'); // rows arrive pre-sorted by caller in prod
-    const recruiter = r.rows.find((x) => x.source === 'recruiter-template');
-    assert.ok(recruiter.usd > r.rows.find((x) => x.source === 'ai-summary').usd);
+    // $0.90 recruiter + $0.17 summaries must not leak into a scrape figure.
+    assert.equal(Number(r.otherUsd.toFixed(6)), 1.07);
+    assert.ok(!r.rows.some((x) => x.source === 'recruiter-template'));
+    assert.ok(!r.rows.some((x) => x.source === 'ai-summary'));
+    assert.equal(r.rows.length, 1);
+    assert.equal(r.rows[0].source, 'second-judge');
+});
+
+await t('a day with heavy recruiter spend and NO scraping still reports scrape cost honestly', async () => {
+    // The failure this scoping prevents: cost-per-job moving because someone
+    // generated recruiter emails, not because anyone scraped.
+    const r = await buildCostReport({
+        scrapedJobs: 20000, ext: REAL_EXT, secondStats: SECOND,
+        usage: { ...USAGE, rows: [...USAGE.rows, { source: 'recruiter-template', model: 'gpt-4o', calls: 999, inputTokens: 9e6, cachedTokens: 0, outputTokens: 9e6, usd: 100, inr: 9400, cacheSavedUsd: 0 }] },
+    });
+    const base = await buildCostReport({ scrapedJobs: 20000, ext: REAL_EXT, usage: USAGE, secondStats: SECOND });
+    assert.equal(r.totalUsd, base.totalUsd, '$100 of recruiter spend must not move the scrape total');
+    assert.equal(r.perJobUsd, base.perJobUsd, 'nor cost-per-job');
+});
+
+await t('cache saving counts only the scrape stages', async () => {
+    const r = await buildCostReport({ scrapedJobs: 20000, ext: REAL_EXT, usage: USAGE, secondStats: SECOND });
+    // stage 1 measured saving + second-judge's 0.02; summaries/recruiter excluded.
+    assert.equal(Number(r.cacheSavedUsd.toFixed(6)), Number((r.stage1.cacheSavedUsd + 0.02).toFixed(6)));
 });
 
 await t('fast-screen saving is priced from a MEASURED run, not a guess', async () => {
@@ -328,13 +346,18 @@ await t('fullyMeasured is false when stage 1 fell back to the estimate', async (
     assert.equal(r.fullyMeasured, false);
 });
 
-await t('fullyMeasured is false when any backend call lacked a usage block', async () => {
-    const r = await buildCostReport({
-        scrapedJobs: 20000, ext: REAL_EXT, secondStats: SECOND,
-        usage: { ...USAGE, complete: false, callsMissingUsage: 7 },
-    });
+await t('fullyMeasured is false when a SCRAPE-stage call lacked a usage block', async () => {
+    const rows = USAGE.rows.map((x) => x.source === 'second-judge' ? { ...x, callsMissingUsage: 7 } : x);
+    const r = await buildCostReport({ scrapedJobs: 20000, ext: REAL_EXT, secondStats: SECOND, usage: { ...USAGE, rows } });
     assert.equal(r.fullyMeasured, false);
     assert.equal(r.callsMissingUsage, 7);
+});
+
+await t('a NON-scrape call missing usage does NOT taint the scrape figure', async () => {
+    const rows = USAGE.rows.map((x) => x.source === 'recruiter-template' ? { ...x, callsMissingUsage: 99 } : x);
+    const r = await buildCostReport({ scrapedJobs: 20000, ext: REAL_EXT, secondStats: SECOND, usage: { ...USAGE, rows } });
+    assert.equal(r.callsMissingUsage, 0);
+    assert.equal(r.fullyMeasured, true, 'recruiter gaps must not turn the scrape embed amber');
 });
 
 await t('per-job cost uses the ACTUAL scrape count, not the rounded milestone', async () => {

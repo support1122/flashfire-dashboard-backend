@@ -13,15 +13,19 @@
 // every non-judge pipeline (resume summaries, recruiter templates on gpt-4o,
 // job extraction) while calling its number "TOTAL cost".
 //
-// Both are fixed. Cost now comes from token counts the providers actually
-// reported:
-//   Stage 1 (first judge)  — ExtensionSessionStat.modelStats, summed from the
-//                            `usage` block on each judge response. The
-//                            extension calls OpenAI directly, so this is the
-//                            only place stage-1 usage exists.
-//   Everything else        — AiUsageDaily, written by Utils/aiUsage.js at each
-//                            backend call site (second judge, AI summaries,
-//                            recruiter templates, job extraction, mail).
+// Both are fixed. This embed now reports EXACTLY the two stages a scraped job
+// passes through, priced from token counts the providers actually reported:
+//   Stage 1 — the extension's first judge, on JobRight's own description.
+//             Usage comes from ExtensionSessionStat.modelStats, summed from the
+//             `usage` block on each judge response (the extension calls OpenAI
+//             directly, so this is the only place stage-1 usage exists).
+//   Stage 2 — secondJudgeWorker re-judging the real employer posting. Usage
+//             comes from AiUsageDaily, written by Utils/aiUsage.js.
+//
+// Nothing else is in the total. Resume auto-optimization, AI summaries,
+// recruiter templates, job extraction and mail are all excluded: none is caused
+// by scraping a job, so including them would make "cost per job" move on days
+// nobody scraped. They are still recorded, and reported by GET /admin/ai-cost.
 //
 // The per-batch estimate survives ONLY as a fallback for old extension builds
 // that predate token reporting, and when it is used the embed says so out loud
@@ -73,16 +77,6 @@ const STAGE1_MODEL = "gpt-4o-mini";
 const EST_TOKENS_IN_PER_BATCH = 8800;
 const EST_TOKENS_OUT_PER_BATCH = 500;
 const EST_CACHED_PER_BATCH = 1800;
-
-// Human labels for the AiUsageDaily `source` keys.
-const SOURCE_LABEL = {
-    "first-judge": "Stage 1 · first judge",
-    "second-judge": "Stage 2 · second judge",
-    "ai-summary": "AI summaries",
-    "recruiter-template": "Recruiter templates",
-    "job-extract": "Job extraction",
-    "mail-summary": "Mail summaries",
-};
 
 function startOfTodayIST() {
     const offsetMs = 5.5 * 60 * 60 * 1000;
@@ -274,16 +268,45 @@ export function stage1Cost(ext, scrapedJobs) {
     };
 }
 
-// buildCostReport — the whole day's AI spend, measured where the data exists.
+// ─── SCOPE: the scrape pipeline, and nothing else ────────────────────
+// This is a SCRAPE milestone, so it prices exactly the two stages a scraped job
+// passes through:
+//   Stage 1 — the extension's first judge, on JobRight's own description
+//   Stage 2 — secondJudgeWorker, re-judging the real employer posting
+//
+// Everything else the backend spends on AI is deliberately EXCLUDED: resume
+// auto-optimization, AI summaries, recruiter templates, job extraction, mail.
+// None of them is caused by scraping a job, so folding them in would make
+// "cost per job" a number that moves when nobody scraped anything.
+//
+// Auto-optimization in particular is not merely excluded, it is not on this
+// bill at all: autoOptimizationWorker calls RESUME_API_URL/api/optimize-with-
+// gemini, a separate microservice on Google's Gemini, so it never touches this
+// OpenAI account.
+//
+// Those pipelines ARE still recorded (Utils/aiUsage.js) — they are simply
+// reported separately, via GET /admin/ai-cost, where a per-pipeline total is
+// meaningful. The embed labels its figure "scrape pipeline" rather than "TOTAL"
+// so a scoped number is never again mistaken for the whole invoice.
+const SCRAPE_PIPELINE_SOURCES = new Set(["first-judge", "second-judge"]);
+
+// buildCostReport — the day's SCRAPE-pipeline spend, measured where possible.
 export async function buildCostReport({ scrapedJobs, ext, usage, secondStats }) {
     const s1 = stage1Cost(ext, scrapedJobs);
 
-    // AiUsageDaily rows. `first-judge` rows only appear if a future extension
-    // build routes through the backend proxy; today it calls OpenAI directly,
-    // so those rows are empty and there is no double-count with s1.
-    const rows = usage.rows || [];
-    const backendUsd = rows.reduce((a, r) => a + r.usd, 0);
+    const allRows = usage.rows || [];
+    // Only the scrape stages count toward this report. `first-judge` rows appear
+    // solely if a future extension build routes through the backend proxy;
+    // today it calls OpenAI directly, so they are empty and cannot double-count
+    // against s1.
+    const rows = allRows.filter((r) => SCRAPE_PIPELINE_SOURCES.has(r.source));
     const second = rows.find((r) => r.source === "second-judge") || null;
+    const stage2Usd = rows.reduce((a, r) => a + r.usd, 0);
+
+    // Context only, never added to the total: what the non-scrape pipelines spent
+    // today. Shown as one line so the embed cannot be read as the whole bill.
+    const otherRows = allRows.filter((r) => !SCRAPE_PIPELINE_SOURCES.has(r.source));
+    const otherUsd = otherRows.reduce((a, r) => a + r.usd, 0);
 
     // What the stage-2 fast-screen avoided: price ONE measured LLM run and
     // multiply by the jobs it skipped. With no measured run yet, contribute 0
@@ -291,25 +314,32 @@ export async function buildCostReport({ scrapedJobs, ext, usage, secondStats }) 
     const perLlmUsd = second && second.calls > 0 ? second.usd / second.calls : 0;
     const fastScreenSavedUsd = (secondStats.fastKept || 0) * perLlmUsd;
 
-    const totalUsd = s1.usd + backendUsd;
-    const cacheSavedUsd = s1.cacheSavedUsd + (usage.cacheSavedUsd || 0);
+    // Missing-usage count for the SCRAPE stages only.
+    const scrapeMissingUsage = rows.reduce((a, r) => a + (r.callsMissingUsage || 0), 0);
+
+    const totalUsd = s1.usd + stage2Usd;
+    const cacheSavedUsd = s1.cacheSavedUsd + rows.reduce((a, r) => a + (r.cacheSavedUsd || 0), 0);
     const n = Math.max(0, Number(scrapedJobs) || 0);
 
     return {
         scraped: n,
         model: STAGE1_MODEL,
         stage1: s1,
-        rows,
-        backendUsd,
+        rows,                 // scrape-pipeline rows only
+        stage2Usd,
+        // Context, NOT part of totalUsd — see SCRAPE_PIPELINE_SOURCES above.
+        otherUsd,
+        otherCalls: otherRows.reduce((a, r) => a + r.calls, 0),
         secondStats,
         fastScreenSavedUsd,
         cacheSavedUsd,
         totalUsd,
         perJobUsd: n ? totalUsd / n : 0,
         fxRate: FX_USD_INR,
-        // True only when every priced call reported real tokens.
-        fullyMeasured: s1.measured && usage.complete,
-        callsMissingUsage: usage.callsMissingUsage || 0,
+        // Scoped to the scrape stages: a recruiter-template call that came back
+        // without a usage block says nothing about whether THIS figure is exact.
+        fullyMeasured: s1.measured && scrapeMissingUsage === 0,
+        callsMissingUsage: scrapeMissingUsage,
         // Eviction-duplicate rows folded away. Non-zero proves SW evictions are
         // happening; the pre-fix totals were inflated by exactly this overlap.
         sessions: ext.sessions || 0,
@@ -354,14 +384,8 @@ async function fireDiscord(milestone, r, today) {
     const cachePct = s1.inputTokens ? Math.round((s1.cachedTokens / s1.inputTokens) * 100) : 0;
     const tag = s1.measured ? "measured" : "ESTIMATED";
 
-    // One line per pipeline that actually spent money today — this is the
-    // breakdown that did not exist before, and the reason the old "TOTAL"
-    // never matched the OpenAI invoice.
-    const breakdown = r.rows.length
-        ? r.rows
-            .map((x) => `\`${(SOURCE_LABEL[x.source] || x.source).padEnd(22)}\` ${both(x.usd)} · ${x.calls} calls · ${x.model}`)
-            .join("\n")
-        : "_no backend AI calls recorded today_";
+    const second = r.rows.find((x) => x.source === "second-judge") || null;
+    const stage1Pct = r.totalUsd > 0 ? Math.round((s1.usd / r.totalUsd) * 100) : 0;
 
     const fields = [
         { name: "Today scraped", value: `**${r.scraped.toLocaleString()}** jobs`, inline: true },
@@ -372,21 +396,39 @@ async function fireDiscord(milestone, r, today) {
         { name: `Output tokens (${tag})`, value: s1.outputTokens.toLocaleString(), inline: true },
         { name: "Cached input (50% off)", value: `${s1.cachedTokens.toLocaleString()} (${cachePct}%)`, inline: true },
 
-        { name: `Stage 1 — first judge (${tag})`, value: both(s1.usd), inline: true },
         {
-            name: "Stage 2 — second judge",
-            value: `${r.secondStats.llm.toLocaleString()} LLM runs · ${both(r.rows.find((x) => x.source === "second-judge")?.usd || 0)}`,
-            inline: true,
+            name: `1️⃣ Stage 1 — extension scraper judge (${tag})`,
+            value: `${both(s1.usd)} · ${stage1Pct}% of scrape cost`,
+            inline: false,
         },
-        { name: "🟢 Fast-screen saved", value: `${r.secondStats.fastKept.toLocaleString()} jobs w/o LLM · ${both(r.fastScreenSavedUsd)}`, inline: true },
+        {
+            name: "2️⃣ Stage 2 — second judge (measured)",
+            value: second
+                ? `${both(second.usd)} · ${second.calls.toLocaleString()} LLM runs · ${second.inputTokens.toLocaleString()} in / ${second.outputTokens.toLocaleString()} out`
+                : `${both(0)} · no LLM runs recorded today`,
+            inline: false,
+        },
+        {
+            name: "💵 SCRAPE PIPELINE COST (stage 1 + stage 2)",
+            value: `**${both(r.totalUsd)}**  ·  per job $${r.perJobUsd.toFixed(6)} · ₹${inr(r.perJobUsd).toFixed(4)}`,
+            inline: false,
+        },
 
+        { name: "🟢 Fast-screen saved", value: `${r.secondStats.fastKept.toLocaleString()} jobs w/o LLM · ${both(r.fastScreenSavedUsd)}`, inline: true },
         { name: "💰 Prompt-cache saved", value: both(r.cacheSavedUsd), inline: true },
         { name: "FX rate (fixed)", value: `₹${r.fxRate} / USD`, inline: true },
-        { name: "Per-job (all-in)", value: `$${r.perJobUsd.toFixed(6)} · ₹${(inr(r.perJobUsd)).toFixed(4)}`, inline: true },
-
-        { name: "📊 Spend by pipeline (today, measured)", value: breakdown, inline: false },
-        { name: "💵 TOTAL AI spend today", value: `**${both(r.totalUsd)}**`, inline: false },
     ];
+
+    // Other AI pipelines are NOT in the total above. One context line so the
+    // scrape figure is never mistaken for the whole bill — the exact confusion
+    // the old "TOTAL cost" label created.
+    if (r.otherUsd > 0) {
+        fields.push({
+            name: "ℹ️ Other AI today (NOT counted above)",
+            value: `${both(r.otherUsd)} · ${r.otherCalls.toLocaleString()} calls — summaries, recruiter templates, extraction. Full breakdown: \`GET /admin/ai-cost\``,
+            inline: false,
+        });
+    }
 
     // Say plainly how trustworthy the number is. A cost report that cannot be
     // reconciled against the invoice is worse than useless.
