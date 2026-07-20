@@ -22,7 +22,7 @@ process.env.OPENAI_JUDGE_MODEL = 'gpt-4o';
 
 const { priceTokens, rateFor, FX_USD_INR, inr } = await import('../aiRateCard.js');
 const { normaliseUsage } = await import('../aiUsage.js');
-const { stage1Cost, buildCostReport, mergeSessionRows } = await import('../scrapeCostNotifier.js');
+const { stage1Cost, buildCostReport, mergeSessionRows, sumWithResets } = await import('../scrapeCostNotifier.js');
 
 // Await every case: several are async, and an un-awaited rejection would be
 // reported as an unhandled rejection rather than a named failing assertion.
@@ -150,9 +150,9 @@ console.log('\n── service-worker eviction duplicates ──');
 // auto.stats is not restored either, so its tokens restart from zero.
 const SESSION_START = '2026-07-20T04:00:00.000Z';
 const EVICTED = [
-    { _id: 'a', operatorName: 'op1', clientEmail: 'c@x.com', startedAt: SESSION_START,
+    { _id: 'a', operatorName: 'op1', clientEmail: 'c@x.com', startedAt: SESSION_START, endedAt: '2026-07-20T05:00:00.000Z',
       captures: 6000, modelStats: { openaiBatches: 750, inputTokens: 6_600_000, outputTokens: 375_000, cachedTokens: 1_350_000 } },
-    { _id: 'b', operatorName: 'op1', clientEmail: 'c@x.com', startedAt: SESSION_START,
+    { _id: 'b', operatorName: 'op1', clientEmail: 'c@x.com', startedAt: SESSION_START, endedAt: '2026-07-20T06:00:00.000Z',
       captures: 10000, modelStats: { openaiBatches: 500, inputTokens: 4_400_000, outputTokens: 250_000, cachedTokens: 900_000 } },
 ];
 
@@ -175,6 +175,45 @@ await t('tokens ARE summed across an eviction (they restart from zero, so disjoi
     assert.equal(m.inputTokens, 11_000_000);
     assert.equal(m.outputTokens, 625_000);
     assert.equal(m.openaiBatches, 1250);
+});
+
+await t('sumWithResets: climbing values within one SW lifetime are NOT summed', () => {
+    assert.equal(sumWithResets([100, 250, 400]), 400);
+});
+await t('sumWithResets: a drop marks a reset, and both lifetimes count', () => {
+    assert.equal(sumWithResets([6600, 4400]), 11000);
+    assert.equal(sumWithResets([100, 250, 50, 80]), 330);
+});
+await t('sumWithResets: empty / single / zero', () => {
+    assert.equal(sumWithResets([]), 0);
+    assert.equal(sumWithResets([42]), 42);
+    assert.equal(sumWithResets([0, 0]), 0);
+});
+
+await t('post-eviction HEARTBEATS are not summed into a phantom total', () => {
+    // No sessionId ⇒ every heartbeat inserts its own row, cumulative within the
+    // new SW lifetime. Truth: lifetime 1 = 6.6M, lifetime 2 = 4.4M ⇒ 11.0M.
+    // A naive sum of the four rows would report 20.9M — nearly double.
+    const rows = [
+        { _id: 'a', operatorName: 'op1', clientEmail: 'c@x.com', startedAt: SESSION_START, endedAt: '2026-07-20T05:00:00.000Z', captures: 4000, modelStats: { inputTokens: 3_300_000 } },
+        { _id: 'b', operatorName: 'op1', clientEmail: 'c@x.com', startedAt: SESSION_START, endedAt: '2026-07-20T05:30:00.000Z', captures: 6000, modelStats: { inputTokens: 6_600_000 } },
+        { _id: 'c', operatorName: 'op1', clientEmail: 'c@x.com', startedAt: SESSION_START, endedAt: '2026-07-20T06:00:00.000Z', captures: 8000, modelStats: { inputTokens: 2_200_000 } },
+        { _id: 'd', operatorName: 'op1', clientEmail: 'c@x.com', startedAt: SESSION_START, endedAt: '2026-07-20T06:30:00.000Z', captures: 10000, modelStats: { inputTokens: 4_400_000 } },
+    ];
+    const naive = rows.reduce((a, r) => a + r.modelStats.inputTokens, 0);
+    assert.equal(naive, 16_500_000);
+    const m = mergeSessionRows(rows);
+    assert.equal(m.inputTokens, 11_000_000, 'must not double-count cumulative heartbeats');
+    assert.equal(m.captures, 10000);
+    assert.equal(m.duplicateRows, 3);
+});
+
+await t('row order in the DB does not change the answer', () => {
+    const rows = [
+        { _id: 'b', operatorName: 'op1', clientEmail: 'c@x.com', startedAt: SESSION_START, endedAt: '2026-07-20T06:00:00.000Z', captures: 10000, modelStats: { inputTokens: 4_400_000 } },
+        { _id: 'a', operatorName: 'op1', clientEmail: 'c@x.com', startedAt: SESSION_START, endedAt: '2026-07-20T05:00:00.000Z', captures: 6000, modelStats: { inputTokens: 6_600_000 } },
+    ];
+    assert.equal(mergeSessionRows(rows).inputTokens, 11_000_000);
 });
 
 await t('genuinely separate sessions still add up', () => {

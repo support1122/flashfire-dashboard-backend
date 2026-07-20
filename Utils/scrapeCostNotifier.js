@@ -118,43 +118,69 @@ function todayMatch() {
 //
 // The two counter families then merge DIFFERENTLY, because they behave
 // differently across an eviction:
-//   captures / linkedinSkipped — restored from the persisted jobs Map, so each
-//       row already holds the running total → take the MAX (they overlap).
-//   tokens / judged / picks / pushed — live in auto.stats, which is NOT
-//       persisted, so each row holds only the increments since the last
-//       eviction → SUM them (they are disjoint).
-// Get this backwards and you either double-count captures or throw away tokens.
+//   captures — restored from the persisted jobs Map, so EVERY row already holds
+//       the session running total → take the MAX (they fully overlap).
+//   tokens / batches — live in auto.stats, which is NOT persisted. They climb
+//       cumulatively while one service worker is alive, then RESET to zero when
+//       it is evicted and start climbing again → a resetting counter (below).
+// Get this backwards and you either double-count jobs or mis-count tokens.
 //
+// Why not a plain sum for tokens: without a sessionId EVERY heartbeat inserts
+// its own row, and within one service-worker lifetime those rows are cumulative
+// (100, then 250, then 400 …). Summing them would over-count badly. Only a drop
+// in the value marks a genuine reset.
+//
+// sumWithResets — total of a counter that climbs, then restarts at zero.
+// Values must be in chronological order.
+//   [100, 250]        → 250  (one lifetime, still climbing)
+//   [6600, 4400]      → 11000 (dropped ⇒ evicted ⇒ two lifetimes)
+//   [100, 250, 50, 80] → 330  (lifetime 1 ended at 250, lifetime 2 at 80)
+export function sumWithResets(values) {
+    let total = 0, prev = 0;
+    for (const raw of values) {
+        const v = Math.max(0, Number(raw) || 0);
+        total += v >= prev ? v - prev : v; // climbing → add delta; dropped → fresh count
+        prev = v;
+    }
+    return total;
+}
+
 // Exported for tests. Pure — takes rows, returns totals.
 export function mergeSessionRows(rows) {
+    // Chronological: sumWithResets can only spot a reset in time order.
+    const ordered = [...(rows || [])].sort((a, b) => {
+        const ta = new Date(a.endedAt || a.updatedAt || a.startedAt || 0).getTime();
+        const tb = new Date(b.endedAt || b.updatedAt || b.startedAt || 0).getTime();
+        return ta - tb;
+    });
+
     const bySession = new Map();
-    for (const r of rows || []) {
+    for (const r of ordered) {
         // Null startedAt (pre-sessionId rows) can't be grouped safely: fall back
         // to the row id so those stay distinct instead of collapsing together.
         const key = r.startedAt
             ? `${r.operatorName || ""}|${r.clientEmail || ""}|${new Date(r.startedAt).toISOString()}`
             : `row:${r._id}`;
         const m = r.modelStats || {};
-        const cur = bySession.get(key);
+        let cur = bySession.get(key);
         if (!cur) {
-            bySession.set(key, {
-                captures: r.captures || 0,
-                openaiBatches: m.openaiBatches || 0,
-                geminiBatches: m.geminiBatches || 0,
-                inputTokens: m.inputTokens || 0,
-                outputTokens: m.outputTokens || 0,
-                cachedTokens: m.cachedTokens || 0,
-                rows: 1,
-            });
-            continue;
+            cur = { captures: 0, series: { openaiBatches: [], geminiBatches: [], inputTokens: [], outputTokens: [], cachedTokens: [] }, rows: 0 };
+            bySession.set(key, cur);
         }
-        cur.captures = Math.max(cur.captures, r.captures || 0); // overlapping
-        cur.openaiBatches += m.openaiBatches || 0;              // disjoint
-        cur.geminiBatches += m.geminiBatches || 0;
-        cur.inputTokens += m.inputTokens || 0;
-        cur.outputTokens += m.outputTokens || 0;
-        cur.cachedTokens += m.cachedTokens || 0;
+        cur.captures = Math.max(cur.captures, r.captures || 0); // fully overlapping
+        cur.series.openaiBatches.push(m.openaiBatches || 0);
+        cur.series.geminiBatches.push(m.geminiBatches || 0);
+        cur.series.inputTokens.push(m.inputTokens || 0);
+        cur.series.outputTokens.push(m.outputTokens || 0);
+        cur.series.cachedTokens.push(m.cachedTokens || 0);
         cur.rows += 1;
+    }
+    for (const s of bySession.values()) {
+        s.openaiBatches = sumWithResets(s.series.openaiBatches);
+        s.geminiBatches = sumWithResets(s.series.geminiBatches);
+        s.inputTokens = sumWithResets(s.series.inputTokens);
+        s.outputTokens = sumWithResets(s.series.outputTokens);
+        s.cachedTokens = sumWithResets(s.series.cachedTokens);
     }
     const out = {
         captures: 0, openaiBatches: 0, geminiBatches: 0,
@@ -182,7 +208,7 @@ export function mergeSessionRows(rows) {
 // in code than in a pipeline. Volume is one row per operator-session per day.
 async function getTodayExtensionTotals() {
     const rows = await ExtensionSessionStat.find(todayMatch())
-        .select("captures modelStats startedAt operatorName clientEmail")
+        .select("captures modelStats startedAt endedAt updatedAt operatorName clientEmail")
         .lean();
     return mergeSessionRows(rows);
 }
