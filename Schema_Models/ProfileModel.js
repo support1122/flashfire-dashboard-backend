@@ -523,6 +523,16 @@ export const profileSchema = new mongoose.Schema({
     // 0.15 setting or an experimental tuning.
     temperature: { type: Number, required: false, default: 0 },
   },
+  // Snapshot of the PREVIOUS aiSummary, taken every time a build or manual
+  // edit overwrites it. Powers the "what changed" diff in clients-tracking
+  // so operators can see exactly which bullets a rebuild (e.g. one driven
+  // by client removal feedback) added or dropped. One version deep.
+  aiSummaryPrevious: {
+    text: { type: String, required: false, default: "" },
+    builtAt: { type: Date, required: false, default: null },
+    source: { type: String, required: false, default: "" },
+    wordCount: { type: Number, required: false, default: 0 },
+  },
   // True when the profile has changed since the last summary build.
   // Set true by Add_Update_Profile.js / file-upload paths; reset to false
   // when BuildAiSummary or UpdateAiSummary completes. Drives "rebuild"

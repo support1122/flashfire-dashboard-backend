@@ -424,24 +424,193 @@ ${text}
 ═══════════════════════════════════════════════════════════════════════`;
 }
 
+// Purely logistical removal reasons (duplicate card, already applied,
+// posting closed) carry no preference signal. Shared by UpdateChanges (to
+// skip storing/rebuilding) and by this file (to drop legacy entries that
+// were stored before the filter existed). A reason is logistical only when
+// EVERY ";"/"."-separated segment matches — "Duplicate job; Company isn't
+// a fit" still carries signal.
+const LOGISTICAL_SEGMENT = /^(duplicate(\s+job)?|already\s+applied(\s+(on\s+my\s+own|elsewhere|myself))?|applied\s+(already|myself|on\s+my\s+own|elsewhere|via\s+referral)|(job|posting|position|role)\s+(closed|expired|no\s+longer\s+(available|active|open))|(closed|expired)\s+(job|posting))$/i;
+export function isPureLogisticalReason(reason) {
+    const segments = String(reason)
+        .split(/[;.]/)
+        .map((s) => s.trim().replace(/[!?,]+$/, ""))
+        .filter(Boolean);
+    return segments.length > 0 && segments.every((s) => LOGISTICAL_SEGMENT.test(s));
+}
+
+// usableRemovalFeedback: reasoned, non-logistical entries, newest first,
+// capped for the prompt. Single source of truth for the prompt block AND
+// the deterministic enforcement pass.
+const REMOVAL_FEEDBACK_PROMPT_LIMIT = 10;
+function usableRemovalFeedback(profile) {
+    return (Array.isArray(profile?.removalFeedback) ? profile.removalFeedback : [])
+        .filter((i) => i?.reason && String(i.reason).trim() && !isPureLogisticalReason(i.reason))
+        .slice(0, REMOVAL_FEEDBACK_PROMPT_LIMIT);
+}
+
+// companyRejectedByEntry: true when the entry's reason rejects the COMPANY
+// itself — the "Company isn't a fit" / "No visa sponsorship" chips, or free
+// text that names the company ("i don't want jobs from google"). These are
+// resolved deterministically: the company name comes from the entry's job
+// context, never from model inference.
+function companyRejectedByEntry(entry) {
+    const reason = String(entry?.reason || "");
+    const company = String(entry?.companyName || "").trim();
+    if (!company || company.length < 3) return false;
+    if (/company\s+(isn'?t|is\s+not)\s+a\s+fit/i.test(reason)) return true;
+    if (/no\s+visa\s+sponsorship/i.test(reason)) return true;
+    // Free-text sponsorship complaints are company-specific even when the
+    // company isn't named — "they don't sponsor h1b" means THIS employer.
+    if (/(they|company|employer)\s+(don'?t|do\s+not|won'?t|doesn'?t|does\s+not)\s+(provide\s+|offer\s+|give\s+)?(visa\s+|h-?1b\s+)?sponsor/i.test(reason)) return true;
+    return reason.toLowerCase().includes(company.toLowerCase());
+}
+
+// --- deterministic title/family helpers -----------------------------------
+// cleanTitleForSkip: strip seniority markers, level suffixes, and
+// parenthetical qualifiers so "Software Engineer II, Backend (Capital
+// Orchestration)" becomes a reusable pattern "Software Engineer Backend".
+const TITLE_NOISE = /\b(senior|junior|staff|principal|lead|sr|jr|entry|level|intern|internship|associate|assistant|i{1,3}|iv|v|l\d+|\d+)\b/gi;
+function cleanTitleForSkip(title) {
+    return String(title || "")
+        .replace(/\(.*?\)/g, " ")
+        .replace(/[,/|–—-]+/g, " ")
+        .replace(TITLE_NOISE, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+}
+
+// Generic role nouns carry no family signal on their own ("Engineer" in a
+// QA title must not collide with "Software Engineer" in preferredRoles) —
+// overlap is decided by the QUALIFIER tokens only.
+const GENERIC_ROLE_TOKENS = new Set([
+    "engineer", "engineering", "developer", "analyst", "manager", "specialist",
+    "consultant", "associate", "scientist", "architect", "coordinator", "lead",
+]);
+function qualifierTokens(s) {
+    const stop = new Set(["and", "the", "for", "with", "of", "in", "a", "an", "or",
+        "roles", "role", "jobs", "job", "position", "positions"]);
+    return String(s).toLowerCase().split(/[^a-z0-9+#]+/)
+        .filter((t) => t.length >= 2 && !stop.has(t) && !GENERIC_ROLE_TOKENS.has(t));
+}
+// titleOverlapsPreferred: true when the removed job's qualifier tokens
+// intersect the profile's preferredRoles qualifiers — meaning a family-wide
+// skip would contradict what the client actually wants.
+function titleOverlapsPreferred(cleanedTitle, profile) {
+    const prefSet = new Set(qualifierTokens((profile?.preferredRoles || []).join(" ")));
+    if (!prefSet.size) return false;
+    return qualifierTokens(cleanedTitle).some((t) => prefSet.has(t));
+}
+
+// deterministicRemovalBullets: everything about an entry we can resolve in
+// CODE, with zero model involvement. Each item is enforced post-build via
+// ensureBulletInSection, so these signals hold even if the model drops
+// every one of them. Conservative by design: anything ambiguous falls back
+// to a # Notes for Grader line instead of a hard skip.
+export function deterministicRemovalBullets(profile) {
+    const out = [];
+    const seen = new Set();
+    const push = (header, needle, bullet) => {
+        const key = `${header}|${needle.toLowerCase()}`;
+        if (seen.has(key)) return;
+        seen.add(key);
+        out.push({ header, needle, bullet });
+    };
+    for (const entry of usableRemovalFeedback(profile)) {
+        const reason = String(entry.reason || "");
+        const company = String(entry.companyName || "").trim();
+        const title = String(entry.jobTitle || "").trim();
+        const cleaned = cleanTitleForSkip(title);
+
+        // 1. Company rejection — chips, free text naming the company, or
+        //    company-specific sponsorship complaints.
+        if (companyRejectedByEntry(entry)) {
+            push("# Hard Disqualifiers", `${company} jobs`, `- Skip ${company} jobs.`);
+        }
+        // 2. Staffing / consulting agency complaints.
+        if (/staffing|recruit(?:er|ing)?\s+agency|consultanc/i.test(reason)) {
+            push("# Hard Disqualifiers", "staffing", "- Skip staffing or consulting agency companies.");
+        }
+        // 3. Explicit family in free text: "this is a qa role", "it is a
+        //    sales job" — the client named the family themselves.
+        const fam = reason.match(/(?:this|it)\s+is\s+an?\s+([a-z][a-z /&+-]{1,40}?)\s+(?:role|job|position)/i);
+        if (fam) {
+            const family = fam[1].trim();
+            if (family && !titleOverlapsPreferred(family, profile)) {
+                push("# Hard Disqualifiers", family, `- Skip ${family} roles.`);
+            }
+        }
+        // 4. "Not my target role" chip — skip the cleaned title pattern,
+        //    but NEVER when it overlaps a preferred role family.
+        if (/not\s+my\s+target\s+role/i.test(reason) && cleaned) {
+            if (!titleOverlapsPreferred(cleaned, profile)) {
+                const needleTokens = qualifierTokens(cleaned).slice(0, 2).join(" ") || cleaned.toLowerCase();
+                push("# Hard Disqualifiers", needleTokens, `- Skip roles like "${cleaned}".`);
+            } else {
+                push("# Notes for Grader", title, `- Removal feedback: the candidate removed "${title}"${company ? ` at ${company}` : ""} as not their target role — down-rank near-identical postings even within their preferred families.`);
+            }
+        }
+        // 5. Seniority — word marker from the title, or "too junior/senior"
+        //    in free text.
+        const senMatch = title.match(/\b(junior|jr|senior|sr|staff|principal|lead|director|vp|head)\b/i)
+            || reason.match(/too\s+(junior|senior)/i);
+        if ((/wrong\s+seniority\s+level/i.test(reason) || /too\s+(junior|senior)/i.test(reason)) && senMatch) {
+            const band = senMatch[1].toLowerCase().replace(/^jr$/, "junior").replace(/^sr$/, "senior");
+            push("# Hard Disqualifiers", `${band} level roles`, `- Skip ${band}-level roles.`);
+        }
+        // 6. Location / salary — grader guidance, never hard skips.
+        if (/location\s+doesn'?t\s+work/i.test(reason)) {
+            push("# Notes for Grader", `location ${company || title}`, `- Removal feedback: the location of "${title}"${company ? ` at ${company}` : ""} doesn't work for the candidate — verify location fit on similar postings.`);
+        }
+        if (/salary\s+is\s+below\s+my\s+range|salary\s+(is\s+)?too\s+low/i.test(reason)) {
+            push("# Notes for Grader", `salary ${company || title}`, `- Removal feedback: "${title}"${company ? ` at ${company}` : ""} paid below the candidate's range — down-rank postings at that level/pay band.`);
+        }
+    }
+    return out;
+}
+
+// resolveEntryDirectives: pre-resolve each chip into an explicit action the
+// model cannot misroute — the company/title are substituted server-side.
+function resolveEntryDirectives(entry) {
+    const reason = String(entry?.reason || "");
+    const company = String(entry?.companyName || "").trim();
+    const title = String(entry?.jobTitle || "").trim();
+    const out = [];
+    if (companyRejectedByEntry(entry)) {
+        out.push(`REQUIRED: add "Skip ${company} jobs." under # Hard Disqualifiers.`);
+    }
+    if (/not\s+my\s+target\s+role/i.test(reason)) {
+        out.push(`Read the role family off the TITLE ("${title}"). If that family is NOT among the profile's preferredRoles → add "Skip <role family> roles." under # Hard Disqualifiers. If it overlaps a preferred role → do NOT skip it; add a # Notes for Grader sentence to down-rank near-identical postings.`);
+    }
+    if (/wrong\s+seniority\s+level/i.test(reason)) {
+        out.push(`Read the seniority marker off the TITLE ("${title}") and add "Skip <that seniority band> roles." under # Hard Disqualifiers.`);
+    }
+    if (/location\s+doesn'?t\s+work/i.test(reason)) {
+        out.push(`Add a # Notes for Grader sentence down-ranking this job's location; never contradict preferredLocations.`);
+    }
+    if (/salary\s+is\s+below\s+my\s+range/i.test(reason)) {
+        out.push(`Add a # Notes for Grader sentence: postings at this job's level/pay band are below the candidate's salary floor.`);
+    }
+    return out;
+}
+
 // renderRemovalFeedbackBlock: client-authored removal feedback. When the
 // client removes a job card from their dashboard they say why; UpdateChanges
 // pushes each reason onto profile.removalFeedback (newest first) and fires an
 // auto rebuild. Rendered directly BELOW the operator-notes block — HIGH
-// priority, but operator notes always win on conflict. These are candidate
-// preference signals, not operator directives, so they carry their own
-// routing rules instead of the SCRAP/SKIP contract. Empty → empty string.
-const REMOVAL_FEEDBACK_PROMPT_LIMIT = 10;
+// priority, but operator notes always win on conflict. Each entry is
+// pre-resolved server-side into explicit directives (company/title already
+// substituted) so a generic chip like "Company isn't a fit" can never lose
+// its company. Empty → empty string.
 function renderRemovalFeedbackBlock(profile) {
-    const items = Array.isArray(profile?.removalFeedback)
-        ? profile.removalFeedback.filter((i) => i?.reason && String(i.reason).trim())
-        : [];
-    if (!items.length) return "";
-    const recent = items.slice(0, REMOVAL_FEEDBACK_PROMPT_LIMIT);
+    const recent = usableRemovalFeedback(profile);
+    if (!recent.length) return "";
     const lines = recent.map((i) => {
         const when = i.removedAt ? new Date(i.removedAt).toISOString().slice(0, 10) : "";
         const jobBits = [i.jobTitle, i.companyName].filter(Boolean).join(" @ ");
-        return `  • ${when ? `[${when}] ` : ""}${jobBits ? `${jobBits} — ` : ""}"${String(i.reason).trim()}"`;
+        const head = `  • ${when ? `[${when}] ` : ""}${jobBits ? `${jobBits} — ` : ""}"${String(i.reason).trim()}"`;
+        const actions = resolveEntryDirectives(i).map((d) => `      → ${d}`);
+        return [head, ...actions].join("\n");
     });
     return `## CLIENT REMOVAL FEEDBACK (HIGH PRIORITY — direct candidate signal, second only to operator notes)
 The candidate removed these jobs from their own tracker and told us why
@@ -456,6 +625,11 @@ REASON FORMAT: the dashboard lets the client pick quick-reason phrases
 (joined by ";") and/or type free text (appended after ". "). So a reason
 may be chip-phrases only, free text only, or both. Process EVERY phrase in
 an entry as its own signal about the SAME job.
+
+ENTRY ACTIONS: every "→" line under an entry is a PRE-RESOLVED directive —
+the company/title has already been substituted from the removed job. A
+"→ REQUIRED:" line is MANDATORY: its bullet MUST appear verbatim in the
+stated section. Missing a REQUIRED line is a CRITICAL FAILURE.
 
 CHIP LEXICON (exact phrases → mechanical routing):
 - "Not my target role" → the signal is the removed job's TITLE. Identify
@@ -949,16 +1123,20 @@ async function callOpenAI(profile, resume, existingSummary, profileDiff, apiKey,
 // reflected with correct polarity. Runs only when notes exist (+1 call/build).
 // Fail-open: returns the input brief unchanged on any error/empty — the
 // deterministic enforceNoteDirectives still runs afterwards as the guarantee.
-async function applyNotesPass(brief, notesText, apiKey) {
-  if (!notesText) return brief;
-  const sys = `You revise a candidate brief so it FULLY reflects the operator's notes. Output ONLY the corrected brief — same section headers, same order, keep all existing content, change nothing the notes don't require.
+async function applyNotesPass(brief, notesText, apiKey, removalDirectivesText = "") {
+  if (!notesText && !removalDirectivesText) return brief;
+  const sys = `You revise a candidate brief so it FULLY reflects the operator's notes and the client's removal-feedback directives. Output ONLY the corrected brief — same section headers, same order, keep all existing content, change nothing the inputs don't require.
 Rules:
 - A note line beginning "SCRAP:" = the candidate WANTS it (TARGET). "SKIP:" = EXCLUDE it. The prefix is the FINAL polarity — NEVER flip it. For un-prefixed lines: "scrap X" (no negation) = TARGET; "do not scrap X" / "skip X" = EXCLUDE.
 - Every TARGET directive MUST appear in "# Strong Signals" as "- <X> — operator priority".
 - Every EXCLUDE directive MUST appear in "# Hard Disqualifiers" as "- Skip <X>.".
 - Include EVERY directive — do not drop, merge, soften, or duplicate; use the operator's wording.
-- NEVER put a wanted (SCRAP/target) role into Hard Disqualifiers.`;
-  const user = `Operator notes:\n<<<NOTES>>>\n${notesText}\n<<<END>>>\n\nCurrent brief:\n<<<BRIEF>>>\n${brief}\n<<<END>>>\n\nReturn the corrected full brief.`;
+- NEVER put a wanted (SCRAP/target) role into Hard Disqualifiers.
+- REMOVAL DIRECTIVES are pre-resolved actions from jobs the client removed: each states its exact bullet and section. Every one MUST be reflected; never skip a role family the candidate still prefers.`;
+  const removalBlock = removalDirectivesText
+    ? `\n\nRemoval-feedback directives:\n<<<REMOVALS>>>\n${removalDirectivesText}\n<<<END>>>`
+    : "";
+  const user = `Operator notes:\n<<<NOTES>>>\n${notesText || "(none)"}\n<<<END>>>${removalBlock}\n\nCurrent brief:\n<<<BRIEF>>>\n${brief}\n<<<END>>>\n\nReturn the corrected full brief.`;
   try {
     const res = await axios.post("https://api.openai.com/v1/chat/completions", {
       model: OPENAI_MODEL,
@@ -970,7 +1148,11 @@ Rules:
       model: res.data?.model || OPENAI_MODEL,
       usage: res.data?.usage,
     });
-    const fixed = (res.data?.choices?.[0]?.message?.content || "").trim();
+    // Strip any <<<MARKER>>> lines the model echoes back from the prompt
+    // wrappers before length sanity — they are prompt scaffolding, not brief.
+    const fixed = (res.data?.choices?.[0]?.message?.content || "")
+      .replace(/^\s*<{2,}[^<>]*>{2,}\s*$/gm, "")
+      .trim();
     return fixed.length > 50 ? fixed : brief; // sanity: ignore a truncated/empty rewrite
   } catch (e) {
     console.warn("[BuildAiSummary] applyNotesPass failed, keeping round-1:", e.message);
@@ -1026,6 +1208,24 @@ function escapeRegex(s) {
   return String(s).replace(/[-/\\^$*+?.()|[\]{}]/g, "\\$&");
 }
 
+// enforceRemovalDirectives — deterministic backstop for removal feedback,
+// mirroring enforceNoteDirectives: for every feedback entry that rejects a
+// COMPANY (chips "Company isn't a fit" / "No visa sponsorship", or free
+// text naming the company), GUARANTEE "Skip <Company> jobs." exists under
+// # Hard Disqualifiers — regardless of what the model emitted. This is what
+// makes company rejection 100% reliable; the prompt handles the softer
+// pattern-level signals (role family, seniority, location, salary).
+function enforceRemovalDirectives(summary, profile) {
+  const bullets = deterministicRemovalBullets(profile);
+  if (!bullets.length) return summary;
+  const norm = (s) => String(s).toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  let out = summary;
+  for (const b of bullets) {
+    out = ensureBulletInSection(out, b.header, b.needle, b.bullet, norm);
+  }
+  return out;
+}
+
 // enforceNoteDirectives — deterministic "round 2": after the LLM writes the
 // brief, GUARANTEE every explicit `SKIP:`/`SCRAP:` operator-note line is
 // reflected with the correct polarity (SCRAP→Strong Signals priority,
@@ -1045,7 +1245,13 @@ function enforceNoteDirectives(summary, notesText) {
     if (/^scrap$/i.test(m[1])) {
       out = ensureBulletInSection(out, "# Strong Signals", text, `- ${text} — operator priority`, norm);
     } else {
-      out = ensureBulletInSection(out, "# Hard Disqualifiers", text, `- Skip ${text}.`, norm);
+      // A conditional / full-sentence rule ("If in job title, ... do not
+      // scrap them") reads wrong with a "Skip " prefix bolted on — render
+      // it verbatim as its own rule bullet instead.
+      const bullet = /^if\s/i.test(text) || /\bdo\s+not\b|\bdon'?t\b/i.test(text)
+        ? `- ${text.replace(/[.\s]+$/, "")}.`
+        : `- Skip ${text}.`;
+      out = ensureBulletInSection(out, "# Hard Disqualifiers", text, bullet, norm);
     }
   }
   return out;
@@ -1123,10 +1329,16 @@ async function runForProfileCore(profile, apiKey, reasonTag = "manual") {
   const provExtract = extractProvenance(summary, { noResume: !resume });
   summary = provExtract.cleanText;
   let aiProvenance = provExtract.provenance;
-  // Round 2 (LLM): re-apply the operator notes to the brief so every directive
-  // is reflected with correct polarity. enforceNoteDirectives below is the
-  // deterministic backstop in case this pass still misses one.
-  summary = (await applyNotesPass(summary, (profile?.aiNotes?.text || "").trim(), apiKey)).slice(0, MAX_SUMMARY_CHARS);
+  // Round 2 (LLM): re-apply the operator notes AND the pre-resolved removal
+  // directives so every directive is reflected with correct polarity. The
+  // deterministic enforce* passes below are the guarantee if this misses.
+  const removalDirectivesText = usableRemovalFeedback(profile)
+    .flatMap((entry) => {
+      const label = [entry.jobTitle, entry.companyName].filter(Boolean).join(" @ ");
+      return resolveEntryDirectives(entry).map((d) => `${label ? `[${label}] ` : ""}${d}`);
+    })
+    .join("\n");
+  summary = (await applyNotesPass(summary, (profile?.aiNotes?.text || "").trim(), apiKey, removalDirectivesText)).slice(0, MAX_SUMMARY_CHARS);
   // Apply operator's saved format overlay: if enabled, re-inject any bullets
   // the operator added on top of the previous build + replace any
   // locked-section bodies verbatim. Pure AI output if no overlay or overlay
@@ -1156,13 +1368,27 @@ async function runForProfileCore(profile, apiKey, reasonTag = "manual") {
   // Round 2 (deterministic): guarantee every SKIP:/SCRAP: operator-note line is
   // present with the right polarity, regardless of what the LLM emitted.
   summary = enforceNoteDirectives(summary, (profile?.aiNotes?.text || "").trim()).slice(0, MAX_SUMMARY_CHARS);
+  // Round 3 (deterministic): guarantee every company-rejecting removal
+  // feedback entry produced its "Skip <Company> jobs." disqualifier.
+  summary = enforceRemovalDirectives(summary, profile).slice(0, MAX_SUMMARY_CHARS);
   const wordCount = summary.trim().split(/\s+/).filter(Boolean).length;
 
   const builtAt = new Date();
+  // Keep the outgoing summary as the "previous version" so the tracking UI
+  // can diff old vs new after every rebuild.
+  const previousSnapshot = (profile?.aiSummary || "").trim()
+    ? {
+        text: profile.aiSummary,
+        builtAt: profile.aiSummaryMeta?.builtAt || null,
+        source: profile.aiSummaryMeta?.source || "",
+        wordCount: profile.aiSummaryMeta?.wordCount || 0,
+      }
+    : null;
   const updated = await ProfileModel.findOneAndUpdate(
     { _id: profile._id },
     {
       $set: {
+        ...(previousSnapshot ? { aiSummaryPrevious: previousSnapshot } : {}),
         aiSummary: summary,
         aiSummaryMeta: {
           builtAt,

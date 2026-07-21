@@ -35,7 +35,21 @@ export default async function UpdateAiSummary(req, res) {
         : trimmed.trim().split(/\s+/).filter(Boolean).length;
 
     const lower = String(email).toLowerCase();
+    // Snapshot the outgoing summary so the tracking UI can diff manual
+    // edits too, not just AI rebuilds.
+    const current = await ProfileModel.findOne({ email: lower })
+      .select("aiSummary aiSummaryMeta")
+      .lean();
+    const previousSnapshot = (current?.aiSummary || "").trim()
+      ? {
+          text: current.aiSummary,
+          builtAt: current.aiSummaryMeta?.builtAt || null,
+          source: current.aiSummaryMeta?.source || "",
+          wordCount: current.aiSummaryMeta?.wordCount || 0,
+        }
+      : null;
     const update = {
+      ...(previousSnapshot ? { aiSummaryPrevious: previousSnapshot } : {}),
       aiSummary: trimmed,
       aiSummaryMeta: {
         builtAt: new Date(),

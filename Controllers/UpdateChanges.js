@@ -3,7 +3,12 @@ import { JobModel } from "../Schema_Models/JobModel.js";
 import { UserModel } from "../Schema_Models/UserModel.js";
 import { ProfileModel } from "../Schema_Models/ProfileModel.js";
 import { DiscordConnect } from "../Utils/DiscordConnect.js";
-import { buildSummaryForEmail } from "./BuildAiSummary.js";
+// isPureLogisticalReason: duplicate/already-applied/posting-closed reasons
+// carry zero preference signal — they still land on the job + Discord, but
+// never enter removalFeedback or trigger a rebuild. Duplicates are already
+// prevented upstream by CheckForDuplicateJobs on /api/jobs. Shared with the
+// summary builder, which uses it to drop legacy logistical entries too.
+import { buildSummaryForEmail, isPureLogisticalReason } from "./BuildAiSummary.js";
 
 const REMOVAL_LIMIT = 100;
 // Newest-first cap on profile.removalFeedback — enough history for the AI
@@ -151,23 +156,6 @@ const sendDiscordNotification = async (userDetails, job, newStatus, oldStatus, r
     // Silently fail - don't block the main request
     console.error('Discord notification failed (non-blocking):', error.message);
   }
-};
-
-// Purely logistical removal reasons carry ZERO preference signal — the
-// client isn't rejecting a job pattern, just tidying their board. Duplicates
-// in particular are already prevented upstream (CheckForDuplicateJobs on
-// /api/jobs), so a "Duplicate job" removal is bookkeeping, not feedback.
-// These reasons still land on the job record + Discord, but must NOT enter
-// removalFeedback or trigger a summary rebuild. A reason is filtered only
-// when EVERY segment is logistical — "Duplicate job; Company isn't a fit"
-// still carries signal and goes through.
-const LOGISTICAL_SEGMENT = /^(duplicate(\s+job)?|already\s+applied(\s+(on\s+my\s+own|elsewhere|myself))?|applied\s+(already|myself|on\s+my\s+own|elsewhere|via\s+referral)|(job|posting|position|role)\s+(closed|expired|no\s+longer\s+(available|active|open))|(closed|expired)\s+(job|posting))$/i;
-const isPureLogisticalReason = (reason) => {
-  const segments = String(reason)
-    .split(/[;.]/)
-    .map((s) => s.trim().replace(/[!?,]+$/, ""))
-    .filter(Boolean);
-  return segments.length > 0 && segments.every((s) => LOGISTICAL_SEGMENT.test(s));
 };
 
 // Fire-and-forget: persist the client's removal reason on their profile as
