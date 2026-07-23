@@ -161,6 +161,20 @@ import { startAutoOptimizationWorker } from "./src/services/autoOptimizationWork
 
 dotenv.config();
 
+// A single stray promise rejection in any route or background worker must not
+// take the whole API down (Node >= 15 crashes the process by default). While
+// the process restarts, every client mid-request sees "Network error". Log
+// and keep serving instead.
+process.on("unhandledRejection", (reason) => {
+  console.error("[fatal-guard] Unhandled promise rejection:", reason);
+});
+// Synchronous throws leave undefined state — log, then exit so the platform
+// restarts us cleanly.
+process.on("uncaughtException", (err) => {
+  console.error("[fatal-guard] Uncaught exception, exiting for restart:", err);
+  process.exit(1);
+});
+
 const app = express();
 const PORT = process.env.PORT || 8086;
 const NODE_ENV = process.env.NODE_ENV || "development";
