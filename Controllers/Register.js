@@ -1,7 +1,6 @@
-import crypto from 'crypto'
 import dotenv from 'dotenv'
-import jwt from 'jsonwebtoken'
 import { UserModel } from '../Schema_Models/UserModel.js';
+import { signAuthToken } from '../Utils/AuthToken.js';
 import { encrypt } from '../Utils/CryptoHelper.js';
 dotenv.config();
 export default async function Register(req, res) {
@@ -30,7 +29,9 @@ export default async function Register(req, res) {
         let newUserDetails = await UserModel.findOne({email});
         
         // Generate JWT token
-        const token = jwt.sign({ email }, process.env.JWT_SECRET_KEY || process.env.JWT_SECRET || 'FLASHFIRE', { expiresIn: '7d' });
+        // Same secret every other login path signs with, so this token is
+        // accepted by LocalTokenValidator like any other session.
+        const token = signAuthToken({ email, name: newUserDetails.name });
         
         res.status(200).json({
             message: 'User registered successfully',

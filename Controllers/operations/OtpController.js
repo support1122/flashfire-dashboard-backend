@@ -10,6 +10,15 @@ import {
   otpHash,
 } from "../../Utils/otpCache.js";
 import { sendDashboardOtpEmail } from "../../Utils/sendDashboardOtpEmail.js";
+import { getDevSessionKeyBypass } from "./SessionKeys.js";
+
+// Same opt-in flag as the session-key bypass. Local runs usually cannot send
+// mail, so without this the OTP step is a dead end even though it is the
+// primary path the modal offers. Off unless DEV_SESSION_KEY_BYPASS === "true".
+function getDevOtp() {
+  if (!getDevSessionKeyBypass()) return null;
+  return String(process.env.DEV_OTP_CODE || "0000");
+}
 
 function generateFourDigitOtp() {
   return Math.floor(1000 + Math.random() * 9000).toString();
@@ -103,6 +112,20 @@ export async function verifyDashboardOtp(req, res) {
 
     if (!normalizedEmail || !otp) {
       return res.status(400).json({ success: false, error: "Email and OTP required" });
+    }
+
+    const devOtp = getDevOtp();
+    if (devOtp && String(otp).trim() === devOtp) {
+      console.warn(`⚠️  DEV_SESSION_KEY_BYPASS accepted the dev OTP for ${normalizedEmail}. This must never be enabled in production.`);
+      deleteOtp(normalizedEmail);
+      const devSecret = process.env.JWT_SECRET_KEY || process.env.JWT_SECRET || "FLASHFIRE";
+      return res.status(200).json({
+        success: true,
+        message: "OTP verified",
+        trustToken: jwt.sign({ email: normalizedEmail, purpose: "otp-trust" }, devSecret, { expiresIn: "30d" }),
+        expiresIn: "30d",
+        devBypass: true,
+      });
     }
 
     const entry = getOtp(normalizedEmail);

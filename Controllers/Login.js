@@ -1,11 +1,9 @@
 import { UserModel } from "../Schema_Models/UserModel.js";
 import { ProfileModel } from "../Schema_Models/ProfileModel.js";
 import dotenv from 'dotenv';
-import jwt from 'jsonwebtoken'
+import { signAuthToken, normalizeEmail } from "../Utils/AuthToken.js";
 import { decrypt } from "../Utils/CryptoHelper.js";
 dotenv.config();
-
-const normalizeEmail = (email) => String(email || "").trim().toLowerCase();
 const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 export default async function Login(req, res) {
@@ -49,7 +47,10 @@ export default async function Login(req, res) {
                          portfolioLinks: existanceOfUser.portfolioLinks || [],
                          dashboardManager: existanceOfUser.dashboardManager
                     },
-                    token: jwt.sign({ email: canonicalEmail }, process.env.JWT_SECRET_KEY || process.env.JWT_SECRET || 'FLASHFIRE', { expiresIn: '7d' }),
+                    // Signed with JWT_SECRET so the token is accepted by
+                    // LocalTokenValidator; it used to use JWT_SECRET_KEY, which
+                    // no validator ever checked.
+                    token: signAuthToken({ email: canonicalEmail, name: existanceOfUser.name }),
                     userProfile: hasProfile ? { ...profileLookUp.toObject(), removedJobsCount: existanceOfUser.removedJobsCount || 0 } : null,
                     hasProfile: hasProfile
                });
