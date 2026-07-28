@@ -23,6 +23,7 @@ import { serveCachedImage, getCacheStats, clearCache } from "./Controllers/Image
 import { serveDocProxy } from "./Controllers/DocProxy.js";
 import LocalTokenValidator from "./Middlewares/LocalTokenValidator.js";
 import RegisterVerify from "./Middlewares/RegisterVerify.js";
+import AdminKeyVerify from "./Middlewares/AdminKeyVerify.js";
 import ProfileCheck from "./Middlewares/ProfileCheck.js";
 import LoginVerify from "./Middlewares/LoginVerify.js";
 import CheckForDuplicateJobs from "./Middlewares/CheckForDuplicateJobs.js";
@@ -101,7 +102,9 @@ app.post("/login", Login);
 app.post("/google-oauth", GoogleOAuth);
 
 // Client management routes
-app.post("/api/clients/register", RegisterVerify, Register);
+// Account creation is admin-only: sign-in requires an account that already
+// exists, so nothing about this endpoint may be self-service.
+app.post("/api/clients/register", AdminKeyVerify, RegisterVerify, Register);
 app.get("/api/clients/all", getAllClients);
 app.get("/api/dashboard-managers", getDashboardManagers);
 app.get("/sync/managers", syncDashboardManagers);
@@ -297,7 +300,7 @@ app.post('/get-referral-stats', async (req, res) => {
 // Profile routes
 app.get("/get-profile", GetProfile);
 app.post("/check-profile", CheckProfile);
-app.post("/setprofile", ProfileCheck, Add_Update_Profile);
+app.post("/setprofile", LocalTokenValidator, ProfileCheck, Add_Update_Profile);
 // AI candidate summary — written by JR-direct extension's "Build Summary"
 // step. Persisted on the profile so every grading call reuses it.
 app.post("/update-ai-summary", UpdateAiSummary);

@@ -4,6 +4,29 @@ function generateEightDigitKey() {
      return Math.floor(10000000 + Math.random() * 90000000).toString();
 }
 
+/**
+ * Local-development escape hatch for the session-key step.
+ *
+ * Strictly opt-in: returns null unless DEV_SESSION_KEY_BYPASS is explicitly the
+ * string "true". It is never set in the deployed environments, so shipping this
+ * code changes nothing in production. Run it locally with:
+ *
+ *     npm run dev:bypass
+ *
+ * Deliberately NOT gated on NODE_ENV, because the checked-in .env here already
+ * says NODE_ENV=production and gating on that would make the flag a no-op on a
+ * normal local run.
+ *
+ * Scope: this is the SECOND factor only. The caller has already passed
+ * /operations/login with a real password to reach this endpoint, and the
+ * operator record must still exist in the database. It skips the session-key
+ * challenge, not authentication.
+ */
+export function getDevSessionKeyBypass() {
+     if (String(process.env.DEV_SESSION_KEY_BYPASS).toLowerCase() !== "true") return null;
+     return String(process.env.DEV_SESSION_KEY || "00000000");
+}
+
 export async function generateSessionKey(req, res) {
      try {
           const { username, duration = 24, createdBy = 'admin', target = 'dashboard' } = req.body || {};
@@ -140,6 +163,17 @@ export async function verifySessionKey(req, res) {
           if (!email || !sessionKey) return res.status(400).json({ error: 'email and sessionKey are required' });
           const opUser = await Operations.findOne({ email: email.toLowerCase() });
           if (!opUser) return res.status(404).json({ error: 'Operator not found' });
+
+          const devKey = getDevSessionKeyBypass();
+          if (devKey && String(sessionKey).trim() === devKey) {
+               console.warn(`⚠️  DEV_SESSION_KEY_BYPASS accepted the dev session key for ${email}. This must never be enabled in production.`);
+               return res.json({
+                    message: 'Session key verified',
+                    expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+                    devBypass: true,
+               });
+          }
+
           const now = Date.now();
           const entry = (opUser.sessionKeys || []).find(s => s.sessionKey === sessionKey && s.isActive && new Date(s.expiresAt).getTime() > now);
           if (!entry) return res.status(400).json({ error: 'Invalid or expired session key' });
