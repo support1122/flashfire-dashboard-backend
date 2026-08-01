@@ -111,22 +111,41 @@ app.get("/sync/managers", syncDashboardManagers);
 app.post("/refresh-token", RefreshToken);
 app.post('/get-updated-user', async (req, res) => {
   try {
-    const existanceOfUser = await UserModel.findOne({ email: req.body.email });
-    res.status(200).json({
-      name: existanceOfUser?.name,
-      email: existanceOfUser?.email,
-      planType: existanceOfUser?.planType,
-      userType: existanceOfUser?.userType,
-      planLimit: existanceOfUser?.planLimit,
-      resumeLink: existanceOfUser?.resumeLink,
-      coverLetters: existanceOfUser?.coverLetters,
-      optimizedResumes: existanceOfUser?.optimizedResumes,
-      transcript: existanceOfUser?.transcript,
-      portfolioLinks: existanceOfUser?.portfolioLinks || [],
-      dashboardManager: existanceOfUser?.dashboardManager
+    const email = req.body?.email;
+    if (!email) {
+      return res.status(400).json({ message: "email is required", code: "MISSING_EMAIL" });
+    }
+
+    const existanceOfUser = await UserModel.findOne({ email });
+
+    // A miss used to fall through to the 200 below, which serialised every
+    // field as undefined and shipped `{"portfolioLinks":[]}` with no email.
+    // The dashboard trusted that and overwrote its stored session with it,
+    // stranding the user in a half-authenticated state that survived reloads
+    // and could only be escaped by clearing site data. Operators legitimately
+    // miss here because they live in the Operations collection, so answer 404
+    // and let the client keep the session it already has.
+    if (!existanceOfUser) {
+      return res.status(404).json({ message: "User not found", code: "ACCOUNT_NOT_FOUND" });
+    }
+
+    return res.status(200).json({
+      name: existanceOfUser.name,
+      email: existanceOfUser.email,
+      planType: existanceOfUser.planType,
+      userType: existanceOfUser.userType,
+      planLimit: existanceOfUser.planLimit,
+      resumeLink: existanceOfUser.resumeLink,
+      coverLetters: existanceOfUser.coverLetters,
+      optimizedResumes: existanceOfUser.optimizedResumes,
+      transcript: existanceOfUser.transcript,
+      portfolioLinks: existanceOfUser.portfolioLinks || [],
+      dashboardManager: existanceOfUser.dashboardManager
     })
   } catch (error) {
-    console.log(error)
+    // This used to log and never respond, hanging the request until timeout.
+    console.error('get-updated-user error:', error);
+    return res.status(500).json({ message: "Internal server error" });
   }
 })
 
