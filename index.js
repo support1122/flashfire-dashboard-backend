@@ -146,6 +146,7 @@
 
 
 import express from "express";
+import Stripe from "stripe";
 import cors from "cors";
 import dotenv from "dotenv";
 import helmet from "helmet";
@@ -247,6 +248,104 @@ app.use(helmet({
     },
   },
 }));
+// ── Stripe webhook — MUST be before express.json() to preserve raw body ──
+app.post("/api/stripe-webhook", express.raw({ type: "application/json" }), async (req, res) => {
+  const sig = req.headers["stripe-signature"];
+  const stripeSecret = process.env.STRIPE_SECRET_KEY;
+  const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
+  const discordUrl = process.env.DISCORD_STRIPE_WEBHOOK_URL;
+
+  if (!stripeSecret || !webhookSecret) {
+    console.error("Stripe keys not configured");
+    return res.status(500).send("Stripe not configured");
+  }
+
+  const stripe = new Stripe(stripeSecret);
+  let event;
+  try {
+    event = stripe.webhooks.constructEvent(req.body, sig, webhookSecret);
+  } catch (err) {
+    console.error("Stripe webhook signature failed:", err.message);
+    return res.status(400).send(`Webhook Error: ${err.message}`);
+  }
+
+  if (event.type !== "checkout.session.completed") {
+    return res.json({ received: true });
+  }
+
+  const session = event.data.object;
+  const email = (session.client_reference_id || session.customer_details?.email || "").toLowerCase();
+  const metadata = session.metadata || {};
+  const type = metadata.type;
+  const planTarget = metadata.plan;
+  const addonApps = metadata.addon;
+  const currency = (session.currency || "usd").toUpperCase();
+  const amountPaid = ((session.amount_total || 0) / 100).toFixed(2);
+  const currentDate = new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" });
+
+  if (!email) {
+    console.error("Stripe webhook: no email found");
+    return res.status(200).json({ received: true, warning: "no email" });
+  }
+
+  try {
+    const { UserModel } = await import("./Schema_Models/UserModel.js");
+
+    const user = await UserModel.findOne({ email });
+    if (!user) {
+      console.error(`Stripe webhook: user not found for ${email}`);
+      return res.status(200).json({ received: true, warning: "user not found" });
+    }
+
+    if (type === "upgrade" && planTarget) {
+      const planLimits = { prime: 160, ignite: 250, professional: 500, executive: 1200 };
+      const planKey = planTarget.toLowerCase();
+      const capitalizedPlan = planKey.charAt(0).toUpperCase() + planKey.slice(1);
+      const planLimit = planLimits[planKey] || null;
+
+      await UserModel.updateOne(
+        { email },
+        { $set: { planType: capitalizedPlan, planLimit, amountPaid, updatedAt: currentDate } }
+      );
+      console.log(`✅ Stripe webhook: upgraded ${email} to ${capitalizedPlan}`);
+
+      if (discordUrl) {
+        await fetch(discordUrl, {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ content: `✅ **Plan Upgrade via Stripe**\n📧 ${email}\n📦 → ${capitalizedPlan}\n💰 ${currency} ${amountPaid}` }),
+        }).catch(() => {});
+      }
+
+    } else if (type === "addon" && addonApps) {
+      const newAddon = { type: addonApps, price: parseFloat(amountPaid), currency, addedAt: currentDate };
+      const currentPaid = parseFloat(user.amountPaid?.replace(/[^0-9.]/g, "") || "0");
+      const newTotal = (currentPaid + parseFloat(amountPaid)).toFixed(2);
+
+      await UserModel.updateOne(
+        { email },
+        { $push: { addons: newAddon }, $set: { amountPaid: newTotal } }
+      );
+      console.log(`✅ Stripe webhook: added +${addonApps} addon to ${email}`);
+
+      if (discordUrl) {
+        await fetch(discordUrl, {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ content: `✅ **Add-On Purchase via Stripe**\n📧 ${email}\n➕ +${addonApps} applications\n💰 ${currency} ${amountPaid}` }),
+        }).catch(() => {});
+      }
+
+    } else {
+      console.warn(`Stripe webhook: unhandled metadata type="${type}" plan="${planTarget}" addon="${addonApps}"`);
+    }
+
+  } catch (err) {
+    console.error("Stripe webhook processing error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+
+  res.json({ received: true });
+});
+
 // Body parsing middleware
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ extended: true, limit: "50mb" }));

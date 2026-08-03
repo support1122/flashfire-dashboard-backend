@@ -58,6 +58,18 @@ export const userSchema = new mongoose.Schema(
       type: String,
       default: ""
     },
+    addons: {
+      type: [
+        {
+          type: { type: String },
+          price: { type: Number },
+          currency: { type: String, default: "USD" },
+          addedAt: { type: String },
+        }
+      ],
+      default: []
+    },
+    amountPaid: { type: String, default: "0" },
   },
   { timestamps: true }
 );
