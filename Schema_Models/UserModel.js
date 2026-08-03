@@ -70,6 +70,7 @@ export const userSchema = new mongoose.Schema(
       default: []
     },
     amountPaid: { type: String, default: "0" },
+    currency: { type: String, default: "USD" }, // "USD", "CAD", "GBP"
   },
   { timestamps: true }
 );
