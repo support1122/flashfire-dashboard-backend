@@ -66,7 +66,9 @@ export async function sendViaSmtp({ to, subject, html, text, replyTo, attachment
   if (!to || !subject || (!html && !text)) return { ok: false, error: "missing_required_fields" };
 
   const fromEmail = smtpFromEmail();
-  const fromName = process.env.SMTP_FROM_NAME || "";
+  // Default the display name so a bare SMTP_USER/SMTP_PASS setup still sends
+  // from "FlashFire <address>" rather than a naked address.
+  const fromName = process.env.SMTP_FROM_NAME || "FlashFire";
   const from = fromName ? `"${fromName}" <${fromEmail}>` : fromEmail;
 
   const mail = { from, to, subject, html, text, ...(replyTo ? { replyTo } : {}) };

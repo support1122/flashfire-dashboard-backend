@@ -50,7 +50,10 @@ const MIN_PRIORITY = (process.env.CLIENT_MAIL_NOTIFY_MIN_PRIORITY || "medium").t
 const PRIORITY_RANK = { low: 0, medium: 1, high: 2 };
 
 const MAX_ATTEMPTS = Math.max(1, Number(process.env.CLIENT_MAIL_NOTIFY_MAX_ATTEMPTS) || 4);
-const DASHBOARD_URL = process.env.CLIENT_DASHBOARD_URL || process.env.FRONTEND_URL || "";
+// CTA button target. Falls back to the known portal so the email always has a
+// working button even when CLIENT_DASHBOARD_URL / FRONTEND_URL are unset.
+const DASHBOARD_URL =
+  process.env.CLIENT_DASHBOARD_URL || process.env.FRONTEND_URL || "https://portal.flashfirejobs.com";
 const FROM_EMAIL = process.env.CLIENT_MAIL_FROM_EMAIL || process.env.SENDGRID_FROM_EMAIL || "";
 const FROM_NAME = process.env.CLIENT_MAIL_FROM_NAME || "FlashFire";
 

@@ -60,11 +60,29 @@ import {
 const CLASSIFIER_MODE = (process.env.MAIL_CLASSIFIER_MODE || "rules").toLowerCase() === "ai" ? "ai" : "rules";
 
 const CRON_EXPR = process.env.MAIL_POLL_CRON || "0 * * * *"; // top of every hour
-// Opt-IN, not opt-out: an unset or malformed value leaves the pipeline off, so
-// nobody re-enables mail capture by forgetting an env var.
-const ENABLED = process.env.MAIL_POLL_ENABLED === "1";
 
-/** Whether the Gmail → AI → Discord pipeline may run at all. */
+// Enable logic — designed so the ONLY thing ops must set is SMTP_USER/SMTP_PASS:
+//   • MAIL_POLL_ENABLED=1  → force ON  (anywhere; for testing)
+//   • MAIL_POLL_ENABLED=0  → force OFF (kill switch, wins everywhere)
+//   • unset                → auto-ON on the real Render deploy only.
+// The auto default keys on process.env.RENDER (present only on the Render host),
+// NOT on NODE_ENV — this repo's local .env carries NODE_ENV=production and points
+// at the PROD database, so a NODE_ENV default would make a laptop poll real client
+// inboxes and email real payment addresses. RENDER is absent locally, so local
+// runs stay off unless someone explicitly sets MAIL_POLL_ENABLED=1.
+const _rawEnabled = process.env.MAIL_POLL_ENABLED;
+const _onRender = Boolean(process.env.RENDER);
+const ENABLED = _rawEnabled === "1" ? true : _rawEnabled === "0" ? false : _onRender;
+const ENABLED_REASON =
+  _rawEnabled === "1"
+    ? "forced on (MAIL_POLL_ENABLED=1)"
+    : _rawEnabled === "0"
+      ? "forced off (MAIL_POLL_ENABLED=0)"
+      : _onRender
+        ? "auto-on (Render deploy)"
+        : "off (not on Render; set MAIL_POLL_ENABLED=1 to force)";
+
+/** Whether the Gmail → classify → alert/Discord pipeline may run at all. */
 export function isMailPollEnabled() {
   return ENABLED;
 }
@@ -633,7 +651,7 @@ export async function pollOnce({ trigger = "cron" } = {}) {
   // pollOnce() directly. Without this, the route would still read every mailbox
   // and post to Discord while the worker reported itself disabled.
   if (!ENABLED) {
-    console.log(`[mail-poll] disabled (MAIL_POLL_ENABLED != 1) — ignoring ${trigger} trigger`);
+    console.log(`[mail-poll] disabled (${ENABLED_REASON}) — ignoring ${trigger} trigger`);
     return { disabled: true };
   }
   if (running) {
@@ -688,15 +706,16 @@ export async function pollOnce({ trigger = "cron" } = {}) {
 
 export function startMailPollWorker() {
   if (!ENABLED) {
-    console.log("[mail-poll] disabled — mail is not captured, summarized, or posted to Discord (set MAIL_POLL_ENABLED=1 to re-enable)");
+    console.log(`[mail-poll] disabled (${ENABLED_REASON}) — no mail is read, classified, alerted, or posted`);
     return null;
   }
+  console.log(`[mail-poll] enabled (${ENABLED_REASON})`);
   if (task) {
     console.log("[mail-poll] already running — skip duplicate start");
     return task;
   }
   if (!process.env.DISCORD_MAIL_WEBHOOK_URL) {
-    console.warn("[mail-poll] DISCORD_MAIL_WEBHOOK_URL is not set — mails will be summarized and stored but NOT posted to Discord");
+    console.warn("[mail-poll] DISCORD_MAIL_WEBHOOK_URL is not set — ops Discord digest off (client alerts unaffected)");
   }
 
   task = cron.schedule(CRON_EXPR, () => pollOnce({ trigger: "cron" }), { timezone: "Asia/Kolkata" });
