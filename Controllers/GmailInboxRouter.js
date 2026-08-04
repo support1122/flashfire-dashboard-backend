@@ -8,6 +8,9 @@ import { GmailPollState } from "../Schema_Models/GmailPollState.js";
 import { uploadFile } from "../Utils/storageService.js";
 import { getPresignedUrl } from "../Utils/r2Storage.js";
 import { pollOnce } from "../src/services/mailPollWorker.js";
+import { sendEmail, isSendgridConfigured } from "../Utils/sendgridClient.js";
+import { sendViaSmtp, isSmtpConfigured } from "../Utils/smtpSender.js";
+import { renderClientMilestoneEmail, NOTIFIABLE_CATEGORIES } from "../Utils/clientMailTemplates.js";
 // This router talks to Gmail over native fetch + getAccessToken() below, not
 // through googleapis — its bundled node-fetch throws ERR_STREAM_PREMATURE_CLOSE
 // on Render. gmailClientForUser() is deliberately NOT imported here; only the
@@ -798,6 +801,97 @@ router.post("/digests", async (req, res) => {
     });
   } catch (err) {
     res.status(500).json({ error: err?.message || "digests_failed" });
+  }
+});
+
+// =========================
+// Client milestone alerts (interview / assignment / offer → the client)
+// =========================
+
+// Preview a branded alert email in the browser. GET so it renders directly:
+//   /gmail/inbox/client-alert/preview?category=interview
+// Sends nothing — pure template render with sample data.
+router.get("/client-alert/preview", (req, res) => {
+  try {
+    const category = NOTIFIABLE_CATEGORIES.includes(String(req.query.category))
+      ? String(req.query.category)
+      : "interview";
+    const sample = {
+      interview: {
+        subject: "Interview invitation — Backend Engineer at Acme",
+        summary: "Acme's hiring team wants to schedule a 45-minute technical interview this week. They proposed Thursday or Friday afternoon and asked you to confirm a slot.",
+        keyPoints: ["45-min technical round", "Thursday or Friday PM", "Reply to confirm a slot"],
+        actionRequired: "Reply with your preferred time before end of day."
+      },
+      assessment: {
+        subject: "Take-home assignment — Frontend role at Nimbus",
+        summary: "Nimbus sent a take-home coding assignment. It's due in 3 days and should take about 4 hours.",
+        keyPoints: ["Take-home coding task", "Due in 3 days", "~4 hours of work"],
+        actionRequired: "Start the assignment and submit before the deadline."
+      },
+      offer: {
+        subject: "Your offer from Vertex Labs",
+        summary: "Vertex Labs extended a full-time offer for the Senior Engineer position, including compensation details and a start date to confirm.",
+        keyPoints: ["Full-time Senior Engineer", "Comp details attached", "Start date to confirm"],
+        actionRequired: "Review the offer and respond to the recruiter."
+      }
+    }[category];
+
+    const { subject, html } = renderClientMilestoneEmail({
+      client: { name: "Alex Carter", email: "alex@example.com" },
+      digest: { category, from: "Talent Team <talent@company.com>", urls: ["https://mail.google.com/"], ...sample },
+      dashboardUrl: process.env.CLIENT_DASHBOARD_URL || process.env.FRONTEND_URL || ""
+    });
+    res.set("Content-Type", "text/html; charset=utf-8").send(`<!-- subject: ${subject} -->\n${html}`);
+  } catch (err) {
+    res.status(500).send(`preview_failed: ${err?.message || "unknown"}`);
+  }
+});
+
+// Send a real test alert to an address, over the configured channel (SMTP by
+// default — so the send lands in the App-Password account's Sent folder).
+//   body: { to, category, channel? }
+router.post("/client-alert/test", async (req, res) => {
+  try {
+    const { to, category, channel } = req.body || {};
+    if (!to) return res.status(400).json({ error: "missing_to" });
+    const cat = NOTIFIABLE_CATEGORIES.includes(String(category)) ? String(category) : "interview";
+    const useChannel =
+      String(channel || process.env.CLIENT_MAIL_CHANNEL || "smtp").toLowerCase() === "sendgrid" ? "sendgrid" : "smtp";
+
+    if (useChannel === "smtp" && !isSmtpConfigured()) return res.status(503).json({ error: "smtp_not_configured" });
+    if (useChannel === "sendgrid" && !isSendgridConfigured()) return res.status(503).json({ error: "sendgrid_not_configured" });
+
+    const { subject, html, text } = renderClientMilestoneEmail({
+      client: { name: (to.split("@")[0] || "there"), email: to },
+      digest: {
+        category: cat,
+        subject: `Test ${cat} alert`,
+        from: "FlashFire Test <test@flashfirehq.com>",
+        summary: "This is a test of the FlashFire client milestone alert email.",
+        keyPoints: ["Template render check", "Delivery check"],
+        urls: ["https://mail.google.com/"]
+      },
+      dashboardUrl: process.env.CLIENT_DASHBOARD_URL || process.env.FRONTEND_URL || ""
+    });
+
+    const result =
+      useChannel === "smtp"
+        ? await sendViaSmtp({ to, subject, html, text })
+        : await sendEmail({
+            to,
+            subject,
+            html,
+            text,
+            fromEmail: process.env.CLIENT_MAIL_FROM_EMAIL || undefined,
+            fromName: process.env.CLIENT_MAIL_FROM_NAME || "FlashFire",
+            categories: ["client-milestone-test"]
+          });
+    if (!result.ok) return res.status(502).json({ ok: false, channel: useChannel, error: result.error });
+    // messageId (SMTP) is the Sent-folder receipt.
+    res.json({ ok: true, to, category: cat, channel: useChannel, messageId: result.messageId, status: result.status });
+  } catch (err) {
+    res.status(500).json({ error: err?.message || "test_send_failed" });
   }
 });
 
