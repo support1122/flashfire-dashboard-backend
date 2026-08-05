@@ -35,6 +35,7 @@ import { GmailPollState } from "../../Schema_Models/GmailPollState.js";
 import { MailDigest } from "../../Schema_Models/MailDigest.js";
 import { UserModel } from "../../Schema_Models/UserModel.js";
 import { ProfileModel } from "../../Schema_Models/ProfileModel.js";
+import { resolvePaymentEmail } from "../../Schema_Models/ClientPaymentLookup.js";
 import {
   gmailClientForUser,
   decodeBase64Url,
@@ -45,14 +46,43 @@ import {
   isTextLike
 } from "../../Utils/gmailMessage.js";
 import { summarizeMail } from "./mailAiSummarizer.js";
+import { classifyMailByRules } from "../../Utils/mailRulesClassifier.js";
 import { notifyMailDigest, notifyGmailAuthError, isGmailAuthError, errorText } from "../../Utils/discordMailNotify.js";
+import {
+  deriveEligibility,
+  notifyClientForDigest,
+  retryPendingClientNotifications
+} from "./clientMailNotifier.js";
+
+// How mail is classified. "rules" (default) = zero-cost regex, no OpenAI calls.
+// "ai" = gpt-4o-mini (richer summaries, small cost). Set MAIL_CLASSIFIER_MODE=ai
+// to opt back into the AI path.
+const CLASSIFIER_MODE = (process.env.MAIL_CLASSIFIER_MODE || "rules").toLowerCase() === "ai" ? "ai" : "rules";
 
 const CRON_EXPR = process.env.MAIL_POLL_CRON || "0 * * * *"; // top of every hour
-// Opt-IN, not opt-out: an unset or malformed value leaves the pipeline off, so
-// nobody re-enables mail capture by forgetting an env var.
-const ENABLED = process.env.MAIL_POLL_ENABLED === "1";
 
-/** Whether the Gmail → AI → Discord pipeline may run at all. */
+// Enable logic — designed so the ONLY thing ops must set is SMTP_USER/SMTP_PASS:
+//   • MAIL_POLL_ENABLED=1  → force ON  (anywhere; for testing)
+//   • MAIL_POLL_ENABLED=0  → force OFF (kill switch, wins everywhere)
+//   • unset                → auto-ON on the real Render deploy only.
+// The auto default keys on process.env.RENDER (present only on the Render host),
+// NOT on NODE_ENV — this repo's local .env carries NODE_ENV=production and points
+// at the PROD database, so a NODE_ENV default would make a laptop poll real client
+// inboxes and email real payment addresses. RENDER is absent locally, so local
+// runs stay off unless someone explicitly sets MAIL_POLL_ENABLED=1.
+const _rawEnabled = process.env.MAIL_POLL_ENABLED;
+const _onRender = Boolean(process.env.RENDER);
+const ENABLED = _rawEnabled === "1" ? true : _rawEnabled === "0" ? false : _onRender;
+const ENABLED_REASON =
+  _rawEnabled === "1"
+    ? "forced on (MAIL_POLL_ENABLED=1)"
+    : _rawEnabled === "0"
+      ? "forced off (MAIL_POLL_ENABLED=0)"
+      : _onRender
+        ? "auto-on (Render deploy)"
+        : "off (not on Render; set MAIL_POLL_ENABLED=1 to force)";
+
+/** Whether the Gmail → classify → alert/Discord pipeline may run at all. */
 export function isMailPollEnabled() {
   return ENABLED;
 }
@@ -160,8 +190,14 @@ async function resolveClient(gmailEmail, ownerEmail, cache) {
     }
   }
 
-  // Unmatched mailbox — still notify, just with what we know.
+  // Unmatched mailbox — still notify Discord with what we know.
   if (!client) client = { name: "", email: gmailEmail, planType: "", dashboardManager: ownerEmail };
+
+  // Attach the client's stored payment email (from dashboardtrackings, shared DB).
+  // This is the ONLY address client milestone alerts are sent to. Match on the
+  // client's dashboard email and the connected mailbox; empty when none on file.
+  const pay = await resolvePaymentEmail(client.email, key).catch(() => ({ paymentEmail: "" }));
+  client = { ...client, paymentEmail: pay.paymentEmail || "" };
 
   cache.set(key, client);
   return client;
@@ -376,6 +412,11 @@ async function pollMailbox(user, clientCache) {
     console.warn(`[mail-poll] ${mailbox}: pending retry failed: ${errorText(e)}`)
   );
 
+  // Retry client milestone alerts whose SendGrid send previously failed.
+  await retryPendingClientNotifications({ gmailEmail: mailbox, client, limit: MAX_PER_TICK }).catch((e) =>
+    console.warn(`[mail-poll] ${mailbox}: client-notify retry failed: ${e.message}`)
+  );
+
   const afterSec = state.lastInternalDate
     ? Math.max(0, Math.floor(state.lastInternalDate / 1000) - CURSOR_OVERLAP_SEC)
     : Math.floor((Date.now() - BOOTSTRAP_HOURS * 3600 * 1000) / 1000);
@@ -424,13 +465,22 @@ async function pollMailbox(user, clientCache) {
     try {
       const msg = await fetchMessage(gmail, messageId);
 
-      const ai = await summarizeMail({
-        from: msg.meta.from,
-        subject: msg.meta.subject,
-        date: msg.meta.date,
-        bodyText: msg.bodyText,
-        attachments: msg.textAttachments.map((a) => ({ filename: a.filename, text: a.text }))
-      });
+      // Classify: rules (zero-cost, default) or AI (gpt-4o-mini) per config.
+      const ai =
+        CLASSIFIER_MODE === "ai"
+          ? await summarizeMail({
+              from: msg.meta.from,
+              subject: msg.meta.subject,
+              date: msg.meta.date,
+              bodyText: msg.bodyText,
+              attachments: msg.textAttachments.map((a) => ({ filename: a.filename, text: a.text }))
+            })
+          : classifyMailByRules({
+              from: msg.meta.from,
+              subject: msg.meta.subject,
+              bodyText: msg.bodyText,
+              snippet: msg.snippet
+            });
 
       const uploadedNames = new Set(msg.textAttachments.map((a) => a.filename));
       const doc = {
@@ -461,7 +511,11 @@ async function pollMailbox(user, clientCache) {
           uploadable: uploadedNames.has(a.filename),
           uploadedToDiscord: false // flipped below once Discord accepts the post
         })),
-        discordPostedAt: null
+        discordPostedAt: null,
+        // Decide client-alert eligibility once, from the classification, and store
+        // it so the retry sweep and any future UI can read it without re-classifying.
+        // `confident` = the AI succeeded, or (in rules mode) a real category rule fired.
+        ...deriveEligibility({ ...ai, confident: ai.aiSucceeded === true || ai.matched === true })
       };
 
       // Claim the message by inserting it. The unique (gmailEmail, messageId)
@@ -495,6 +549,18 @@ async function pollMailbox(user, clientCache) {
         }
       });
       if (ok) posted++;
+
+      // Client milestone alert (interview / assignment / offer). Independent of
+      // Discord and fail-soft — a send failure is recorded on the digest and
+      // retried on a later tick, never blocking the poll.
+      try {
+        const outcome = await notifyClientForDigest({ digestDoc, client, mailbox });
+        if (outcome === "sent") {
+          console.log(`[client-notify] ${mailbox}: alerted client — ${digestDoc.clientNotifyCategory} (${messageId})`);
+        }
+      } catch (e) {
+        console.warn(`[client-notify] ${mailbox}: unexpected error for ${messageId}: ${e.message}`);
+      }
 
       maxInternalDate = Math.max(maxInternalDate, msg.internalDate);
     } catch (err) {
@@ -585,7 +651,7 @@ export async function pollOnce({ trigger = "cron" } = {}) {
   // pollOnce() directly. Without this, the route would still read every mailbox
   // and post to Discord while the worker reported itself disabled.
   if (!ENABLED) {
-    console.log(`[mail-poll] disabled (MAIL_POLL_ENABLED != 1) — ignoring ${trigger} trigger`);
+    console.log(`[mail-poll] disabled (${ENABLED_REASON}) — ignoring ${trigger} trigger`);
     return { disabled: true };
   }
   if (running) {
@@ -640,19 +706,20 @@ export async function pollOnce({ trigger = "cron" } = {}) {
 
 export function startMailPollWorker() {
   if (!ENABLED) {
-    console.log("[mail-poll] disabled — mail is not captured, summarized, or posted to Discord (set MAIL_POLL_ENABLED=1 to re-enable)");
+    console.log(`[mail-poll] disabled (${ENABLED_REASON}) — no mail is read, classified, alerted, or posted`);
     return null;
   }
+  console.log(`[mail-poll] enabled (${ENABLED_REASON})`);
   if (task) {
     console.log("[mail-poll] already running — skip duplicate start");
     return task;
   }
   if (!process.env.DISCORD_MAIL_WEBHOOK_URL) {
-    console.warn("[mail-poll] DISCORD_MAIL_WEBHOOK_URL is not set — mails will be summarized and stored but NOT posted to Discord");
+    console.warn("[mail-poll] DISCORD_MAIL_WEBHOOK_URL is not set — ops Discord digest off (client alerts unaffected)");
   }
 
   task = cron.schedule(CRON_EXPR, () => pollOnce({ trigger: "cron" }), { timezone: "Asia/Kolkata" });
-  console.log(`[mail-poll] worker registered (cron='${CRON_EXPR}', concurrency=${CONCURRENCY}, maxPerTick=${MAX_PER_TICK})`);
+  console.log(`[mail-poll] worker registered (cron='${CRON_EXPR}', classifier=${CLASSIFIER_MODE}, concurrency=${CONCURRENCY}, maxPerTick=${MAX_PER_TICK})`);
 
   if (process.env.MAIL_POLL_RUN_ON_BOOT === "1") {
     setTimeout(() => pollOnce({ trigger: "boot" }).catch((e) => console.error("[mail-poll] boot tick failed:", e)), 8000);

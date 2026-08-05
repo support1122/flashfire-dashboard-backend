@@ -55,10 +55,25 @@ const MailDigestSchema = new mongoose.Schema(
 
     attachments: { type: [DigestAttachmentSchema], default: [] },
 
-    // Delivery state
+    // Discord (ops) delivery state
     discordPostedAt: { type: Date, default: null },
     discordError: { type: String, default: "" },
-    discordAttempts: { type: Number, default: 0 }
+    discordAttempts: { type: Number, default: 0 },
+
+    // Client milestone-alert state (SendGrid → the client).
+    // clientNotifyEligible is decided once, when the digest is created, from the
+    // AI category. clientNotifiedAt !== null is the dedupe guard: the client is
+    // emailed at most once per source mail. clientNotifySkippedReason records why
+    // an eligible mail was NOT emailed (e.g. no recipient, notifications off).
+    clientNotifyEligible: { type: Boolean, default: false, index: true },
+    clientNotifyCategory: { type: String, default: "" },
+    clientNotifiedAt: { type: Date, default: null },
+    clientNotifyTo: { type: String, default: "" }, // resolved recipient (the payment email)
+    clientNotifyChannel: { type: String, default: "" }, // "smtp" | "sendgrid"
+    clientNotifyMessageId: { type: String, default: "" }, // SMTP message-id = proof of send
+    clientNotifyError: { type: String, default: "" },
+    clientNotifyAttempts: { type: Number, default: 0 },
+    clientNotifySkippedReason: { type: String, default: "" }
   },
   { timestamps: true }
 );
@@ -67,5 +82,7 @@ const MailDigestSchema = new mongoose.Schema(
 MailDigestSchema.index({ gmailEmail: 1, messageId: 1 }, { unique: true });
 MailDigestSchema.index({ ownerEmail: 1, date: -1 });
 MailDigestSchema.index({ discordPostedAt: 1, createdAt: 1 });
+// Pending client alerts: eligible, not yet sent. Backs the retry sweep.
+MailDigestSchema.index({ gmailEmail: 1, clientNotifyEligible: 1, clientNotifiedAt: 1 });
 
 export const MailDigest = mongoose.model("MailDigest", MailDigestSchema);
