@@ -140,7 +140,10 @@ app.post('/get-updated-user', async (req, res) => {
       optimizedResumes: existanceOfUser.optimizedResumes,
       transcript: existanceOfUser.transcript,
       portfolioLinks: existanceOfUser.portfolioLinks || [],
-      dashboardManager: existanceOfUser.dashboardManager
+      dashboardManager: existanceOfUser.dashboardManager,
+      currency: existanceOfUser.currency || "USD",
+      addons: existanceOfUser.addons || [],
+      amountPaid: existanceOfUser.amountPaid || "0",
     })
   } catch (error) {
     // This used to log and never respond, hanging the request until timeout.
