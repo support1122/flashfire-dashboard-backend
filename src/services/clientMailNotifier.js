@@ -23,39 +23,22 @@ import { sendEmail, isSendgridConfigured } from "../../Utils/sendgridClient.js";
 import { sendViaSmtp, isSmtpConfigured } from "../../Utils/smtpSender.js";
 import { renderClientMilestoneEmail, NOTIFIABLE_CATEGORIES } from "../../Utils/clientMailTemplates.js";
 
-const ENABLED = process.env.CLIENT_MAIL_NOTIFY_ENABLED !== "0";
-
-// Delivery channel. "smtp" (default) sends via the App-Password Gmail account so
-// the mail is provably in that account's Sent folder. "sendgrid" is the legacy
-// transactional path (no Sent-folder proof).
-const CHANNEL = (process.env.CLIENT_MAIL_CHANNEL || "smtp").toLowerCase() === "sendgrid" ? "sendgrid" : "smtp";
+// ─── Fixed config (hard-coded; the only runtime input is SMTP_USER/SMTP_PASS) ──
+const ENABLED = true; // gated upstream by the poll's master switch
+const CHANNEL = "smtp"; // SMTP only → the send lands in the account's Sent folder as proof
+// Positive milestones only. 'assessment' is shown to the client as "Assignment".
+const NOTIFY_CATEGORIES = new Set(["interview", "assessment", "offer"]);
+// Only email milestones the classifier was confident about (priority ≥ medium).
+const MIN_PRIORITY = "medium";
+const PRIORITY_RANK = { low: 0, medium: 1, high: 2 };
+const MAX_ATTEMPTS = 4; // give up after this many failed sends
+const DASHBOARD_URL = "https://portal.flashfirejobs.com"; // email CTA target
+const FROM_EMAIL = ""; // SMTP path uses SMTP_FROM_EMAIL / SMTP_USER
+const FROM_NAME = "FlashFire";
 
 function isChannelConfigured() {
   return CHANNEL === "smtp" ? isSmtpConfigured() : isSendgridConfigured();
 }
-
-// Which AI categories email the client. Default: positive milestones only.
-// Override with a comma-separated env list, e.g. "interview,assessment,offer,recruiter-outreach".
-const NOTIFY_CATEGORIES = new Set(
-  (process.env.CLIENT_MAIL_NOTIFY_CATEGORIES || "interview,assessment,offer")
-    .split(",")
-    .map((s) => s.trim().toLowerCase())
-    .filter(Boolean)
-);
-
-// Only email milestones the model was confident about — a low-confidence guess
-// on an ambiguous subject shouldn't fire a "you got an offer!" mail.
-// Set CLIENT_MAIL_NOTIFY_MIN_PRIORITY=low to relax.
-const MIN_PRIORITY = (process.env.CLIENT_MAIL_NOTIFY_MIN_PRIORITY || "medium").toLowerCase();
-const PRIORITY_RANK = { low: 0, medium: 1, high: 2 };
-
-const MAX_ATTEMPTS = Math.max(1, Number(process.env.CLIENT_MAIL_NOTIFY_MAX_ATTEMPTS) || 4);
-// CTA button target. Falls back to the known portal so the email always has a
-// working button even when CLIENT_DASHBOARD_URL / FRONTEND_URL are unset.
-const DASHBOARD_URL =
-  process.env.CLIENT_DASHBOARD_URL || process.env.FRONTEND_URL || "https://portal.flashfirejobs.com";
-const FROM_EMAIL = process.env.CLIENT_MAIL_FROM_EMAIL || process.env.SENDGRID_FROM_EMAIL || "";
-const FROM_NAME = process.env.CLIENT_MAIL_FROM_NAME || "FlashFire";
 
 // deriveEligibility: pure, decided at digest-creation time from the classifier
 // output. Works for either source:

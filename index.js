@@ -157,7 +157,8 @@ import Routes from "./Routes.js";
 import { runRecruiterAutomationDailyJob } from "./Controllers/GmailRouter.js";
 import { startSummarySweepWorker } from "./src/services/summarySweepWorker.js";
 import { startSecondJudgeWorker } from "./src/services/secondJudgeWorker.js";
-import { startMailPollWorker } from "./src/services/mailPollWorker.js";
+import { startMailPollWorker, isMailPollEnabled } from "./src/services/mailPollWorker.js";
+import { sendDailySummary } from "./src/services/mailClientMonitor.js";
 import { startAutoOptimizationWorker } from "./src/services/autoOptimizationWorker.js";
 
 dotenv.config();
@@ -473,6 +474,26 @@ app.use((err, req, res, next) => {
         }
       );
       console.log("[RecruiterAutomation] Nightly cron registered on instance 0 (11:05 PM IST)");
+
+      // Daily mail summary — 5 AM IST. Header with 24h totals + one message per
+      // useful mail (interview / assignment / offer) to the single mail channel.
+      // Runs only where the poll runs (auto-on on Render / MAIL_POLL_ENABLED=1).
+      if (isMailPollEnabled()) {
+        cron.schedule(
+          "0 5 * * *", // 5 AM IST daily
+          async () => {
+            try {
+              await sendDailySummary();
+            } catch (error) {
+              console.error("[mail-monitor] daily summary job failed", error);
+            }
+          },
+          { timezone: "Asia/Kolkata" }
+        );
+        console.log("[mail-monitor] Daily summary cron registered on instance 0 (5 AM IST)");
+      } else {
+        console.log("[mail-monitor] Daily summary cron NOT registered (mail poll disabled)");
+      }
     } else {
       console.log(`[AutoOptWorker] Skipping on cluster instance ${instanceId}`);
       console.log(`[summary-sweep] Skipping on cluster instance ${instanceId}`);

@@ -21,11 +21,7 @@ const BRAND = {
 
 // Hosted FlashFire logo (public/Logo.png on the deployed portal). Email clients
 // need an absolute HTTPS URL — data URIs and local files are stripped by Gmail.
-// Override with CLIENT_MAIL_LOGO_URL; set it empty to show the wordmark alone.
-const LOGO_URL =
-  process.env.CLIENT_MAIL_LOGO_URL !== undefined
-    ? process.env.CLIENT_MAIL_LOGO_URL
-    : "https://portal.flashfirejobs.com/Logo.png";
+const LOGO_URL = "https://portal.flashfirejobs.com/Logo.png";
 
 // Per-category art direction + copy. `key` is the AI category; `assessment`
 // is surfaced to the client as "Assignment".

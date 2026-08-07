@@ -21,6 +21,8 @@ const ClientPaymentSchema = new mongoose.Schema(
     email: { type: String, lowercase: true, trim: true, index: true },
     name: { type: String },
     planType: { type: String },
+    status: { type: String },
+    isPaused: { type: Boolean },
     paymentEmail: { type: String, lowercase: true, trim: true, default: "" },
     gmailCredentials: { email: { type: String, default: "" } }
   },
@@ -63,4 +65,28 @@ export async function resolvePaymentEmail(...candidateEmails) {
     matched: true, // a client doc was found (paymentEmail may still be empty)
     clientName: doc.name || ""
   };
+}
+
+/**
+ * Active + unpaused clients (the set the mail monitor cares about).
+ * status === "active" AND not paused (isPaused false or absent).
+ * @returns {Promise<Array<{email, name, paymentEmail, gmailEmail}>>}
+ */
+export async function getActiveUnpausedClients() {
+  const docs = await ClientPaymentLookup.find({
+    status: "active",
+    $or: [{ isPaused: false }, { isPaused: { $exists: false } }, { isPaused: null }]
+  })
+    .select("email name paymentEmail gmailCredentials.email")
+    .lean()
+    .catch(() => []);
+
+  return docs
+    .map((d) => ({
+      email: String(d.email || "").toLowerCase().trim(),
+      name: d.name || "",
+      paymentEmail: String(d.paymentEmail || "").toLowerCase().trim(),
+      gmailEmail: String(d.gmailCredentials?.email || "").toLowerCase().trim()
+    }))
+    .filter((c) => c.email);
 }
