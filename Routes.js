@@ -56,6 +56,8 @@ import { OpenAiJudge } from "./Controllers/Extensions/openaiJudge.js";
 import { ReciveData } from "./Controllers/Extensions/reciveData.js";
 import { extractJobData } from "./Controllers/Extensions/extractJobData.js";
 import ClientLogin from "./Controllers/Extensions/clientLogin.js";
+import { getSpeedyApplyProfile, saveSpeedyApplyProfile } from "./Controllers/Extensions/speedyApplyProfile.js";
+import { onboardingTick } from "./src/services/onboardingMailWorker.js";
 import { getExtensionExclusionLists } from "./Controllers/Extensions/exclusionLists.js";
 import { getExtensionSettings, updateExtensionSettings } from "./Controllers/Extensions/settings.js";
 import { extGetProfile, extPatchProfile } from "./Controllers/Extensions/profileExt.js";
@@ -496,6 +498,20 @@ app.post('/extension/settings/update', updateExtensionSettings);
 app.post('/extension/clientLogin', ClientLogin);
 app.get('/extension/profile', ExtensionAuth, extGetProfile);
 app.patch('/extension/profile', ExtensionAuth, extPatchProfile);
+// SpeedyApply autofill sync — save/load a client's profile so it restores on
+// login from any machine. Auth is the clientLogin JWT (Bearer), verified inside.
+app.get('/extension/speedyapply/profile', getSpeedyApplyProfile);
+app.post('/extension/speedyapply/profile', saveSpeedyApplyProfile);
+// Onboarding email sequence — manual trigger (runs backfill → detect → send-due).
+// Safe to call: backfill guards against retro-emailing existing clients.
+app.post('/admin/onboarding-mail/run-now', async (_req, res) => {
+  try {
+    const summary = await onboardingTick({ trigger: "manual" });
+    res.json({ ok: !summary.error, ...summary });
+  } catch (err) {
+    res.status(500).json({ error: err?.message || "onboarding_run_failed" });
+  }
+});
 // Gemini (Vertex AI) judge slice — extension routes ~10-15% of judge
 // batches here; OpenAI handles the rest in-worker.
 app.post('/extension/gemini-judge', GeminiJudge);

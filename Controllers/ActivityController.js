@@ -44,6 +44,11 @@ export async function listActivity(req, res) {
     if (req.query.actorEmail) {
       filter["actor.email"] = String(req.query.actorEmail).toLowerCase();
     }
+    if (req.query.ip) {
+      // Substring match so a partial IP (e.g. "49.36") narrows results.
+      const safeIp = String(req.query.ip).trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      if (safeIp) filter.ip = new RegExp(safeIp, "i");
+    }
     if (req.query.since || req.query.until) {
       filter.createdAt = {};
       if (req.query.since) filter.createdAt.$gte = new Date(req.query.since);

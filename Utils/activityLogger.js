@@ -1,5 +1,6 @@
 import jwt from "jsonwebtoken";
 import { ActivityLog } from "../Schema_Models/ActivityLog.js";
+import { resolveLocation } from "./ipGeo.js";
 
 function safeDecodeJwt(req) {
   try {
@@ -64,11 +65,23 @@ export function logActivity(req, payload) {
       severity: payload.severity || "info",
       actor: actorFromReq(req || {}, payload.actor || {}),
       ip: req ? extractIp(req) : "",
+      location: payload.location || "",
       userAgent: req?.headers?.["user-agent"]?.toString().slice(0, 512) || "",
     };
-    ActivityLog.create(doc).catch((err) => {
-      console.warn("[activityLogger] create failed:", err?.message || err);
-    });
+    ActivityLog.create(doc)
+      .then((saved) => {
+        // Resolve geolocation off the request path and patch it in. Fire-and-forget.
+        if (saved && doc.ip && !doc.location) {
+          resolveLocation(doc.ip)
+            .then((location) => {
+              if (location) ActivityLog.updateOne({ _id: saved._id }, { $set: { location } }).catch(() => {});
+            })
+            .catch(() => {});
+        }
+      })
+      .catch((err) => {
+        console.warn("[activityLogger] create failed:", err?.message || err);
+      });
   } catch (err) {
     console.warn("[activityLogger] unexpected:", err?.message || err);
   }

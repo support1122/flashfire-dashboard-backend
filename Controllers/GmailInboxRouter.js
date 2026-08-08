@@ -965,8 +965,10 @@ router.get("/health", async (_req, res) => {
         await getAccessToken(m.refreshToken);
         perMailbox.push({ email: m.email, ok: true });
       } catch (e) {
-        const msg = errorText(e) || String(e?.message || e);
-        perMailbox.push({ email: m.email, ok: false, dead: isGmailAuthError(msg), error: msg.slice(0, 160) });
+        // Google's token error body is multi-line; collapse whitespace so the
+        // JSON response stays valid and the error reads on one line.
+        const msg = (errorText(e) || String(e?.message || e)).replace(/\s+/g, " ").trim();
+        perMailbox.push({ email: m.email, ok: false, dead: isGmailAuthError(msg), error: msg.slice(0, 200) });
       }
     }
     const healthy = perMailbox.filter((x) => x.ok).length;
