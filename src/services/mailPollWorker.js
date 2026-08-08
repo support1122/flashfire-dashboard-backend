@@ -35,7 +35,8 @@ import { GmailPollState } from "../../Schema_Models/GmailPollState.js";
 import { MailDigest } from "../../Schema_Models/MailDigest.js";
 import { UserModel } from "../../Schema_Models/UserModel.js";
 import { ProfileModel } from "../../Schema_Models/ProfileModel.js";
-import { resolvePaymentEmail } from "../../Schema_Models/ClientPaymentLookup.js";
+import { resolvePaymentEmail, getActiveUnpausedClients } from "../../Schema_Models/ClientPaymentLookup.js";
+import { checkConnectionsAndAlert } from "./mailClientMonitor.js";
 import {
   gmailClientForUser,
   decodeBase64Url,
@@ -47,29 +48,35 @@ import {
 } from "../../Utils/gmailMessage.js";
 import { summarizeMail } from "./mailAiSummarizer.js";
 import { classifyMailByRules } from "../../Utils/mailRulesClassifier.js";
-import { notifyMailDigest, notifyGmailAuthError, isGmailAuthError, errorText } from "../../Utils/discordMailNotify.js";
+import { notifyUsefulMailLine, notifyGmailAuthError, isGmailAuthError, errorText } from "../../Utils/discordMailNotify.js";
 import {
   deriveEligibility,
   notifyClientForDigest,
   retryPendingClientNotifications
 } from "./clientMailNotifier.js";
 
-// How mail is classified. "rules" (default) = zero-cost regex, no OpenAI calls.
-// "ai" = gpt-4o-mini (richer summaries, small cost). Set MAIL_CLASSIFIER_MODE=ai
-// to opt back into the AI path.
-const CLASSIFIER_MODE = (process.env.MAIL_CLASSIFIER_MODE || "rules").toLowerCase() === "ai" ? "ai" : "rules";
+// ─── Fixed tuning (hard-coded on purpose; no env knobs) ──────────────
+const CLASSIFIER_MODE = "rules"; // zero-cost regex classifier, no OpenAI calls
+const CRON_EXPR = "0 * * * *"; // hourly, on the hour
+const CONCURRENCY = 2; // mailboxes polled in parallel
+const SCAN_ACTIVE_ONLY = true; // only active + unpaused clients' mailboxes
+const MAX_PER_TICK = 25; // mails processed per mailbox per tick (overflow resumes next tick)
+const MAX_COLLECT = 200; // upper bound on message ids pulled per tick
+const BOOTSTRAP_HOURS = 1; // first poll of a new mailbox looks back this far
+const CURSOR_OVERLAP_SEC = 120; // re-ask this far before the cursor; dedupe makes it free
+const AUTH_ALERT_THROTTLE_MS = 6 * 3600 * 1000; // dead-token alert at most once per 6h
+const MAX_ATTACHMENT_BYTES = 7_500_000; // larger attachments are never downloaded
+const PENDING_RETRY_HOURS = 24; // retry window for undelivered Discord digests
+const MAX_DELIVERY_ATTEMPTS = 5; // give up on a digest Discord keeps rejecting
 
-const CRON_EXPR = process.env.MAIL_POLL_CRON || "0 * * * *"; // top of every hour
-
-// Enable logic — designed so the ONLY thing ops must set is SMTP_USER/SMTP_PASS:
+// Enable logic — the ONLY runtime input the pipeline needs is SMTP_USER/SMTP_PASS.
 //   • MAIL_POLL_ENABLED=1  → force ON  (anywhere; for testing)
-//   • MAIL_POLL_ENABLED=0  → force OFF (kill switch, wins everywhere)
+//   • MAIL_POLL_ENABLED=0  → force OFF (kill switch)
 //   • unset                → auto-ON on the real Render deploy only.
-// The auto default keys on process.env.RENDER (present only on the Render host),
-// NOT on NODE_ENV — this repo's local .env carries NODE_ENV=production and points
-// at the PROD database, so a NODE_ENV default would make a laptop poll real client
-// inboxes and email real payment addresses. RENDER is absent locally, so local
-// runs stay off unless someone explicitly sets MAIL_POLL_ENABLED=1.
+// Keys on process.env.RENDER (present only on the Render host), NOT on NODE_ENV —
+// this repo's local .env carries NODE_ENV=production and points at the PROD DB, so
+// a NODE_ENV default would make a laptop poll real client inboxes. RENDER is absent
+// locally, so local runs stay off unless MAIL_POLL_ENABLED=1 is set explicitly.
 const _rawEnabled = process.env.MAIL_POLL_ENABLED;
 const _onRender = Boolean(process.env.RENDER);
 const ENABLED = _rawEnabled === "1" ? true : _rawEnabled === "0" ? false : _onRender;
@@ -86,32 +93,6 @@ const ENABLED_REASON =
 export function isMailPollEnabled() {
   return ENABLED;
 }
-const CONCURRENCY = Math.max(1, Number(process.env.MAIL_POLL_CONCURRENCY) || 2);
-
-// Hard cap on mails summarized per mailbox per tick. Overflow is not lost — the
-// cursor only advances past what we actually processed, so the next tick resumes.
-const MAX_PER_TICK = Math.max(1, Number(process.env.MAIL_POLL_MAX_PER_TICK) || 25);
-// Upper bound on message ids pulled from Gmail in one tick (memory guard).
-const MAX_COLLECT = Math.max(MAX_PER_TICK, Number(process.env.MAIL_POLL_MAX_COLLECT) || 200);
-
-// First ever poll for a mailbox: look back this far instead of replaying the
-// entire mailbox history into Discord.
-const BOOTSTRAP_HOURS = Math.max(1, Number(process.env.MAIL_POLL_BOOTSTRAP_HOURS) || 1);
-// Re-ask Gmail for a small window before the cursor so a message that landed in
-// the same second as the cursor is not skipped. Dedupe makes the overlap free.
-const CURSOR_OVERLAP_SEC = Math.max(0, Number(process.env.MAIL_POLL_CURSOR_OVERLAP_SEC) || 120);
-
-// A dead token pings Discord at most once per this window.
-const AUTH_ALERT_THROTTLE_MS = Math.max(1, Number(process.env.MAIL_AUTH_ALERT_THROTTLE_HOURS) || 6) * 3600 * 1000;
-
-// Only attachments up to this size are downloaded and fed to the AI / uploaded.
-const MAX_ATTACHMENT_BYTES = Number(process.env.MAIL_MAX_ATTACHMENT_BYTES) || 7_500_000;
-
-// Retry window for digests that were claimed but never delivered to Discord.
-const PENDING_RETRY_HOURS = Math.max(1, Number(process.env.MAIL_PENDING_RETRY_HOURS) || 24);
-// Give up on a digest Discord keeps rejecting (e.g. a malformed embed) instead
-// of re-attempting it every hour for the whole retry window.
-const MAX_DELIVERY_ATTEMPTS = Math.max(1, Number(process.env.MAIL_MAX_DELIVERY_ATTEMPTS) || 5);
 
 let running = false; // overlap guard
 let task = null;
@@ -295,20 +276,31 @@ async function fetchMessage(gmail, messageId) {
 // what stops the retry pass from posting this mail a second time, so it must
 // not be coupled to the cosmetic per-attachment flag: an arrayFilters failure
 // would otherwise leave discordPostedAt null and duplicate the Discord message.
-async function deliver({ digestDoc, client, mailbox, files = [], counts }) {
-  const result = await notifyMailDigest({ client, mailbox, digest: digestDoc, files, counts });
+// deliver: post ONE short Discord update for a milestone mail (interview /
+// assignment / offer). No heavy embed, no attachments, no per-mail spam for
+// promos or job alerts — only the digests marked clientNotifyEligible ever get
+// here. discordPostedAt is the at-most-once guard; a failed post is retried.
+async function deliver({ digestDoc, client, mailbox }) {
+  const result = await notifyUsefulMailLine({
+    clientName: client?.name || client?.email || mailbox,
+    clientEmail: mailbox,
+    category: digestDoc.clientNotifyCategory || digestDoc.category,
+    subject: digestDoc.subject,
+    from: digestDoc.from,
+    receivedAt: digestDoc.date
+  });
 
   if (!result.ok) {
     await MailDigest.updateOne(
       { _id: digestDoc._id },
       { $set: { discordError: String(result.error || "unknown").slice(0, 300) }, $inc: { discordAttempts: 1 } }
     ).catch(() => {});
-    console.warn(`[mail-poll] discord post failed for ${digestDoc.messageId}: ${result.error}`);
+    console.warn(`[mail-poll] discord update failed for ${digestDoc.messageId}: ${result.error}`);
     return false;
   }
 
-  // Critical: mark delivered. If this throws we surface it loudly, because the
-  // mail WILL be re-posted on the next tick.
+  // Mark delivered. If this throws we surface it loudly, because the update WILL
+  // be re-posted on the next tick.
   try {
     await MailDigest.updateOne(
       { _id: digestDoc._id },
@@ -320,32 +312,17 @@ async function deliver({ digestDoc, client, mailbox, files = [], counts }) {
     );
     return true; // it did reach Discord; do not count it as a failure
   }
-
-  // Cosmetic: record which files actually made it. Oversized ones were named in
-  // the embed but never uploaded. Failure here is harmless.
-  const skipped = new Set((result.skipped || []).map((s) => s.filename));
-  const delivered = files.map((f) => f.filename).filter((n) => !skipped.has(n));
-  if (delivered.length) {
-    await MailDigest.updateOne(
-      { _id: digestDoc._id },
-      { $set: { "attachments.$[a].uploadedToDiscord": true } },
-      { arrayFilters: [{ "a.filename": { $in: delivered } }] }
-    ).catch((e) => console.warn(`[mail-poll] attachment flag update failed: ${e.message}`));
-  }
   return true;
 }
 
-// retryPendingDigests: anything claimed but never delivered (worker crashed, or
-// Discord was down). Reposts without re-summarizing — the digest is already
-// stored — but DOES re-download the attachments from Gmail, so a Discord blip
-// never costs the client their .txt file.
-//
-// Returns the number recovered so the caller can advance the lifetime counter;
-// these mails were claimed on an earlier tick and so were never counted.
-async function retryPendingDigests({ gmail, user, client, state }) {
+// retryPendingDigests: milestone updates claimed but never delivered (worker
+// crashed, or Discord was down). Only clientNotifyEligible digests are ever
+// posted, so only those are retried. No attachments — the update is one line.
+async function retryPendingDigests({ user, client, state }) {
   const cutoff = new Date(Date.now() - PENDING_RETRY_HOURS * 3600 * 1000);
   const pending = await MailDigest.find({
     gmailEmail: user.email,
+    clientNotifyEligible: true,
     discordPostedAt: null,
     createdAt: { $gte: cutoff },
     discordAttempts: { $lt: MAX_DELIVERY_ATTEMPTS }
@@ -355,32 +332,14 @@ async function retryPendingDigests({ gmail, user, client, state }) {
 
   let recovered = 0;
   for (const doc of pending) {
-    // Re-fetch only the files we would have uploaded originally.
-    const wanted = (doc.attachments || []).filter((a) => a.uploadable && a.attachmentId);
-    let files = [];
-    if (wanted.length) {
-      files = (await downloadTextAttachments(gmail, doc.messageId, wanted)).map((a) => ({
-        filename: a.filename,
-        contentType: a.mimetype,
-        buffer: a.buffer
-      }));
-    }
-
-    const ok = await deliver({
-      digestDoc: doc,
-      client,
-      mailbox: user.email,
-      files,
-      counts: { totalForClient: state.totalNotified + recovered + 1, newThisRun: 0 }
-    });
+    const ok = await deliver({ digestDoc: doc, client, mailbox: user.email });
     if (ok) recovered++;
   }
 
   if (recovered) {
-    // These were claimed on a previous tick, so nothing has counted them yet.
     await GmailPollState.updateOne({ _id: state._id }, { $inc: { totalNotified: recovered } }).catch(() => {});
     state.totalNotified += recovered;
-    console.log(`[mail-poll] ${user.email}: recovered ${recovered} undelivered digest(s)`);
+    console.log(`[mail-poll] ${user.email}: recovered ${recovered} undelivered update(s)`);
   }
   return recovered;
 }
@@ -408,7 +367,7 @@ async function pollMailbox(user, clientCache) {
   const gmail = gmailClientForUser(user);
 
   // Deliver anything stranded from a previous tick before pulling new mail.
-  await retryPendingDigests({ gmail, user, client, state }).catch((e) =>
+  await retryPendingDigests({ user, client, state }).catch((e) =>
     console.warn(`[mail-poll] ${mailbox}: pending retry failed: ${errorText(e)}`)
   );
 
@@ -534,21 +493,13 @@ async function pollMailbox(user, clientCache) {
         throw e;
       }
 
-      const ok = await deliver({
-        digestDoc,
-        client,
-        mailbox,
-        files: msg.textAttachments.map((a) => ({
-          filename: a.filename,
-          contentType: a.mimetype,
-          buffer: a.buffer
-        })),
-        counts: {
-          totalForClient: state.totalNotified + posted + 1,
-          newThisRun: fresh.length
-        }
-      });
-      if (ok) posted++;
+      // Discord update ONLY for milestones (interview / assignment / offer).
+      // Promos, job alerts, newsletters, rejections, recruiter outreach are
+      // stored and counted in the 5 AM summary, but never posted per-mail.
+      if (digestDoc.clientNotifyEligible) {
+        const ok = await deliver({ digestDoc, client, mailbox });
+        if (ok) posted++;
+      }
 
       // Client milestone alert (interview / assignment / offer). Independent of
       // Discord and fail-soft — a send failure is recorded on the digest and
@@ -666,10 +617,41 @@ export async function pollOnce({ trigger = "cron" } = {}) {
     // resolves once they are built (and is memoized, so this is free after the first tick).
     await Promise.all([MailDigest.init(), GmailPollState.init()]);
 
-    const mailboxes = await GmailUser.find({ refreshToken: { $exists: true, $ne: "" } }).lean();
+    const allMailboxes = await GmailUser.find({ refreshToken: { $exists: true, $ne: "" } }).lean();
+
+    // Scope to active + unpaused clients: don't read the inbox of a paused or
+    // inactive client. A mailbox belongs to an active client when its email OR
+    // ownerEmail matches an active client's email (or their gmailCredentials).
+    // MAIL_SCAN_ACTIVE_ONLY=0 disables the scoping (scan every connected mailbox).
+    let mailboxes = allMailboxes;
+    let skippedInactive = 0;
+    if (SCAN_ACTIVE_ONLY && allMailboxes.length) {
+      const activeClients = await getActiveUnpausedClients().catch(() => []);
+      const activeAddrs = new Set();
+      for (const c of activeClients) {
+        if (c.email) activeAddrs.add(c.email);
+        if (c.gmailEmail) activeAddrs.add(c.gmailEmail);
+      }
+      mailboxes = allMailboxes.filter((m) => {
+        const belongs = activeAddrs.has((m.email || "").toLowerCase()) || activeAddrs.has((m.ownerEmail || "").toLowerCase());
+        return belongs;
+      });
+      skippedInactive = allMailboxes.length - mailboxes.length;
+      if (skippedInactive) {
+        console.log(`[mail-poll] scoped to active clients — scanning ${mailboxes.length}, skipped ${skippedInactive} (paused/inactive/unlinked)`);
+      }
+    }
+
+    // The hourly connection check runs regardless of how many mailboxes there are
+    // (its job is to nudge the active clients who have NO mailbox). Fire-and-record.
+    const connectionCheck = await checkConnectionsAndAlert().catch((e) => {
+      console.warn(`[mail-poll] connection check failed: ${e.message}`);
+      return null;
+    });
+
     if (!mailboxes.length) {
-      console.log("[mail-poll] no connected mailboxes");
-      return { mailboxes: 0, posted: 0, tookMs: Date.now() - startedAt };
+      console.log("[mail-poll] no active-client mailboxes to scan");
+      return { mailboxes: 0, posted: 0, skippedInactive, connectionCheck, tookMs: Date.now() - startedAt };
     }
 
     const clientCache = new Map();
@@ -685,11 +667,13 @@ export async function pollOnce({ trigger = "cron" } = {}) {
     }
 
     console.log(
-      `[mail-poll] tick done (${trigger}) — mailboxes=${mailboxes.length} checked=${checked} posted=${posted} authErrors=${authErrors} crashed=${crashed.length} tookMs=${Date.now() - startedAt}`
+      `[mail-poll] tick done (${trigger}) — mailboxes=${mailboxes.length} skippedInactive=${skippedInactive} checked=${checked} posted=${posted} authErrors=${authErrors} crashed=${crashed.length} tookMs=${Date.now() - startedAt}`
     );
 
     return {
       mailboxes: mailboxes.length,
+      skippedInactive,
+      connectionCheck,
       checked,
       posted,
       authErrors,
@@ -714,15 +698,8 @@ export function startMailPollWorker() {
     console.log("[mail-poll] already running — skip duplicate start");
     return task;
   }
-  if (!process.env.DISCORD_MAIL_WEBHOOK_URL) {
-    console.warn("[mail-poll] DISCORD_MAIL_WEBHOOK_URL is not set — ops Discord digest off (client alerts unaffected)");
-  }
 
   task = cron.schedule(CRON_EXPR, () => pollOnce({ trigger: "cron" }), { timezone: "Asia/Kolkata" });
   console.log(`[mail-poll] worker registered (cron='${CRON_EXPR}', classifier=${CLASSIFIER_MODE}, concurrency=${CONCURRENCY}, maxPerTick=${MAX_PER_TICK})`);
-
-  if (process.env.MAIL_POLL_RUN_ON_BOOT === "1") {
-    setTimeout(() => pollOnce({ trigger: "boot" }).catch((e) => console.error("[mail-poll] boot tick failed:", e)), 8000);
-  }
   return task;
 }

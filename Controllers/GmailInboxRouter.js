@@ -1,4 +1,5 @@
 import express from "express";
+import mongoose from "mongoose";
 import multer from "multer";
 import { GmailUser } from "../Schema_Models/GmailUser.js";
 import { InboxThread } from "../Schema_Models/InboxThread.js";
@@ -9,8 +10,12 @@ import { uploadFile } from "../Utils/storageService.js";
 import { getPresignedUrl } from "../Utils/r2Storage.js";
 import { pollOnce } from "../src/services/mailPollWorker.js";
 import { sendEmail, isSendgridConfigured } from "../Utils/sendgridClient.js";
-import { sendViaSmtp, isSmtpConfigured } from "../Utils/smtpSender.js";
+import { sendViaSmtp, isSmtpConfigured, verifySmtp } from "../Utils/smtpSender.js";
 import { renderClientMilestoneEmail, NOTIFIABLE_CATEGORIES } from "../Utils/clientMailTemplates.js";
+import { checkConnectionsAndAlert, sendDailySummary } from "../src/services/mailClientMonitor.js";
+import { mailNotifyWebhook, verifyWebhook, isGmailAuthError, errorText } from "../Utils/discordMailNotify.js";
+import { isMailPollEnabled } from "../src/services/mailPollWorker.js";
+import { getActiveUnpausedClients } from "../Schema_Models/ClientPaymentLookup.js";
 // This router talks to Gmail over native fetch + getAccessToken() below, not
 // through googleapis — its bundled node-fetch throws ERR_STREAM_PREMATURE_CLOSE
 // on Render. gmailClientForUser() is deliberately NOT imported here; only the
@@ -893,6 +898,111 @@ router.post("/client-alert/test", async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err?.message || "test_send_failed" });
   }
+});
+
+// Manually run the daily 5am summary now (header + one message per useful mail).
+router.post("/daily-summary-now", async (_req, res) => {
+  try {
+    const result = await sendDailySummary();
+    res.json({ ok: !result?.skipped, ...result });
+  } catch (err) {
+    res.status(500).json({ error: err?.message || "summary_failed" });
+  }
+});
+
+// Manually run the "connect your mail" connection check now (throttled per client).
+router.post("/connection-check-now", async (_req, res) => {
+  try {
+    const result = await checkConnectionsAndAlert();
+    res.json({ ok: !result?.skipped, ...result });
+  } catch (err) {
+    res.status(500).json({ error: err?.message || "connection_check_failed" });
+  }
+});
+
+// =========================
+// Health check — GET /gmail/inbox/health
+// =========================
+// One call that verifies every moving part of the mail pipeline for real:
+// Mongo, the master switch, Google OAuth config, SMTP auth (actual login),
+// the Discord webhook (validity, no message posted), each connected mailbox's
+// live token, and client / payment-email coverage. No secrets are returned.
+router.get("/health", async (_req, res) => {
+  const checks = {};
+  const problems = [];
+  const warnings = [];
+
+  // 1. Mongo
+  const rs = mongoose.connection.readyState;
+  checks.mongo = { ok: rs === 1, state: ["disconnected", "connected", "connecting", "disconnecting"][rs] || String(rs) };
+  if (!checks.mongo.ok) problems.push("MongoDB is not connected");
+
+  // 2. Pipeline master switch
+  const enabled = isMailPollEnabled();
+  checks.pipeline = { ok: enabled, enabled, note: enabled ? "running" : "off (auto-on only on Render; set MAIL_POLL_ENABLED=1 to force)" };
+  if (!enabled) warnings.push("Mail pipeline is disabled here (expected off outside Render)");
+
+  // 3. Google OAuth (poller needs these to read Gmail)
+  const gid = !!process.env.GOOGLE_CLIENT_ID;
+  const gsec = !!process.env.GOOGLE_CLIENT_SECRET;
+  checks.googleOAuth = { ok: gid && gsec, clientId: gid, clientSecret: gsec };
+  if (!checks.googleOAuth.ok) problems.push("GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET missing — Gmail cannot be read");
+
+  // 4. SMTP — real connect + auth
+  checks.smtp = await verifySmtp();
+  if (!checks.smtp.ok) problems.push(`SMTP not working: ${checks.smtp.error} — client alert emails will not send`);
+
+  // 5. Discord webhook — validity, no post
+  checks.discord = { configured: !!mailNotifyWebhook(), ...(await verifyWebhook()) };
+  if (!checks.discord.ok) problems.push(`Discord webhook problem: ${checks.discord.error} — no ops notifications`);
+
+  // 6. Connected mailboxes — live token health
+  try {
+    const mailboxes = await GmailUser.find({ refreshToken: { $exists: true, $ne: "" } }).select("email refreshToken").lean();
+    const perMailbox = [];
+    for (const m of mailboxes) {
+      try {
+        await getAccessToken(m.refreshToken);
+        perMailbox.push({ email: m.email, ok: true });
+      } catch (e) {
+        const msg = errorText(e) || String(e?.message || e);
+        perMailbox.push({ email: m.email, ok: false, dead: isGmailAuthError(msg), error: msg.slice(0, 160) });
+      }
+    }
+    const healthy = perMailbox.filter((x) => x.ok).length;
+    checks.mailboxes = { connected: mailboxes.length, healthy, dead: perMailbox.filter((x) => !x.ok) };
+    if (mailboxes.length && healthy === 0) problems.push("No connected mailbox has a working token");
+  } catch (e) {
+    checks.mailboxes = { ok: false, error: String(e?.message || e).slice(0, 160) };
+  }
+
+  // 7. Client + payment-email coverage
+  try {
+    const active = await getActiveUnpausedClients();
+    const withPayment = active.filter((c) => c.paymentEmail).length;
+    checks.clients = {
+      activeUnpaused: active.length,
+      withPaymentEmail: withPayment,
+      withoutPaymentEmail: active.length - withPayment
+    };
+    if (active.length && withPayment === 0) {
+      warnings.push("No active client has a paymentEmail — milestone alert emails will all be skipped");
+    }
+  } catch (e) {
+    checks.clients = { ok: false, error: String(e?.message || e).slice(0, 160) };
+  }
+
+  checks.config = { classifier: "rules", channel: "smtp", scanActiveOnly: true, dailySummary: "05:00 IST" };
+
+  const ok = problems.length === 0;
+  res.status(ok ? 200 : 503).json({
+    ok,
+    summary: ok ? (warnings.length ? "working, with warnings" : "all systems go") : "problems found",
+    problems,
+    warnings,
+    checks,
+    checkedAt: new Date().toISOString()
+  });
 });
 
 export default router;

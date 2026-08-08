@@ -50,6 +50,21 @@ export function __setTransporter(t) {
 }
 
 /**
+ * Actually connect + authenticate to the SMTP server (nodemailer verify()).
+ * Used by the health route to prove the App Password works. Never throws.
+ * @returns {Promise<{ok: boolean, user?: string, from?: string, error?: string}>}
+ */
+export async function verifySmtp() {
+  if (!isSmtpConfigured()) return { ok: false, error: "smtp_not_configured" };
+  try {
+    await getTransporter().verify();
+    return { ok: true, user: process.env.SMTP_USER, from: smtpFromEmail() };
+  } catch (err) {
+    return { ok: false, user: process.env.SMTP_USER, error: String(err?.message || err).slice(0, 300) };
+  }
+}
+
+/**
  * Send one email over SMTP. Never throws — returns a result object.
  *
  * @param {Object} a
