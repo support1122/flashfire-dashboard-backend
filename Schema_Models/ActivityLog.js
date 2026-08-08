@@ -22,6 +22,7 @@ const ActivityLogSchema = new mongoose.Schema(
     diff: { type: mongoose.Schema.Types.Mixed, default: null },
     context: { type: mongoose.Schema.Types.Mixed, default: null },
     ip: { type: String, default: "" },
+    location: { type: String, default: "" }, // "City, Region, Country" resolved from IP (best-effort)
     userAgent: { type: String, default: "" },
     severity: { type: String, default: "info", enum: ["info", "warning", "critical"] },
     createdAt: { type: Date, default: Date.now, index: true },

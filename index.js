@@ -159,6 +159,7 @@ import { startSummarySweepWorker } from "./src/services/summarySweepWorker.js";
 import { startSecondJudgeWorker } from "./src/services/secondJudgeWorker.js";
 import { startMailPollWorker, isMailPollEnabled } from "./src/services/mailPollWorker.js";
 import { sendDailySummary } from "./src/services/mailClientMonitor.js";
+import { startOnboardingMailWorker } from "./src/services/onboardingMailWorker.js";
 import { startAutoOptimizationWorker } from "./src/services/autoOptimizationWorker.js";
 
 dotenv.config();
@@ -446,6 +447,12 @@ app.use((err, req, res, next) => {
       // profile, and FLAGS mismatches for operator review (does not remove).
       // DB-polled, no Redis.
       startSecondJudgeWorker();
+
+      // Onboarding email sequence: when a client's FIRST job hits "Applied",
+      // email their payment address (base résumé / cover letter / LinkedIn, plan-gated,
+      // ~90 min apart) over SMTP. Backfills existing applied-clients as skipped
+      // on first run so only future first-applications ever fire.
+      startOnboardingMailWorker();
 
       // Inbound mail pipeline: hourly, reads each connected client mailbox,
       // summarizes new INBOX mail with gpt-4o-mini, and posts a rich embed
