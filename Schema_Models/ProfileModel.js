@@ -228,7 +228,7 @@ export const profileSchema = new mongoose.Schema({
   },
   visaStatus: {
     type: String,
-    enum: ["CPT", "F1", "F1 OPT", "F1 STEM OPT", "H1B", "Green Card", "U.S. Citizen", "Canadian Citizen", "Permanent Resident (PR)", "Post-Graduation Work Permit (PGWP)", "Open Work Permit (OWP)", "Employer-Specific (Closed) Work Permit", "Study Permit", "Other"],
+    enum: ["CPT", "F1", "F1 OPT", "F1 STEM OPT", "H1B", "Green Card", "U.S. Citizen", "Canadian Citizen", "Permanent Resident (PR)", "Post-Graduation Work Permit (PGWP)", "Open Work Permit (OWP)", "Employer-Specific (Closed) Work Permit", "Study Permit", "Student Visa", "Short-term Study Visa", "Graduate Visa", "Skilled Worker Visa", "Global Talent Visa", "Other"],
     required: true,
   },
   otherVisaType: {
