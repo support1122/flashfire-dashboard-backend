@@ -54,6 +54,22 @@ export const userSchema = new mongoose.Schema(
         createdAt: { type: Date, default: Date.now },
       },
     ],
+    // Set on the REFERRED client (not the referrer) the first time their
+    // referral is processed, so the referrer can never be credited twice for
+    // the same person however often their plan is re-saved. `status` also
+    // leaves a trail for the names we deliberately refused to guess at.
+    referralCredit: {
+      referredByName: { type: String, default: "" },
+      referrerEmail: { type: String, default: "" },
+      plan: { type: String, default: "" },
+      status: {
+        type: String,
+        enum: ["credited", "unmatched", "ambiguous", "self", null],
+        default: null,
+      },
+      candidates: { type: [String], default: [] },
+      processedAt: { type: Date, default: null },
+    },
     notes: {
       type: String,
       default: ""
