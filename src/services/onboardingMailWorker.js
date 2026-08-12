@@ -22,7 +22,7 @@ import cron from "node-cron";
 import { JobModel } from "../../Schema_Models/JobModel.js";
 import { ClientPaymentLookup } from "../../Schema_Models/ClientPaymentLookup.js";
 import { OnboardingMailState, ONBOARDING_BACKFILL_MARKER } from "../../Schema_Models/OnboardingMailState.js";
-import { sendViaSmtp, isSmtpConfigured } from "../../Utils/smtpSender.js";
+import { sendViaSmtp, isSmtpConfigured, areEmailsDisabled } from "../../Utils/smtpSender.js";
 import { renderOnboardingEmail } from "../../Utils/onboardingMailTemplates.js";
 
 // ── Fixed config (hard-coded; no env sprawl) ──
@@ -160,6 +160,9 @@ async function detectAndSchedule() {
 
 // ── Send due steps — one step per client per tick, in order, honouring spacing. ──
 export async function sendDue() {
+  // Global kill switch — don't send, and don't touch attempt counters, so a
+  // paused sequence resumes cleanly when re-enabled (see Utils/smtpSender.js).
+  if (areEmailsDisabled()) return { sent: 0, skipped: "emails_disabled" };
   if (!isSmtpConfigured()) return { sent: 0, skipped: "smtp_not_configured" };
 
   const docs = await OnboardingMailState.find({ status: "scheduled" }).catch(() => []);
