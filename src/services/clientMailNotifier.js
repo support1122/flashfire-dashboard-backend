@@ -20,7 +20,7 @@
 
 import { MailDigest } from "../../Schema_Models/MailDigest.js";
 import { sendEmail, isSendgridConfigured } from "../../Utils/sendgridClient.js";
-import { sendViaSmtp, isSmtpConfigured } from "../../Utils/smtpSender.js";
+import { sendViaSmtp, isSmtpConfigured, areEmailsDisabled } from "../../Utils/smtpSender.js";
 import { renderClientMilestoneEmail, NOTIFIABLE_CATEGORIES } from "../../Utils/clientMailTemplates.js";
 
 // ─── Fixed config (hard-coded; the only runtime input is SMTP_USER/SMTP_PASS) ──
@@ -78,6 +78,9 @@ function resolveRecipient(client) {
  */
 export async function notifyClientForDigest({ digestDoc, client, mailbox }) {
   if (!ENABLED) return "disabled";
+  // Global kill switch — send nothing, and DON'T burn the attempt counter, so
+  // when re-enabled these still deliver cleanly (see Utils/smtpSender.js).
+  if (areEmailsDisabled()) return "disabled";
   if (!digestDoc?.clientNotifyEligible) return "skipped";
   if (digestDoc.clientNotifiedAt) return "already";
 

@@ -18,8 +18,24 @@
 
 import nodemailer from "nodemailer";
 
+// ============================================================
+//  KILL SWITCH — set to false to resume sending client emails.
+// ============================================================
+// When true, sendViaSmtp() sends NOTHING. This is the single hard stop for
+// every client-facing email that goes through SMTP: the milestone alerts
+// (interview / assignment / offer), the onboarding sequence, and the test route.
+// Paused because the AI/rules classifier produced a false "you've got an
+// interview" from an Amazon "Thank you for applying" auto-acknowledgement, so no
+// client should receive these until detection is fixed. Flip to false to re-enable.
+const EMAILS_DISABLED = true;
+
 export function isSmtpConfigured() {
   return Boolean(process.env.SMTP_USER && process.env.SMTP_PASS);
+}
+
+/** Whether outbound client emails are currently paused by the kill switch. */
+export function areEmailsDisabled() {
+  return EMAILS_DISABLED;
 }
 
 export function smtpFromEmail() {
@@ -77,6 +93,11 @@ export async function verifySmtp() {
  * @returns {Promise<{ok: boolean, messageId?: string, from?: string, error?: string}>}
  */
 export async function sendViaSmtp({ to, subject, html, text, replyTo, attachment }) {
+  // Hard stop — send nothing while the kill switch is on.
+  if (EMAILS_DISABLED) {
+    console.warn(`[smtpSender] EMAILS DISABLED — not sending "${String(subject || "").slice(0, 60)}" to ${to}`);
+    return { ok: false, error: "emails_disabled", disabled: true };
+  }
   if (!isSmtpConfigured()) return { ok: false, error: "smtp_not_configured" };
   if (!to || !subject || (!html && !text)) return { ok: false, error: "missing_required_fields" };
 
