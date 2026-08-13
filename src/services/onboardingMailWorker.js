@@ -15,14 +15,16 @@
 // email them. Only a client who crosses 0→1 applied AFTER this ships is scheduled.
 //
 // Idempotent: one OnboardingMailState per client; a step sends at most once
-// (sentAt guard); steps go out in order, one per tick, so spacing survives
-// restarts. Nothing here throws to the caller.
+// (sentAt guard); steps go out in order, one per client per tick, and each step
+// waits SPACING_MIN after the PREVIOUS step's actual sentAt — so the 90-minute
+// gap survives restarts, deploy gaps and pauses alike. Nothing here throws to
+// the caller.
 
 import cron from "node-cron";
 import { JobModel } from "../../Schema_Models/JobModel.js";
 import { ClientPaymentLookup } from "../../Schema_Models/ClientPaymentLookup.js";
 import { OnboardingMailState, ONBOARDING_BACKFILL_MARKER } from "../../Schema_Models/OnboardingMailState.js";
-import { sendViaSmtp, isSmtpConfigured, areEmailsDisabled } from "../../Utils/smtpSender.js";
+import { sendViaSmtp, isSmtpConfigured, isMailCategoryPaused, MAIL_CATEGORY } from "../../Utils/smtpSender.js";
 import { renderOnboardingEmail } from "../../Utils/onboardingMailTemplates.js";
 
 // ── Fixed config (hard-coded; no env sprawl) ──
@@ -30,6 +32,9 @@ const CRON_EXPR = "*/15 * * * *"; // every 15 min
 const SPACING_MIN = 90; // gap between emails (within the 1–2h ask)
 const MAX_ATTEMPTS = 4; // per step, before giving up
 const APPLIED_RE = /appl/i; // currentStatus for an applied job
+// Ceiling on sends per tick. Bounds the burst when a backlog drains (a pause, a
+// long deploy gap) and keeps us well under the Gmail App-Password daily cap.
+const MAX_SENDS_PER_TICK = 25;
 
 // Which steps each plan receives, in order.
 const PLAN_STEPS = {
@@ -160,15 +165,17 @@ async function detectAndSchedule() {
 
 // ── Send due steps — one step per client per tick, in order, honouring spacing. ──
 export async function sendDue() {
-  // Global kill switch — don't send, and don't touch attempt counters, so a
-  // paused sequence resumes cleanly when re-enabled (see Utils/smtpSender.js).
-  if (areEmailsDisabled()) return { sent: 0, skipped: "emails_disabled" };
+  // This stream is live; the pause set in Utils/smtpSender.js covers the
+  // classifier-driven milestone alerts only. Guard anyway so re-pausing
+  // 'onboarding' there stops us here WITHOUT burning attempt counters.
+  if (isMailCategoryPaused(MAIL_CATEGORY.ONBOARDING)) return { sent: 0, skipped: "emails_paused" };
   if (!isSmtpConfigured()) return { sent: 0, skipped: "smtp_not_configured" };
 
   const docs = await OnboardingMailState.find({ status: "scheduled" }).catch(() => []);
   let sent = 0;
 
   for (const doc of docs) {
+    if (sent >= MAX_SENDS_PER_TICK) break; // drain the rest on the next tick
     // First not-yet-sent step, in order.
     const idx = doc.steps.findIndex((s) => !s.sentAt);
     if (idx === -1) {
@@ -180,6 +187,16 @@ export async function sendDue() {
     if (new Date(step.sendAt).getTime() > Date.now()) continue; // not due yet
     if ((step.attempts || 0) >= MAX_ATTEMPTS) continue; // give up on this step (blocks the rest by design)
 
+    // Spacing is measured from the PREVIOUS step's ACTUAL delivery, not from the
+    // sendAt stamped at schedule time. Without this, any sequence that sat idle
+    // longer than the schedule (a pause, a deploy gap, an SMTP outage) comes
+    // back with every step already past its sendAt and fires them one per tick
+    // — 15 minutes apart instead of 90.
+    if (idx > 0) {
+      const prevSentAt = doc.steps[idx - 1].sentAt;
+      if (prevSentAt && Date.now() - new Date(prevSentAt).getTime() < SPACING_MIN * 60 * 1000) continue;
+    }
+
     const rendered = renderOnboardingEmail({ key: step.key, clientName: doc.clientName, clientEmail: doc.paymentEmail });
     if (!rendered) {
       step.attempts = MAX_ATTEMPTS; // unknown step key — don't spin on it
@@ -188,7 +205,13 @@ export async function sendDue() {
       continue;
     }
 
-    const result = await sendViaSmtp({ to: doc.paymentEmail, subject: rendered.subject, html: rendered.html, text: rendered.text });
+    const result = await sendViaSmtp({
+      to: doc.paymentEmail,
+      subject: rendered.subject,
+      html: rendered.html,
+      text: rendered.text,
+      category: MAIL_CATEGORY.ONBOARDING
+    });
     step.attempts = (step.attempts || 0) + 1;
     if (result.ok) {
       step.sentAt = new Date();

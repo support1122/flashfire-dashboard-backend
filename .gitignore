@@ -83,3 +83,4 @@ env.example
 
 # Vertex AI service-account key (secret — never commit)
 flashfire-466710-*.json
+

@@ -19,23 +19,41 @@
 import nodemailer from "nodemailer";
 
 // ============================================================
-//  KILL SWITCH — set to false to resume sending client emails.
+//  PER-CATEGORY PAUSE — which client-facing streams are stopped.
 // ============================================================
-// When true, sendViaSmtp() sends NOTHING. This is the single hard stop for
-// every client-facing email that goes through SMTP: the milestone alerts
-// (interview / assignment / offer), the onboarding sequence, and the test route.
-// Paused because the AI/rules classifier produced a false "you've got an
-// interview" from an Amazon "Thank you for applying" auto-acknowledgement, so no
-// client should receive these until detection is fixed. Flip to false to re-enable.
-const EMAILS_DISABLED = true;
+// Replaces the old all-or-nothing EMAILS_DISABLED flag. A category named in
+// PAUSED_CATEGORIES is hard-stopped: sendViaSmtp() delivers nothing for it and
+// returns { ok: false, error: "emails_paused" }. Every other stream sends
+// normally. To resume a stream, delete its name from the set.
+//
+//  client-milestone — the interview / assignment / offer alerts driven by the
+//    inbox classifier (src/services/clientMailNotifier.js). PAUSED since
+//    2026-08-12: the classifier produced a false "you've got an interview" off
+//    an Amazon "Thank you for applying" auto-acknowledgement. Stays paused
+//    until detection is fixed.
+//
+//  onboarding — the base résumé / cover letter / LinkedIn sequence
+//    (src/services/onboardingMailWorker.js). LIVE. It fires off the client's
+//    own first application, never off the classifier, so the false positive
+//    above cannot reach it.
+//
+// Sends with no `category` (e.g. the operator-triggered /client-alert/test
+// route) are NOT blocked — that route is how you verify SMTP still works while
+// a stream is paused.
+export const MAIL_CATEGORY = {
+  CLIENT_MILESTONE: "client-milestone",
+  ONBOARDING: "onboarding"
+};
+
+const PAUSED_CATEGORIES = new Set([MAIL_CATEGORY.CLIENT_MILESTONE]);
 
 export function isSmtpConfigured() {
   return Boolean(process.env.SMTP_USER && process.env.SMTP_PASS);
 }
 
-/** Whether outbound client emails are currently paused by the kill switch. */
-export function areEmailsDisabled() {
-  return EMAILS_DISABLED;
+/** Whether one outbound mail category is currently paused. */
+export function isMailCategoryPaused(category) {
+  return PAUSED_CATEGORIES.has(String(category || ""));
 }
 
 export function smtpFromEmail() {
@@ -90,13 +108,16 @@ export async function verifySmtp() {
  * @param {string} [a.text]
  * @param {string} [a.replyTo]
  * @param {Object} [a.attachment] - { filename, mimetype, content (Buffer) }
+ * @param {string} [a.category] - one of MAIL_CATEGORY; blocked if paused
  * @returns {Promise<{ok: boolean, messageId?: string, from?: string, error?: string}>}
  */
-export async function sendViaSmtp({ to, subject, html, text, replyTo, attachment }) {
-  // Hard stop — send nothing while the kill switch is on.
-  if (EMAILS_DISABLED) {
-    console.warn(`[smtpSender] EMAILS DISABLED — not sending "${String(subject || "").slice(0, 60)}" to ${to}`);
-    return { ok: false, error: "emails_disabled", disabled: true };
+export async function sendViaSmtp({ to, subject, html, text, replyTo, attachment, category }) {
+  // Hard stop for a paused stream. Unlabelled sends are allowed through.
+  if (isMailCategoryPaused(category)) {
+    console.warn(
+      `[smtpSender] category '${category}' PAUSED — not sending "${String(subject || "").slice(0, 60)}" to ${to}`
+    );
+    return { ok: false, error: "emails_paused", paused: true, category };
   }
   if (!isSmtpConfigured()) return { ok: false, error: "smtp_not_configured" };
   if (!to || !subject || (!html && !text)) return { ok: false, error: "missing_required_fields" };

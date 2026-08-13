@@ -21,7 +21,7 @@ import axios from "axios";
 import { recordAiUsage, AI_USAGE_SOURCES } from "../Utils/aiUsage.js";
 import { ProfileModel } from "../Schema_Models/ProfileModel.js";
 import { getAppSettings } from "../Schema_Models/AppSettings.js";
-import { mergeOverlay, mergeWithLocks, countOverlayBullets, parseSections, extractProvenance } from "../Utils/summaryOverlay.js";
+import { mergeOverlay, mergeWithLocks, countOverlayBullets, parseSections, extractProvenance, provenanceForText } from "../Utils/summaryOverlay.js";
 
 const RESUME_API_URL = process.env.RESUME_API_URL || "http://localhost:5000";
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
@@ -403,9 +403,9 @@ ${blocks.join("\n\n")}`;
 // instructions that OVERRIDE profile/resume signals — not as data to
 // summarise. Empty / missing notes → empty string (no append).
 function renderSystemNotesDirective(profile) {
-  const text = (profile?.aiNotes?.text || "").trim();
+  const text = stripPromptFences((profile?.aiNotes?.text || "").trim());
   if (!text) return "";
-  const who = profile?.aiNotes?.updatedBy || "ops";
+  const who = stripPromptFences(profile?.aiNotes?.updatedBy || "ops");
   return `
 
 ═══════════════════════════════════════════════════════════════════════
@@ -443,10 +443,29 @@ export function isPureLogisticalReason(reason) {
 // capped for the prompt. Single source of truth for the prompt block AND
 // the deterministic enforcement pass.
 const REMOVAL_FEEDBACK_PROMPT_LIMIT = 10;
+
+// Removal reasons are CLIENT-authored free text. They are pasted into the
+// prompt inside <<<REMOVALS>>> / <<<END>>> fences (applyNotesPass) and into
+// the user message (renderRemovalFeedbackBlock). A reason containing a fence
+// marker would close the block early and have whatever follows it read as
+// instruction rather than data. Neutralise any <<<...>>> run on the way in.
+// The same guard covers operator aiNotes — a trusted author, but the
+// structural break is identical and it lands in the SYSTEM message.
+const FENCE_RE = /<{2,}[^<>]*>{2,}/g;
+export function stripPromptFences(s) {
+    return String(s ?? "").replace(FENCE_RE, " ");
+}
+
 function usableRemovalFeedback(profile) {
     return (Array.isArray(profile?.removalFeedback) ? profile.removalFeedback : [])
         .filter((i) => i?.reason && String(i.reason).trim() && !isPureLogisticalReason(i.reason))
-        .slice(0, REMOVAL_FEEDBACK_PROMPT_LIMIT);
+        .slice(0, REMOVAL_FEEDBACK_PROMPT_LIMIT)
+        .map((i) => ({
+            ...i,
+            reason: stripPromptFences(i.reason),
+            jobTitle: stripPromptFences(i.jobTitle),
+            companyName: stripPromptFences(i.companyName),
+        }));
 }
 
 // companyRejectedByEntry: true when the entry's reason rejects the COMPANY
@@ -545,7 +564,13 @@ export function deterministicRemovalBullets(profile) {
         if (/not\s+my\s+target\s+role/i.test(reason) && cleaned) {
             if (!titleOverlapsPreferred(cleaned, profile)) {
                 const needleTokens = qualifierTokens(cleaned).slice(0, 2).join(" ") || cleaned.toLowerCase();
-                push("# Hard Disqualifiers", needleTokens, `- Skip roles like "${cleaned}".`);
+                // Plain `Skip <title> roles.` — NOT `Skip roles like "<title>".`.
+                // The extension's matcher (background.js extractSummarySkipPhrases)
+                // takes everything after "skip ", strips role nouns, and requires
+                // the remainder to appear literally in a job title. The old
+                // wording left it holding the dead token `like <title>`, which no
+                // posting can ever contain, so this bullet never enforced.
+                push("# Hard Disqualifiers", needleTokens, `- Skip ${cleaned} roles.`);
             } else {
                 push("# Notes for Grader", title, `- Removal feedback: the candidate removed "${title}"${company ? ` at ${company}` : ""} as not their target role — down-rank near-identical postings even within their preferred families.`);
             }
@@ -556,7 +581,10 @@ export function deterministicRemovalBullets(profile) {
             || reason.match(/too\s+(junior|senior)/i);
         if ((/wrong\s+seniority\s+level/i.test(reason) || /too\s+(junior|senior)/i.test(reason)) && senMatch) {
             const band = senMatch[1].toLowerCase().replace(/^jr$/, "junior").replace(/^sr$/, "senior");
-            push("# Hard Disqualifiers", `${band} level roles`, `- Skip ${band}-level roles.`);
+            // `Skip <band> roles.`, not `Skip <band>-level roles.` — the
+            // hyphenated form yields the token "junior-level", and job titles
+            // say "Junior Software Engineer", so the matcher never fired.
+            push("# Hard Disqualifiers", `${band} level roles`, `- Skip ${band} roles.`);
         }
         // 6. Location / salary — grader guidance, never hard skips.
         if (/location\s+doesn'?t\s+work/i.test(reason)) {
@@ -1208,6 +1236,40 @@ function escapeRegex(s) {
   return String(s).replace(/[-/\\^$*+?.()|[\]{}]/g, "\\$&");
 }
 
+// ── Structural contract ────────────────────────────────────────────────────
+// These six headers are not cosmetic. Three separate consumers pattern-match
+// them and ALL of them fail silently when one goes missing:
+//   • ensureBulletInSection() below returns the text untouched when the header
+//     isn't found, so both deterministic enforce passes become no-ops.
+//   • jr-direct-extension/background.js → extractSummarySkipPhrases() matches
+//     /#+\s*Hard Disqualifiers/ and returns [] on a miss, dropping every
+//     auto-skip the brief was supposed to carry.
+//   • clients-tracking → ClientAiSummary.jsx renders per-# section.
+// The model is told to emit them verbatim (SYSTEM_PROMPT rule 5), but nothing
+// verified it until now — a malformed brief was persisted and shipped to the
+// grader with no log line anywhere.
+const REQUIRED_SECTIONS = [
+  "# Candidate Summary",
+  "# Target Roles",
+  "# Hard Constraints",
+  "# Strong Signals",
+  "# Hard Disqualifiers",
+  "# Notes for Grader",
+];
+
+// missingSections — which required headers a brief does NOT contain. Prefix
+// match, so the parenthetical suffixes ("# Strong Signals (auto-PICK if
+// matched)") still count as present.
+function missingSections(text) {
+  const heads = String(text || "")
+    .split("\n")
+    .filter((l) => /^\s*#\s/.test(l))
+    .map((l) => l.trim().toLowerCase());
+  return REQUIRED_SECTIONS.filter(
+    (want) => !heads.some((h) => h.startsWith(want.toLowerCase())),
+  );
+}
+
 // enforceRemovalDirectives — deterministic backstop for removal feedback,
 // mirroring enforceNoteDirectives: for every feedback entry that rejects a
 // COMPANY (chips "Company isn't a fit" / "No visa sponsorship", or free
@@ -1215,15 +1277,35 @@ function escapeRegex(s) {
 // # Hard Disqualifiers — regardless of what the model emitted. This is what
 // makes company rejection 100% reliable; the prompt handles the softer
 // pattern-level signals (role family, seniority, location, salary).
-function enforceRemovalDirectives(summary, profile) {
+function enforceRemovalDirectives(summary, profile, lockedSections = []) {
   const bullets = deterministicRemovalBullets(profile);
   if (!bullets.length) return summary;
   const norm = (s) => String(s).toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
   let out = summary;
   for (const b of bullets) {
+    if (isLockedHeader(b.header, lockedSections)) continue; // operator owns it
     out = ensureBulletInSection(out, b.header, b.needle, b.bullet, norm);
   }
   return out;
+}
+
+// isLockedHeader — does `headerPrefix` ("# Hard Disqualifiers") name a section
+// the operator locked? lockedSections stores headers WITHOUT the leading "# "
+// and WITH the parenthetical suffix ("Hard Disqualifiers (auto-SKIP if
+// matched)"), so compare on the normalised prefix from both ends.
+//
+// Locked means "AI must not touch this". mergeWithLocks honours that, but the
+// enforce passes below run AFTER the merge and used to write into locked
+// sections anyway — and because ClientAiSummary.jsx paints every line in a
+// locked section as 'Operator', the injected bullet then read as if the
+// operator had authored it.
+function isLockedHeader(headerPrefix, lockedSections) {
+  const want = String(headerPrefix).replace(/^#\s*/, "").trim().toLowerCase();
+  if (!want) return false;
+  return (Array.isArray(lockedSections) ? lockedSections : []).some((h) => {
+    const got = String(h || "").replace(/^#\s*/, "").trim().toLowerCase();
+    return got.startsWith(want) || want.startsWith(got);
+  });
 }
 
 // enforceNoteDirectives — deterministic "round 2": after the LLM writes the
@@ -1231,7 +1313,7 @@ function enforceRemovalDirectives(summary, profile) {
 // reflected with the correct polarity (SCRAP→Strong Signals priority,
 // SKIP→Hard Disqualifiers), and strip the malformed "[— operator priority]"
 // tag the model sometimes emits. ponytail: code, not a 2nd OpenAI call.
-function enforceNoteDirectives(summary, notesText) {
+function enforceNoteDirectives(summary, notesText, lockedSections = []) {
   if (!notesText) return summary;
   const norm = (s) => String(s).toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
   // Strip the literal "[— operator priority]" / "[— operator allows]" artifact.
@@ -1243,8 +1325,10 @@ function enforceNoteDirectives(summary, notesText) {
     const text = m[2].replace(/^(?:do\s*not\s+scrap|don'?t\s+scrap|never\s+scrap|scrap|skip)\s+/i, "").trim();
     if (!text) continue;
     if (/^scrap$/i.test(m[1])) {
+      if (isLockedHeader("# Strong Signals", lockedSections)) continue;
       out = ensureBulletInSection(out, "# Strong Signals", text, `- ${text} — operator priority`, norm);
     } else {
+      if (isLockedHeader("# Hard Disqualifiers", lockedSections)) continue;
       // A conditional / full-sentence rule ("If in job title, ... do not
       // scrap them") reads wrong with a "Skip " prefix bolted on — render
       // it verbatim as its own rule bullet instead.
@@ -1278,6 +1362,17 @@ async function runForProfileCore(profile, apiKey, reasonTag = "manual") {
   const resumeRes = await fetchResume(email);
   const resume = resumeRes.ok ? resumeRes.resume : null;
   const source = resume ? "profile+resume" : "profile-only";
+  // "No resume assigned" (404) is a legitimate profile-only build. A network
+  // error or 5xx from the resume API is NOT — it produces a materially weaker
+  // brief that is indistinguishable from the legitimate case in the UI ("Built
+  // from Profile only"). Flag it, and leave summaryStale set at the end so the
+  // 30-min sweep rebuilds with the resume once the API recovers.
+  const resumeFetchFailed = !resumeRes.ok && resumeRes.error !== "NO_RESUME";
+  if (resumeFetchFailed) {
+    console.error(
+      `[BuildAiSummary] resume fetch FAILED email=${email} error=${resumeRes.error} msg=${resumeRes.message} — building profile-only and leaving summaryStale=true for retry`,
+    );
+  }
 
   // FRESH BUILD EVERY TIME — never feed the previous summary back into the
   // prompt. Old behaviour was diff-aware ("preserve voice, only edit
@@ -1314,10 +1409,20 @@ async function runForProfileCore(profile, apiKey, reasonTag = "manual") {
   } else if (reasonTag === "manual") {
     usedSource = `${usedSource} [manual]`;
   }
+  // Make the degraded build visible in the AI Summaries UI rather than letting
+  // it read as a normal profile-only client.
+  if (resumeFetchFailed) usedSource = `${usedSource} [resume-fetch-failed:${resumeRes.error}]`;
   if (!ai.ok) {
     return { success: false, status: 502, error: ai.error, message: ai.message, step: "openai" };
   }
-  let summary = (ai.summary || "").slice(0, MAX_SUMMARY_CHARS);
+  // Strip any whole-line <<<MARKER>>> the model echoed back from the prompt
+  // fences. applyNotesPass already does this for round 2, but it returns early
+  // when there are no notes and no removal directives — so without this a
+  // no-notes client could keep an echoed marker in their persisted brief.
+  let summary = (ai.summary || "")
+    .replace(/^\s*<{2,}[^<>]*>{2,}\s*$/gm, "")
+    .trim()
+    .slice(0, MAX_SUMMARY_CHARS);
   if (!summary) {
     return { success: false, status: 502, error: "EMPTY_SUMMARY", message: "OpenAI returned empty content", step: "openai" };
   }
@@ -1328,7 +1433,27 @@ async function runForProfileCore(profile, apiKey, reasonTag = "manual") {
   // aiSummaryMeta so the UI can colour-tint each line by source.
   const provExtract = extractProvenance(summary, { noResume: !resume });
   summary = provExtract.cleanText;
-  let aiProvenance = provExtract.provenance;
+  // provIndex is content-keyed, so it survives every rewrite below. The
+  // positional map the UI consumes is re-derived from the FINAL text at the
+  // end of this function — deriving it here would leave the colour codes
+  // pointing at the wrong lines the moment anything inserts a bullet.
+  const provIndex = provExtract.index;
+  // Round 1 must already carry the six required headers. If it doesn't, the
+  // enforce passes and the extension's skip matcher are both no-ops, so fail
+  // loudly instead of persisting a brief that silently grades on nothing.
+  const missingRound1 = missingSections(summary);
+  if (missingRound1.length) {
+    console.error(
+      `[BuildAiSummary] MALFORMED round-1 brief email=${profile.email} missing=${missingRound1.join(", ")}`,
+    );
+    return {
+      success: false,
+      status: 502,
+      error: "MALFORMED_SUMMARY",
+      message: `Model omitted required section(s): ${missingRound1.join(", ")}`,
+      step: "openai",
+    };
+  }
   // Round 2 (LLM): re-apply the operator notes AND the pre-resolved removal
   // directives so every directive is reflected with correct polarity. The
   // deterministic enforce* passes below are the guarantee if this misses.
@@ -1338,7 +1463,19 @@ async function runForProfileCore(profile, apiKey, reasonTag = "manual") {
       return resolveEntryDirectives(entry).map((d) => `${label ? `[${label}] ` : ""}${d}`);
     })
     .join("\n");
+  const beforeNotesPass = summary;
   summary = (await applyNotesPass(summary, (profile?.aiNotes?.text || "").trim(), apiKey, removalDirectivesText)).slice(0, MAX_SUMMARY_CHARS);
+  // The notes pass rewrites the WHOLE brief. If its rewrite dropped a required
+  // section, keep round 1 — a brief that lost # Hard Disqualifiers grades with
+  // no auto-skips at all, which is worse than one missing a note directive
+  // (the deterministic enforce passes below still re-apply those).
+  const missingAfterNotes = missingSections(summary);
+  if (missingAfterNotes.length) {
+    console.warn(
+      `[BuildAiSummary] notes pass dropped section(s) ${missingAfterNotes.join(", ")} email=${profile.email} — keeping round-1 brief`,
+    );
+    summary = beforeNotesPass;
+  }
   // Apply operator's saved format overlay: if enabled, re-inject any bullets
   // the operator added on top of the previous build + replace any
   // locked-section bodies verbatim. Pure AI output if no overlay or overlay
@@ -1347,6 +1484,13 @@ async function runForProfileCore(profile, apiKey, reasonTag = "manual") {
   const overlay = profile?.aiSummaryOverlay || {};
   let overlayStats = null;
   let lockCount = 0;
+  // Locks only bind when the overlay is actually enabled with saved text —
+  // that is the only path where mergeWithLocks runs, so it is also the only
+  // case where the enforce passes must hold off.
+  const activeLocks =
+    overlay.enabled && overlay.savedText && Array.isArray(overlay.lockedSections)
+      ? overlay.lockedSections
+      : [];
   if (overlay.enabled && overlay.savedText) {
     const locks = Array.isArray(overlay.lockedSections) ? overlay.lockedSections : [];
     lockCount = locks.length;
@@ -1367,10 +1511,20 @@ async function runForProfileCore(profile, apiKey, reasonTag = "manual") {
   }
   // Round 2 (deterministic): guarantee every SKIP:/SCRAP: operator-note line is
   // present with the right polarity, regardless of what the LLM emitted.
-  summary = enforceNoteDirectives(summary, (profile?.aiNotes?.text || "").trim()).slice(0, MAX_SUMMARY_CHARS);
+  summary = enforceNoteDirectives(summary, (profile?.aiNotes?.text || "").trim(), activeLocks).slice(0, MAX_SUMMARY_CHARS);
   // Round 3 (deterministic): guarantee every company-rejecting removal
   // feedback entry produced its "Skip <Company> jobs." disqualifier.
-  summary = enforceRemovalDirectives(summary, profile).slice(0, MAX_SUMMARY_CHARS);
+  summary = enforceRemovalDirectives(summary, profile, activeLocks).slice(0, MAX_SUMMARY_CHARS);
+  // Final structural check — the overlay merge can drop a section too (a saved
+  // overlay from an older prompt version, a lock whose body was emptied).
+  const missingFinal = missingSections(summary);
+  if (missingFinal.length) {
+    console.warn(
+      `[BuildAiSummary] FINAL brief missing section(s) ${missingFinal.join(", ")} email=${profile.email} — persisting anyway, downstream skip matching will be degraded`,
+    );
+  }
+  // Now that the text is final, derive the positional provenance the UI reads.
+  const aiProvenance = provenanceForText(summary, provIndex);
   const wordCount = summary.trim().split(/\s+/).filter(Boolean).length;
 
   const builtAt = new Date();
@@ -1400,7 +1554,9 @@ async function runForProfileCore(profile, apiKey, reasonTag = "manual") {
           builtInputs,
           temperature: SUMMARY_TEMPERATURE,
         },
-        summaryStale: false,
+        // Stay stale when the resume API failed, so the cron sweep retries and
+        // upgrades this profile-only brief once the resume is reachable again.
+        summaryStale: resumeFetchFailed,
       },
     },
     { new: true, lean: true },

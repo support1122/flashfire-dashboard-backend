@@ -175,6 +175,10 @@ export async function ingestActivity(req, res) {
     if (!payload.action) {
       return res.status(400).json({ error: "action required" });
     }
+    // `req` here is the FORWARDING SERVICE's request, not the end user's, so
+    // its IP and user-agent describe our own infrastructure. The payload
+    // carries the real client's — logActivity() prefers those. Safe because
+    // this endpoint is gated on ACTIVITY_INGEST_SECRET above.
     logActivity(req, payload);
     return res.status(204).end();
   } catch (err) {

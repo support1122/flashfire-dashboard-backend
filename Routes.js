@@ -551,6 +551,35 @@ app.get("/admin/activity", listActivity);
 app.get("/admin/activity/facets", listActivityFacets);
 app.post("/admin/activity/ingest", ingestActivity);
 
+// IP → location administration. Everything the CLI scripts do, reachable from
+// the deployed service (Render gives no shell). Unlike the read-only activity
+// views above these MUTATE data and spend provider quota, so the admin token
+// gate stays on.
+//   GET    /admin/geo/status              resolver + cache health
+//   GET    /admin/geo/top?limit=20        busiest IPs, flagged when shared
+//   GET    /admin/geo/inspect/:ip         each provider's answer + the verdict
+//   GET    /admin/geo/overrides           list pinned networks
+//   POST   /admin/geo/overrides           pin / update one
+//   DELETE /admin/geo/overrides/:cidr     unpin ("1.2.3.0-24" or "1.2.3.0/24")
+//   POST   /admin/geo/backfill            start an async backfill job
+//   GET    /admin/geo/backfill            job progress
+//   DELETE /admin/geo/backfill            cancel the running job
+import { verifyAdminForActivity } from "./Controllers/ActivityController.js";
+import {
+  geoStatus, geoTop, geoInspect,
+  listOverrides, upsertOverride, deleteOverride,
+  startBackfill, backfillStatus, cancelBackfill,
+} from "./Controllers/GeoController.js";
+app.get("/admin/geo/status", verifyAdminForActivity, geoStatus);
+app.get("/admin/geo/top", verifyAdminForActivity, geoTop);
+app.get("/admin/geo/inspect/:ip", verifyAdminForActivity, geoInspect);
+app.get("/admin/geo/overrides", verifyAdminForActivity, listOverrides);
+app.post("/admin/geo/overrides", verifyAdminForActivity, upsertOverride);
+app.delete("/admin/geo/overrides/:cidr", verifyAdminForActivity, deleteOverride);
+app.post("/admin/geo/backfill", verifyAdminForActivity, startBackfill);
+app.get("/admin/geo/backfill", verifyAdminForActivity, backfillStatus);
+app.delete("/admin/geo/backfill", verifyAdminForActivity, cancelBackfill);
+
 app.use("/gmail", gmailRouter);
 app.use("/gmail/inbox", gmailInboxRouter);
 app.post("/gmail/automation/template/ai-generate", aiGenerateTemplateHandler);
