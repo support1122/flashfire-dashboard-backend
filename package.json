@@ -18,7 +18,9 @@
     "verify:client-alerts": "node scripts/verify-client-alerts.mjs",
     "verify:mail-rules": "node scripts/verify-mail-rules.mjs",
     "verify:client-smtp": "node scripts/verify-client-smtp.mjs",
-    "verify:mail-monitor": "node scripts/verify-mail-monitor.mjs"
+    "verify:mail-monitor": "node scripts/verify-mail-monitor.mjs",
+    "backfill:location": "node scripts/backfill-activity-location.mjs",
+    "geo:inspect": "node scripts/inspect-ip-location.mjs"
   },
   "keywords": [
     "flashfire",

@@ -161,6 +161,8 @@ import { startMailPollWorker, isMailPollEnabled } from "./src/services/mailPollW
 import { sendDailySummary } from "./src/services/mailClientMonitor.js";
 import { startOnboardingMailWorker } from "./src/services/onboardingMailWorker.js";
 import { startAutoOptimizationWorker } from "./src/services/autoOptimizationWorker.js";
+import { geoStats } from "./Utils/ipGeo.js";
+import { refreshOverrides } from "./Utils/ipGeoOverrides.js";
 
 dotenv.config();
 
@@ -369,7 +371,11 @@ app.get("/health", (req, res) => {
     environment: NODE_ENV,
     timestamp: new Date().toISOString(),
     uptime: process.uptime(),
-    port: PORT
+    port: PORT,
+    // Cache hit rates and override count for the IP→location resolver. If
+    // `resolved` climbs while `dbHits` stays flat the shared cache is not
+    // being written and the providers are being hammered.
+    geo: geoStats()
   });
 });
 
@@ -507,6 +513,10 @@ app.use((err, req, res, next) => {
       console.log(`[mail-poll] Skipping on cluster instance ${instanceId}`);
       console.log(`[RecruiterAutomation] Skipping cron on cluster instance ${instanceId}`);
     }
+
+    // Load pinned IP overrides before serving so the first login is matched
+    // against them. Failure only logs — the resolver refreshes on its own tick.
+    await refreshOverrides();
 
     app.listen(PORT, () => {
       console.log(`🚀 Server is running on port ${PORT} in ${NODE_ENV} mode`);
