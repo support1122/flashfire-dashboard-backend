@@ -58,6 +58,7 @@ import { extractJobData } from "./Controllers/Extensions/extractJobData.js";
 import ClientLogin from "./Controllers/Extensions/clientLogin.js";
 import { getSpeedyApplyProfile, saveSpeedyApplyProfile } from "./Controllers/Extensions/speedyApplyProfile.js";
 import { onboardingTick } from "./src/services/onboardingMailWorker.js";
+import { OnboardingMailStatus, SendOnboardingMailStep } from "./Controllers/OnboardingMailStatus.js";
 import { getExtensionExclusionLists } from "./Controllers/Extensions/exclusionLists.js";
 import { getExtensionSettings, updateExtensionSettings } from "./Controllers/Extensions/settings.js";
 import { extGetProfile, extPatchProfile } from "./Controllers/Extensions/profileExt.js";
@@ -512,6 +513,11 @@ app.post('/admin/onboarding-mail/run-now', async (_req, res) => {
     res.status(500).json({ error: err?.message || "onboarding_run_failed" });
   }
 });
+// Per-client onboarding-mail state (résumé / cover letter / LinkedIn) + the
+// manual send-now escape hatch. Read by the Onboarding Emails panel in
+// clients-tracking → Client Onboarding → ticket modal.
+app.get('/admin/onboarding-mail/status', OnboardingMailStatus);
+app.post('/admin/onboarding-mail/send-step', SendOnboardingMailStep);
 // Gemini (Vertex AI) judge slice — extension routes ~10-15% of judge
 // batches here; OpenAI handles the rest in-worker.
 app.post('/extension/gemini-judge', GeminiJudge);
