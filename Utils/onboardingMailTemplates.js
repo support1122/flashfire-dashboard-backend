@@ -12,28 +12,24 @@ const BRAND = {
   flameFrom: "#f97316",
   flameTo: "#ef4444"
 };
-const LOGO_URL = "https://portal.flashfirejobs.com/Logo.png";
 
 // Per-step copy. `key` is what the schedule stores.
 const STEPS = {
   base_resume: {
-    emoji: "📄",
     label: "Base résumé ready",
-    subject: "Your base résumé is ready ✅",
+    subject: "Your base résumé is ready",
     heading: "Your base résumé is made",
     body: "Your base résumé is ready. Please check it in your WhatsApp group for reference."
   },
   cover_letter: {
-    emoji: "✉️",
     label: "Cover letter ready",
-    subject: "Your cover letter is ready ✅",
+    subject: "Your cover letter is ready",
     heading: "Your cover letter is made",
     body: "Your cover letter is ready. Please check it in your WhatsApp group for reference."
   },
   linkedin: {
-    emoji: "💼",
     label: "LinkedIn optimized",
-    subject: "Your LinkedIn optimization is done ✅",
+    subject: "Your LinkedIn optimization is done",
     heading: "Your LinkedIn optimization is done",
     body: "Your LinkedIn optimization is complete. Please check your WhatsApp group for the details."
   }
@@ -85,16 +81,15 @@ export function renderOnboardingEmail({ key, clientName, clientEmail } = {}) {
     <tr><td align="center">
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;width:100%;">
         <tr><td style="background:${BRAND.slate};border-radius:14px 14px 0 0;padding:22px 28px;">
-          <img src="${LOGO_URL}" width="26" height="26" alt="FlashFire" style="display:inline-block;width:26px;height:26px;border-radius:7px;vertical-align:middle;border:0;">
-          <span style="color:#ffffff;font-size:17px;font-weight:800;vertical-align:middle;margin-left:10px;">FlashFire</span>
+          <span style="color:#ffffff;font-size:20px;font-weight:800;vertical-align:middle;letter-spacing:.01em;">FlashFire</span>
         </td></tr>
         <tr><td style="background:#ffffff;padding:30px 28px;">
-          <span style="display:inline-block;background:#fff7ed;color:#ea580c;border:1px solid #fed7aa;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;padding:5px 12px;border-radius:999px;">${step.emoji}&nbsp; ${escapeHtml(step.label)}</span>
-          <h1 style="margin:16px 0 10px;color:${BRAND.ink};font-size:23px;line-height:1.3;font-weight:800;">${escapeHtml(step.heading)}, ${escapeHtml(name)} 🎉</h1>
+          <span style="display:inline-block;background:#fff7ed;color:#ea580c;border:1px solid #fed7aa;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;padding:5px 12px;border-radius:999px;">${escapeHtml(step.label)}</span>
+          <h1 style="margin:16px 0 10px;color:${BRAND.ink};font-size:23px;line-height:1.3;font-weight:800;">${escapeHtml(step.heading)}, ${escapeHtml(name)}</h1>
           <p style="margin:0 0 18px;color:${BRAND.body};font-size:15px;line-height:1.6;">${escapeHtml(step.body)}</p>
           <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:8px 0 4px;">
             <tr><td style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:14px 16px;color:#166534;font-size:14px;line-height:1.5;">
-              💬 Please check your <strong>WhatsApp group</strong> for the file and reference.
+              Please check your <strong>WhatsApp group</strong> for the file and reference.
             </td></tr>
           </table>
         </td></tr>

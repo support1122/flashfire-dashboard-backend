@@ -1,5 +1,5 @@
 // onboardingMailWorker — fires a short email sequence to a client's PAYMENT email
-// when their FIRST job reaches the "Applied" column.
+// once they have MORE THAN 3 job cards in the "Applied" column.
 //
 // Sequence (spaced ~90 min apart, sent over the App-Password SMTP account):
 //   1. base résumé is ready       → check WhatsApp group
@@ -10,9 +10,10 @@
 //   executive / prime → all three
 //   professional / ignite → base résumé + LinkedIn (no cover letter)
 //
-// SAFETY — the big one: every existing client already has applied jobs, so on
-// first run we BACKFILL them as "skipped" (marker-guarded, one time) and never
-// email them. Only a client who crosses 0→1 applied AFTER this ships is scheduled.
+// SAFETY — the big one: many existing clients are already past 3 applied cards,
+// so on first run we BACKFILL those (marker-guarded, one time) as "skipped" and
+// never email them. Only a client who crosses from ≤3 to >3 applied cards AFTER
+// this ships is scheduled.
 //
 // Idempotent: one OnboardingMailState per client; a step sends at most once
 // (sentAt guard); steps go out in order, one per client per tick, and each step
@@ -32,6 +33,7 @@ const CRON_EXPR = "*/15 * * * *"; // every 15 min
 const SPACING_MIN = 90; // gap between emails (within the 1–2h ask)
 const MAX_ATTEMPTS = 4; // per step, before giving up
 const APPLIED_RE = /appl/i; // currentStatus for an applied job
+const APPLIED_THRESHOLD = 3; // fire once a client has MORE THAN this many applied cards
 // Ceiling on sends per tick. Bounds the burst when a backlog drains (a pause, a
 // long deploy gap) and keeps us well under the Gmail App-Password daily cap.
 const MAX_SENDS_PER_TICK = 25;
@@ -61,14 +63,25 @@ export function stepsForPlan(planType) {
   return PLAN_STEPS[lc(planType)] || DEFAULT_STEPS;
 }
 
-// ── One-time backfill: mark every client who ALREADY has applied jobs as
-// skipped, so the sequence only ever fires for future first-applications. ──
+// Emails (lowercased) of every client with MORE THAN APPLIED_THRESHOLD applied
+// job cards. One aggregation, grouped case-insensitively on userID (the client's
+// email). Shared by the backfill and the live detector so both use one rule.
+async function emailsOverAppliedThreshold() {
+  const rows = await JobModel.aggregate([
+    { $match: { currentStatus: APPLIED_RE } },
+    { $group: { _id: { $toLower: "$userID" }, n: { $sum: 1 } } },
+    { $match: { n: { $gt: APPLIED_THRESHOLD } } }
+  ]).catch(() => []);
+  return rows.map((r) => lc(r._id)).filter((e) => EMAIL_RE.test(e));
+}
+
+// ── One-time backfill: mark every client ALREADY past the applied threshold as
+// skipped, so the sequence only ever fires for clients who cross >3 later. ──
 async function backfillOnce() {
   const marker = await OnboardingMailState.findOne({ clientEmail: ONBOARDING_BACKFILL_MARKER }).lean();
   if (marker) return { alreadyDone: true };
 
-  const appliedUserIDs = await JobModel.distinct("userID", { currentStatus: APPLIED_RE });
-  const emails = [...new Set(appliedUserIDs.map(lc).filter((e) => EMAIL_RE.test(e)))];
+  const emails = [...new Set(await emailsOverAppliedThreshold())];
 
   if (emails.length) {
     // Insert a 'skipped' doc for each, ignoring any that already exist.
@@ -97,7 +110,7 @@ async function backfillOnce() {
   return { backfilled: emails.length };
 }
 
-// ── Detect clients whose FIRST application just landed, and schedule them. ──
+// ── Detect clients who have just crossed >3 applied cards, and schedule them. ──
 async function detectAndSchedule() {
   // Candidate clients = tracked clients with a valid payment email, not already
   // handled (no OnboardingMailState doc).
@@ -121,18 +134,13 @@ async function detectAndSchedule() {
 
   if (!candidates.length) return { scheduled: 0 };
 
-  // One query: which candidates have at least one applied job.
-  const appliedSet = new Set(
-    (await JobModel.distinct("userID", {
-      userID: { $in: candidates.map((c) => c.email) },
-      currentStatus: APPLIED_RE
-    }).catch(() => [])).map(lc)
-  );
+  // Which candidates have MORE THAN 3 applied job cards right now.
+  const overThreshold = new Set(await emailsOverAppliedThreshold());
 
   let scheduled = 0;
   const now = Date.now();
   for (const c of candidates) {
-    if (!appliedSet.has(c.email)) continue; // not applied yet → check again next tick
+    if (!overThreshold.has(c.email)) continue; // not past 3 applied yet → check again next tick
 
     const keys = stepsForPlan(c.planType);
     const steps = keys.map((key, i) => ({
