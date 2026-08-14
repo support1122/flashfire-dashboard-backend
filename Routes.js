@@ -322,6 +322,53 @@ app.post('/get-referral-stats', async (req, res) => {
   }
 });
 
+// Plan usage — read-only view of the SAME numbers /addjob enforces, so the
+// dashboard can show the limit and stop a job card being started once it is
+// reached instead of only failing at submit. Deliberately reuses checkPlanCap
+// (Utils/dailyCapGuard.js) rather than recomputing: one source of truth means
+// the banner can never disagree with the gate. Removed/deleted jobs are already
+// excluded by countTotalJobs, and referral + addon bonuses are already stacked.
+app.post("/plan-usage", async (req, res) => {
+  try {
+    const email = String(req.body?.email || "").trim().toLowerCase();
+    if (!email || !email.includes("@")) {
+      return res.status(400).json({
+        success: false,
+        error: "BAD_INPUT",
+        message: "email is required",
+      });
+    }
+
+    const { checkPlanCap } = await import("./Utils/dailyCapGuard.js");
+    const check = await checkPlanCap(email);
+
+    return res.status(200).json({
+      success: true,
+      email,
+      planType: check.planType || null,
+      // cap === null means this client has no recognisable plan → uncapped.
+      cap: check.cap,
+      used: check.count,
+      remaining: check.cap == null ? null : Math.max(0, check.cap - check.count),
+      allowed: check.allowed,
+      baseCap: check.baseCap,
+      referralBonus: check.referralBonus,
+      referralCount: check.referralCount,
+      addonBonus: check.addonBonus,
+      addonCount: check.addonCount,
+      reason: check.reason || null,
+      message: check.message || null,
+    });
+  } catch (error) {
+    console.error("Error computing plan usage:", error.message);
+    return res.status(500).json({
+      success: false,
+      error: "Server error",
+      message: "Failed to compute plan usage",
+    });
+  }
+});
+
 // Profile routes
 app.get("/get-profile", GetProfile);
 app.post("/check-profile", CheckProfile);
