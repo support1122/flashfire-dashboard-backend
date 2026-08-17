@@ -7,8 +7,8 @@
 //   3. LinkedIn optimization done → check WhatsApp group
 //
 // Plan gating:
-//   executive / prime → all three
-//   professional / ignite → base résumé + LinkedIn (no cover letter)
+//   executive → all three (only plan that gets the cover letter)
+//   prime / professional / ignite → base résumé + LinkedIn (no cover letter)
 //
 // SAFETY — the big one: many existing clients are already past 3 applied cards,
 // so on first run we BACKFILL those (marker-guarded, one time) as "skipped" and
@@ -41,7 +41,7 @@ const MAX_SENDS_PER_TICK = 25;
 // Which steps each plan receives, in order.
 const PLAN_STEPS = {
   executive: ["base_resume", "cover_letter", "linkedin"],
-  prime: ["base_resume", "cover_letter", "linkedin"],
+  prime: ["base_resume", "linkedin"],
   professional: ["base_resume", "linkedin"],
   ignite: ["base_resume", "linkedin"]
 };
