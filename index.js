@@ -160,6 +160,7 @@ import { startSecondJudgeWorker } from "./src/services/secondJudgeWorker.js";
 import { startMailPollWorker, isMailPollEnabled } from "./src/services/mailPollWorker.js";
 import { sendDailySummary } from "./src/services/mailClientMonitor.js";
 import { startOnboardingMailWorker } from "./src/services/onboardingMailWorker.js";
+import { startScrapeCostSnapshotWorker } from "./Utils/scrapeCostNotifier.js";
 import { startAutoOptimizationWorker } from "./src/services/autoOptimizationWorker.js";
 import { geoStats } from "./Utils/ipGeo.js";
 import { refreshOverrides } from "./Utils/ipGeoOverrides.js";
@@ -459,6 +460,13 @@ app.use((err, req, res, next) => {
       // ~90 min apart) over SMTP. Backfills existing applied-clients as skipped
       // on first run so only future first-applications ever fire.
       startOnboardingMailWorker();
+
+      // Scrape-cost daily snapshot: every 10 min, roll today's scrape-pipeline
+      // spend (stage 1 + stage 2 + jobs scraped) into a dated ScrapeCostDaily
+      // row so the admin dashboard can graph daily and monthly spend. Runs
+      // unconditionally (not gated on a Discord milestone) so low-volume days
+      // still get a row.
+      startScrapeCostSnapshotWorker();
 
       // Inbound mail pipeline: hourly, reads each connected client mailbox,
       // summarizes new INBOX mail with gpt-4o-mini, and posts a rich embed
