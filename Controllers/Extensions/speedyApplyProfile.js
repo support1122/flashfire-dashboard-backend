@@ -13,9 +13,12 @@
 import jwt from "jsonwebtoken";
 import dotenv from "dotenv";
 import { SpeedyApplyProfile } from "../../Schema_Models/SpeedyApplyProfile.js";
+import { ProfileModel } from "../../Schema_Models/ProfileModel.js";
+import { UserModel } from "../../Schema_Models/UserModel.js";
 import { uploadFile } from "../../Utils/storageService.js";
 import { getPresignedUrl } from "../../Utils/r2Storage.js";
 import { encrypt, decrypt } from "../../Utils/CryptoHelper.js";
+import { buildSeedProfile, mergeSeed } from "../../Utils/speedyApplySeed.js";
 
 dotenv.config();
 
@@ -135,6 +138,32 @@ function capLearned(learned) {
   return out;
 }
 
+// seedFromDashboard: fill the gaps in the client's stored extension profile
+// from their FlashFire dashboard profile.
+//
+// Without this, a client who has already given FlashFire their address, phone,
+// visa status and degrees signs into the extension and is asked to type all of
+// it again — and autofill leaves required fields like "Address Line 1" and
+// "School" blank on real applications because the extension has no value for
+// them. Only keys the stored extension profile leaves EMPTY are filled, so a
+// client's own edits are never overwritten. See Utils/speedyApplySeed.js.
+//
+// Never throws: a seeding failure must not take down profile loading.
+async function seedFromDashboard(email, storedProfile) {
+  try {
+    const [dash, user] = await Promise.all([
+      ProfileModel.findOne({ email }).lean(),
+      UserModel.findOne({ email }).select("name email").lean(),
+    ]);
+    if (!dash) return { profile: storedProfile || null, seededFields: [] };
+    const seed = buildSeedProfile(dash, user);
+    return mergeSeed(storedProfile, seed);
+  } catch (e) {
+    console.warn("[speedyapply] dashboard seed skipped:", e?.message || e);
+    return { profile: storedProfile || null, seededFields: [] };
+  }
+}
+
 // GET /extension/speedyapply/profile
 // Returns the saved blobs (or nulls when the client has never saved).
 export async function getSpeedyApplyProfile(req, res) {
@@ -143,11 +172,16 @@ export async function getSpeedyApplyProfile(req, res) {
 
   try {
     const doc = await SpeedyApplyProfile.findOne({ clientEmail: email }).lean();
+    const { profile, seededFields } = await seedFromDashboard(email, doc?.profile || null);
     return res.status(200).json({
       ok: true,
       email,
       exists: !!doc,
-      profile: doc?.profile || null,
+      profile: profile || null,
+      // Which keys came from the dashboard profile rather than from the
+      // client's own extension edits. The extension merges these locally
+      // instead of treating the response as authoritative.
+      seededFields,
       settings: doc?.settings || null,
       resume: await withResumeUrl(doc?.resume || null),
       tracker: Array.isArray(doc?.tracker) ? doc.tracker : null,
