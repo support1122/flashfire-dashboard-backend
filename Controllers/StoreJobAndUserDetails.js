@@ -10,6 +10,7 @@ import {
 } from "../Utils/exclusionLists.js";
 import { sanitizeJobTitle } from "../Utils/jobTitle.js";
 import { checkCap, detectOvershoot, checkPlanCap, enforcePlanCapPostInsert } from "../Utils/dailyCapGuard.js";
+import { jobLinkKey, findDuplicateByLink } from "../Utils/jobLinkKey.js";
 
 /**
  * Normalize job title/company for duplicate check: trim and collapse multiple spaces.
@@ -47,13 +48,12 @@ export default async function StoreJobAndUserDetails(req, res) {
         const { value: joblink } = pickKey(b, ["applyUrl", "url"], "www.google.com");
         const { value: jobDescriptionHtml } = pickKey(b, ["descriptionHtml"]);
 
-        const existing = await JobModel.findOne({
-            $or: [
-                { userID, joblink },
-            ]
-        });
+        // Was exact string equality on joblink, which misses every cosmetic
+        // variation: ?utm_source=linkedin, a trailing slash and a www. prefix
+        // each read as a brand new job. Compare the canonical key instead.
+        const existing = await findDuplicateByLink(JobModel, userID, joblink);
         if (existing) {
-            console.log(`❌ Duplicate job found for user ${userID}. Skipping save.`);
+            console.log(`❌ Duplicate job link for user ${userID} (${existing.jobTitle} at ${existing.companyName}). Skipping save.`);
             return res.status(200).json({ success: true, skipped: true, reason: "duplicate" });
         }
 
@@ -63,6 +63,7 @@ export default async function StoreJobAndUserDetails(req, res) {
             userID,
             jobTitle,
             joblink,
+            joblinkKey: jobLinkKey(joblink),
             companyName,
             currentStatus: "saved",
             jobDescription: jobDescriptionHtml, // <-- Use the correctly picked description value
@@ -389,8 +390,26 @@ export async function saveToDashboard(req, res) {
                 const normTitle = normalizeString(sanitizedPosition);
                 const normCompany = normalizeString(company);
 
+                // Same LINK first. The title+company test below cannot catch a
+                // shared application form used for several roles — one Tally or
+                // careers-portal URL under five different titles passes it five
+                // times, which is exactly how the same link ended up on five
+                // cards for one client.
+                const dupLink = await findDuplicateByLink(JobModel, userEmail, url);
+                if (dupLink) {
+                    console.log(`⏩ Duplicate job LINK for user ${userEmail}. Skipping.`);
+                    summary.skippedAsDuplicate++;
+                    summary.details.push({
+                        user: userEmail,
+                        status: 'skipped_duplicate',
+                        reason: `This job link was already added for this client (${dupLink.jobTitle} at ${dupLink.companyName}).`
+                    });
+                    continue;
+                }
+
                 // Duplicate check: same user + same job title + same company (case-insensitive).
-                // Uses title+company because URL can vary (e.g. ?utm_source=linkedin, "Unknown URL").
+                // Kept as a second net for postings whose URL genuinely differs
+                // run to run (e.g. "Unknown URL" fallbacks, per-session tokens).
                 const existingJob = await JobModel.findOne({
                     userID: userEmail,
                     jobTitle: { $regex: new RegExp('^' + escapeRegex(normTitle) + '$', 'i') },
@@ -418,6 +437,7 @@ export async function saveToDashboard(req, res) {
                     userID: userEmail,
                     jobTitle: sanitizedPosition,
                     joblink: url,
+                    joblinkKey: jobLinkKey(url),
                     companyName: company,
                     jobLocation: locationStr || "",
                     companyLogo : logo,
