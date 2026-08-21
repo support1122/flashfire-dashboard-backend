@@ -5,6 +5,7 @@ import { isClientLocked } from './operations/ClientOperations.js';
 import { getExclusionBlockReason } from '../Utils/exclusionGuard.js';
 import { sanitizeJobTitle } from '../Utils/jobTitle.js';
 import { checkCap, detectOvershoot, checkPlanCap, enforcePlanCapPostInsert } from '../Utils/dailyCapGuard.js';
+import { jobLinkKey, findDuplicateByLink } from '../Utils/jobLinkKey.js';
 
 export default async function AddJob(req, res) {
     let { jobDetails, userDetails, role, operationsEmail, operationsName, extensionCode, source } = req.body;
@@ -55,6 +56,34 @@ export default async function AddJob(req, res) {
                 return res.status(403).json({
                     success: false,
                     message: lockCheck.message || "Client is in lock period"
+                });
+            }
+        }
+
+        // Same link already added for this client.
+        //
+        // This lives in the CONTROLLER, not only in CheckForDuplicateJobs,
+        // because /operations/jobs routes straight here with no middleware at
+        // all — that path had no duplicate protection of any kind. Running it
+        // before the cap checks also means a duplicate never consumes a slot
+        // from the client's daily or lifetime allowance.
+        //
+        // Returns null when the link carries no identity, so a blank or
+        // placeholder URL is never reported as a duplicate of another blank one.
+        if (jobDetails?.userID) {
+            const dupByLink = await findDuplicateByLink(JobModel, jobDetails.userID, jobDetails.joblink);
+            if (dupByLink) {
+                return res.status(409).json({
+                    success: false,
+                    error: 'DUPLICATE_LINK',
+                    message: `This job link was already added for this client (${dupByLink.jobTitle} at ${dupByLink.companyName}).`,
+                    existing: {
+                        jobID: dupByLink.jobID,
+                        jobTitle: dupByLink.jobTitle,
+                        companyName: dupByLink.companyName,
+                        currentStatus: dupByLink.currentStatus,
+                        dateAdded: dupByLink.dateAdded
+                    }
                 });
             }
         }
@@ -240,6 +269,11 @@ export default async function AddJob(req, res) {
             jobDetails.operatorName = 'user';
             jobDetails.operatorEmail = 'user@flashfirehq';
         }
+
+        // Stamp the canonical key so the next add can find this one. Computed
+        // here rather than in a schema hook so every write path is explicit
+        // about it and a missing key is visible in review, not silent.
+        jobDetails.joblinkKey = jobLinkKey(jobDetails.joblink);
 
         const createdJob = await JobModel.create(jobDetails);
 
