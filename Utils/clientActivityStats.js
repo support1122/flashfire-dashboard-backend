@@ -32,6 +32,7 @@
 import mongoose from "mongoose";
 import { JobModel } from "../Schema_Models/JobModel.js";
 import { readPlanCap } from "./dailyCapGuard.js";
+import { parseLocaleDateMs } from "./jobActivityTime.js";
 
 /** IST is a fixed UTC+05:30. India has never observed DST, so plain arithmetic
  *  is exact here and we never have to round-trip through toLocaleString for a
@@ -205,95 +206,25 @@ export function objectIdAtOrAfter(date = new Date()) {
  * @returns {Date|null} null when unparseable. Never throws.
  */
 export function parseStoredISTDate(dateString) {
-  if (dateString instanceof Date) {
-    return Number.isNaN(dateString.getTime()) ? null : dateString;
-  }
-  if (!dateString || typeof dateString !== "string") return null;
-
-  try {
-    const raw = dateString.trim();
-    if (!raw) return null;
-
-    // ISO format (with or without a time zone designator).
-    if (/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(raw)) {
-      const d = new Date(raw);
-      return Number.isNaN(d.getTime()) ? null : d;
-    }
-    // Date-only ISO, e.g. "2026-08-22". Read as IST midnight, not UTC midnight,
-    // or every such row lands 5.5 hours early and can fall out of the window.
-    const isoDateOnly = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-    if (isoDateOnly) {
-      const y = Number(isoDateOnly[1]);
-      const mo = Number(isoDateOnly[2]);
-      const da = Number(isoDateOnly[3]);
-      if (mo < 1 || mo > 12 || da < 1 || da > 31) return null;
-      return new Date(Date.UTC(y, mo - 1, da, 0, 0, 0) - IST_OFFSET_MS);
-    }
-
-    const parts = raw.split(",");
-    if (parts.length !== 2) return null;
-
-    const datePart = parts[0].trim();
-    const timePart = parts[1].trim();
-    const dateNumbers = datePart.split("/").map((p) => parseInt(p.trim(), 10));
-    if (dateNumbers.length !== 3 || dateNumbers.some(Number.isNaN)) return null;
-
-    let dd;
-    let mm;
-    let yyyy;
-    if (dateNumbers[0] > 12) {
-      // First number > 12 → must be DD/MM/YYYY (en-IN)
-      dd = dateNumbers[0];
-      mm = dateNumbers[1];
-      yyyy = dateNumbers[2];
-    } else {
-      // Ambiguous or MM/DD/YYYY (en-US): treat as MM/DD/YYYY to match backend logic
-      // For jobs where day <= 12, en-US interpretation is used (consistent with backend sort)
-      mm = dateNumbers[0];
-      dd = dateNumbers[1];
-      yyyy = dateNumbers[2];
-    }
-
-    if (yyyy < 100) yyyy += 2000;
-    if (!dd || !mm || !yyyy || mm > 12 || dd > 31) return null;
-
-    const timeMatch = timePart.match(/(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(am|pm)/i);
-    let hour = 0;
-    let minute = 0;
-    let second = 0;
-    if (timeMatch) {
-      hour = parseInt(timeMatch[1], 10);
-      minute = parseInt(timeMatch[2], 10);
-      second = timeMatch[3] ? parseInt(timeMatch[3], 10) : 0;
-      const mer = (timeMatch[4] || "").toLowerCase();
-      if (mer === "pm" && hour !== 12) hour += 12;
-      if (mer === "am" && hour === 12) hour = 0;
-    } else {
-      // 24-hour locale output ("22/08/2026, 21:30:04") has no meridiem. The
-      // original parser dropped the time entirely here and produced midnight,
-      // which is fine for a day-granularity report but wrong at a day boundary,
-      // so read the numbers when they are unambiguous.
-      const t24 = timePart.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
-      if (t24) {
-        hour = parseInt(t24[1], 10);
-        minute = parseInt(t24[2], 10);
-        second = t24[3] ? parseInt(t24[3], 10) : 0;
-        if (hour > 23 || minute > 59 || second > 59) {
-          hour = 0;
-          minute = 0;
-          second = 0;
-        }
-      }
-    }
-
-    // The stored wall-clock is Asia/Kolkata, so subtract the fixed offset to
-    // get the real UTC instant.
-    const utcMs = Date.UTC(yyyy, mm - 1, dd, hour, minute, second) - IST_OFFSET_MS;
-    const d = new Date(utcMs);
-    return Number.isNaN(d.getTime()) ? null : d;
-  } catch {
-    return null;
-  }
+  // Delegates to Utils/jobActivityTime.js so there is exactly ONE set of rules
+  // for reading these strings.
+  //
+  // This function used to carry its own copy that read an ambiguous date as
+  // MM/DD "to match backend logic". Both copies were wrong in different ways,
+  // and the writer locale changed around Oct 2025: everything since is en-IN
+  // (D/M, lowercase meridiem) while Jul-Sep 2025 is largely en-US (M/D,
+  // UPPERCASE meridiem). Reading "1/5/2026" as 5 January instead of 1 May
+  // moves a card four months, which for a digest means an application simply
+  // is not counted and the report skips itself as "no activity".
+  //
+  // The shared parser settles the format on an out-of-range number first, then
+  // on the meridiem case, and also handles the date-only shapes ("24/3/2026",
+  // "2026-08-22") that this one returned null for - 644 applied cards were
+  // invisible to every window query because of that.
+  const ms = parseLocaleDateMs(dateString);
+  if (ms == null) return null;
+  const d = new Date(ms);
+  return Number.isNaN(d.getTime()) ? null : d;
 }
 
 // ---------------------------------------------------------------------------
