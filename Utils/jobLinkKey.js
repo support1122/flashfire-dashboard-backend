@@ -116,13 +116,91 @@ export function jobLinkKey(raw) {
 }
 
 /**
- * Find an existing job for this client with the same canonical link.
+ * How many DIFFERENT employer names one URL may be recorded under before it is
+ * treated as a shared application form rather than a job posting.
  *
- * Scoped to one client on purpose: two clients applying to the same posting is
- * normal and must not be blocked.
+ * Measured, not guessed. Over 79,469 jobs added in 120 days the distribution of
+ * distinct company names per canonical link was:
  *
- * Returns null when the link carries no identity, so a blank or placeholder URL
- * can never be reported as a duplicate of another blank one.
+ *     2 companies : 1139 links      4 companies :    7 links
+ *     3 companies :   66 links      5 companies :    1 link
+ *    11 companies :    2 links     48 companies :    1 link
+ *
+ * Everything at 4 and below is one employer spelled several ways — "paypal" /
+ * "paypal, inc." / "0020 paypal, inc.", or "baker tilly" / "baker tilly us".
+ * The 5 is one company with five spellings too. The outliers at 11, 11 and 48
+ * are all tally.so forms recorded under genuinely unrelated employers: travel
+ * agencies, logistics firms, media companies. One URL cannot be six unrelated
+ * employers, so 6 separates them with room to spare in both directions.
+ */
+export const SHARED_FORM_COMPANY_LIMIT = 6;
+
+/**
+ * Everything the add paths need to know about a link, in one round trip.
+ *
+ * Answers two different questions that need two different rules:
+ *
+ *   duplicateForClient  Has THIS client already got this link? Scoped to one
+ *                       client on purpose — two clients applying to the same
+ *                       real posting is normal and must never be blocked.
+ *
+ *   companyCount        How many distinct employers is this URL recorded under,
+ *                       across everyone? A generic form reused by dozens of
+ *                       fake postings shows up here and nowhere else. This one
+ *                       IS cross-client, because that is the only place the
+ *                       signal exists.
+ *
+ * @param {import('mongoose').Model} JobModel
+ * @param {string} userID
+ * @param {unknown} rawLink
+ * @returns {Promise<{key: string, duplicateForClient: object|null, companyCount: number, clientCount: number, companies: string[]}>}
+ */
+export async function inspectJobLink(JobModel, userID, rawLink) {
+  const empty = { key: '', duplicateForClient: null, companyCount: 0, clientCount: 0, companies: [] };
+  const key = jobLinkKey(rawLink);
+  if (!key) return empty;
+  const email = String(userID || '').trim().toLowerCase();
+  if (!email) return empty;
+
+  const lowerUser = { $toLower: { $trim: { input: { $ifNull: ['$userID', ''] } } } };
+
+  const [agg] = await JobModel.aggregate([
+    { $match: { joblinkKey: key } },
+    {
+      $group: {
+        _id: null,
+        companies: { $addToSet: { $toLower: { $trim: { input: { $ifNull: ['$companyName', ''] } } } } },
+        clients: { $addToSet: lowerUser },
+        // The client's own copies, collected in the same pass rather than a
+        // second query. null for everyone else's rows; stripped below.
+        mine: {
+          $addToSet: {
+            $cond: [
+              { $eq: [lowerUser, email] },
+              { jobID: '$jobID', jobTitle: '$jobTitle', companyName: '$companyName', currentStatus: '$currentStatus', dateAdded: '$dateAdded' },
+              null,
+            ],
+          },
+        },
+      },
+    },
+  ]);
+
+  if (!agg) return { ...empty, key };
+
+  const mine = (agg.mine || []).filter(Boolean);
+  const companies = (agg.companies || []).filter((c) => c !== '');
+  return {
+    key,
+    duplicateForClient: mine[0] || null,
+    companyCount: companies.length,
+    clientCount: (agg.clients || []).length,
+    companies,
+  };
+}
+
+/**
+ * Convenience wrapper for callers that only care about the per-client duplicate.
  *
  * @param {import('mongoose').Model} JobModel
  * @param {string} userID
@@ -130,16 +208,6 @@ export function jobLinkKey(raw) {
  * @returns {Promise<object|null>} the existing job, or null
  */
 export async function findDuplicateByLink(JobModel, userID, rawLink) {
-  const key = jobLinkKey(rawLink);
-  if (!key) return null;
-  const email = String(userID || '').trim().toLowerCase();
-  if (!email) return null;
-
-  return JobModel.findOne(
-    {
-      userID: { $regex: `^${email.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: 'i' },
-      joblinkKey: key,
-    },
-    { jobID: 1, jobTitle: 1, companyName: 1, joblink: 1, currentStatus: 1, dateAdded: 1 }
-  ).lean();
+  const { duplicateForClient } = await inspectJobLink(JobModel, userID, rawLink);
+  return duplicateForClient;
 }

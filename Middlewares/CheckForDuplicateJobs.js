@@ -1,6 +1,6 @@
 import { JobModel } from "../Schema_Models/JobModel.js";
 import { sanitizeJobTitle, normalizeWhitespace } from "../Utils/jobTitle.js";
-import { findDuplicateByLink } from "../Utils/jobLinkKey.js";
+import { inspectJobLink, SHARED_FORM_COMPANY_LIMIT } from "../Utils/jobLinkKey.js";
 
 export default async function CheckForDuplicateJobs(req, res, next) {
     let {jobDetails,userDetails } = req.body;
@@ -20,7 +20,21 @@ export default async function CheckForDuplicateJobs(req, res, next) {
        // is used for several roles, so the title+company test below waves every
        // one of them through and the operator ends up with the same URL five
        // times. Skipped automatically when the link carries no identity.
-       const dupByLink = await findDuplicateByLink(JobModel, userDetails.email, jobDetails.joblink);
+       let linkInfo = null;
+       try {
+           linkInfo = await inspectJobLink(JobModel, userDetails.email, jobDetails.joblink);
+       } catch (e) {
+           console.warn("inspectJobLink failed, allowing the push:", e.message);
+       }
+       if (linkInfo && linkInfo.companyCount >= SHARED_FORM_COMPANY_LIMIT) {
+            return res.status(403).json({
+                message: `This link is already recorded under ${linkInfo.companyCount} different companies across ${linkInfo.clientCount} clients, so it is a generic application form rather than a specific job. Use the employer's own posting URL.`,
+                reason: 'SHARED_APPLICATION_FORM',
+                companyCount: linkInfo.companyCount,
+                clientCount: linkInfo.clientCount
+            });
+       }
+       const dupByLink = linkInfo?.duplicateForClient;
        if (dupByLink) {
             return res.status(403).json({
                 message: `This job link was already added for this client (${dupByLink.jobTitle} at ${dupByLink.companyName}).`,

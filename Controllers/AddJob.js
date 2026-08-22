@@ -5,7 +5,7 @@ import { isClientLocked } from './operations/ClientOperations.js';
 import { getExclusionBlockReason } from '../Utils/exclusionGuard.js';
 import { sanitizeJobTitle } from '../Utils/jobTitle.js';
 import { checkCap, detectOvershoot, checkPlanCap, enforcePlanCapPostInsert } from '../Utils/dailyCapGuard.js';
-import { jobLinkKey, findDuplicateByLink } from '../Utils/jobLinkKey.js';
+import { jobLinkKey, inspectJobLink, SHARED_FORM_COMPANY_LIMIT } from '../Utils/jobLinkKey.js';
 
 export default async function AddJob(req, res) {
     let { jobDetails, userDetails, role, operationsEmail, operationsName, extensionCode, source } = req.body;
@@ -71,7 +71,35 @@ export default async function AddJob(req, res) {
         // Returns null when the link carries no identity, so a blank or
         // placeholder URL is never reported as a duplicate of another blank one.
         if (jobDetails?.userID) {
-            const dupByLink = await findDuplicateByLink(JobModel, jobDetails.userID, jobDetails.joblink);
+            // One round trip answers both link questions. Fails OPEN: this is a
+            // spam filter, not a limit, so a database hiccup must let a real
+            // push through rather than block the operator.
+            let linkInfo = null;
+            try {
+                linkInfo = await inspectJobLink(JobModel, jobDetails.userID, jobDetails.joblink);
+            } catch (e) {
+                console.warn('inspectJobLink failed, allowing the push:', e.message);
+            }
+
+            // (a) SHARED APPLICATION FORM. One URL recorded under many unrelated
+            //     employers is not a job posting, it is a generic form that
+            //     dozens of fake listings funnel into. Checked before the
+            //     per-client duplicate because it is the worse problem: the
+            //     client-scoped rule cannot see it at all, and one such form had
+            //     already consumed 139 real applications across 27 clients.
+            if (linkInfo && linkInfo.companyCount >= SHARED_FORM_COMPANY_LIMIT) {
+                return res.status(409).json({
+                    success: false,
+                    error: 'SHARED_APPLICATION_FORM',
+                    message: `This link is already recorded under ${linkInfo.companyCount} different companies across ${linkInfo.clientCount} clients, so it is a generic application form rather than a specific job. Use the employer's own posting URL.`,
+                    companyCount: linkInfo.companyCount,
+                    clientCount: linkInfo.clientCount,
+                    sampleCompanies: linkInfo.companies.slice(0, 8)
+                });
+            }
+
+            // (b) Same link, same client.
+            const dupByLink = linkInfo?.duplicateForClient;
             if (dupByLink) {
                 return res.status(409).json({
                     success: false,
