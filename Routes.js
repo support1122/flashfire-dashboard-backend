@@ -48,6 +48,16 @@ import GetAllJobsOPS from "./Controllers/operations/GetAllJobs.js";
 import { getClientOperations, updateClientOperations, checkLockPeriod } from "./Controllers/operations/ClientOperations.js";
 import { reconcileExclusionJobsHandler } from "./Controllers/operations/reconcileExclusionJobs.js";
 import { queueAutoOptimizeSavedJobs } from "./Controllers/operations/QueueAutoOptimizeSavedJobs.js";
+import requireOpsKey from "./Middlewares/RequireOpsKey.js";
+import {
+  getClientReminderConfig,
+  updateClientReminderConfig,
+  setClientReminderPaymentEmail,
+  sendClientReminderNow,
+  testClientReminderMattermost,
+  previewClientReminder,
+  getClientReminderHistory
+} from "./Controllers/operations/ClientReminders.js";
 import ForgotPassword from "./Controllers/ForgotPassword.js";
 import ExtensionLogin from "./Controllers/Extensions/login.js";
 import { GeminiJudge } from "./Controllers/Extensions/geminiJudge.js";
@@ -536,6 +546,30 @@ app.put('/operations/client-operations', updateClientOperations);
 app.post('/operations/reconcile-exclusion-jobs', reconcileExclusionJobsHandler);
 app.post('/operations/check-lock-period', checkLockPeriod);
 app.post('/operations/auto-optimize-saved', queueAutoOptimizeSavedJobs);
+
+// Client Reminders — operator-configured recurring reports for one client.
+//
+// Operations picks which of the Utils/reminderItems.js catalogue items a client
+// receives, on what IST schedule, and over which channels: the client's payment
+// email (existing SMTP) and/or a client-specific Mattermost incoming webhook.
+// src/services/clientReminderWorker.js does the actual delivery every five
+// minutes; these routes only read and write the configuration, plus a preview
+// and a manual "send now" that both run through that same worker code so what
+// an operator approves is exactly what the schedule ships.
+//
+// Product rule enforced downstream in the worker: a period with zero jobs added
+// AND zero applications submitted sends nothing at all. Silence beats an empty
+// digest.
+//
+// Every route is gated by requireOpsKey (header `x-ops-key`), because they can
+// email a paying client and post into their Mattermost channel.
+app.post('/operations/reminders/get', requireOpsKey, getClientReminderConfig);
+app.put('/operations/reminders', requireOpsKey, updateClientReminderConfig);
+app.post('/operations/reminders/payment-email', requireOpsKey, setClientReminderPaymentEmail);
+app.post('/operations/reminders/send-now', requireOpsKey, sendClientReminderNow);
+app.post('/operations/reminders/test-mattermost', requireOpsKey, testClientReminderMattermost);
+app.post('/operations/reminders/preview', requireOpsKey, previewClientReminder);
+app.post('/operations/reminders/history', requireOpsKey, getClientReminderHistory);
 
 //extensions
 app.post('/extension/login', ExtensionLogin);

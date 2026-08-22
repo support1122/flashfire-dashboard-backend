@@ -160,6 +160,7 @@ import { startSecondJudgeWorker } from "./src/services/secondJudgeWorker.js";
 import { startMailPollWorker, isMailPollEnabled } from "./src/services/mailPollWorker.js";
 import { sendDailySummary } from "./src/services/mailClientMonitor.js";
 import { startOnboardingMailWorker } from "./src/services/onboardingMailWorker.js";
+import { startClientReminderWorker } from "./src/services/clientReminderWorker.js";
 import { startScrapeCostSnapshotWorker } from "./Utils/scrapeCostNotifier.js";
 import { startAutoOptimizationWorker } from "./src/services/autoOptimizationWorker.js";
 import { geoStats } from "./Utils/ipGeo.js";
@@ -460,6 +461,20 @@ app.use((err, req, res, next) => {
       // ~90 min apart) over SMTP. Backfills existing applied-clients as skipped
       // on first run so only future first-applications ever fire.
       startOnboardingMailWorker();
+
+      // Client reminders: every 5 min, deliver whatever the Operations >
+      // Client Reminders tab has configured per client - daily/weekly/monthly
+      // activity reports, interview pipeline, plan usage, milestones and the
+      // internal no-activity alert. Goes to the client's payment email over
+      // SMTP and/or a per-client Mattermost webhook.
+      //
+      // Two things worth knowing before you touch this line:
+      //   - Gated on CLIENT_REMINDERS_ENABLED ('1' forces on, '0' forces off,
+      //     default on Render only). A laptop sharing the prod DB stays quiet,
+      //     and the worker logs which state it resolved to at startup.
+      //   - An activity-gated report with nothing to report is NOT sent. The
+      //     silence is the feature; see decideDelivery() in the worker.
+      startClientReminderWorker();
 
       // Scrape-cost daily snapshot: every 10 min, roll today's scrape-pipeline
       // spend (stage 1 + stage 2 + jobs scraped) into a dated ScrapeCostDaily

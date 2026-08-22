@@ -274,6 +274,9 @@ JobSchema.index({ userID: 1, dateAdded: -1 });
 // The application-level check in Utils/jobLinkKey.js is the guard; this index
 // only makes it fast.
 JobSchema.index({ userID: 1, joblinkKey: 1 });
+// Shared-application-form guard: counts how many distinct employers one link is
+// recorded under, across ALL clients, so userID cannot lead the index here.
+JobSchema.index({ joblinkKey: 1 });
 // Index for auto-optimization worker polling
 JobSchema.index({ 'autoOptimization.status': 1, 'autoOptimization.retryAfter': 1, _id: 1 });
 // Index for second-judge worker polling
