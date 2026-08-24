@@ -48,6 +48,9 @@ import {
 } from "../../Utils/gmailMessage.js";
 import { summarizeMail } from "./mailAiSummarizer.js";
 import { classifyMailByRules } from "../../Utils/mailRulesClassifier.js";
+import { verifyMilestoneMail, milestoneGate } from "./mailMilestoneVerifier.js";
+import { shouldSuppressSender, recordVerdict } from "./mailVerifierLearning.js";
+import { applyLearnedExclusions, proposeAndStoreExclusion } from "./mailRegexLearner.js";
 import { notifyUsefulMailLine, notifyGmailAuthError, isGmailAuthError, errorText } from "../../Utils/discordMailNotify.js";
 import {
   deriveEligibility,
@@ -284,7 +287,11 @@ async function deliver({ digestDoc, client, mailbox }) {
   const result = await notifyUsefulMailLine({
     clientName: client?.name || client?.email || mailbox,
     clientEmail: mailbox,
-    category: digestDoc.clientNotifyCategory || digestDoc.category,
+    // An ops-eligible digest without a client category is one the AI verifier
+    // could not check (outage) — tell ops it needs a human eye.
+    category:
+      digestDoc.clientNotifyCategory ||
+      (digestDoc.verifyError ? `${digestDoc.category} (unverified — check manually)` : digestDoc.category),
     subject: digestDoc.subject,
     from: digestDoc.from,
     receivedAt: digestDoc.date
@@ -322,7 +329,9 @@ async function retryPendingDigests({ user, client, state }) {
   const cutoff = new Date(Date.now() - PENDING_RETRY_HOURS * 3600 * 1000);
   const pending = await MailDigest.find({
     gmailEmail: user.email,
-    clientNotifyEligible: true,
+    // opsNotifyEligible gates Discord since the verifier landed; the $or keeps
+    // retrying pre-upgrade docs that only carry clientNotifyEligible.
+    $or: [{ opsNotifyEligible: true }, { opsNotifyEligible: { $exists: false }, clientNotifyEligible: true }],
     discordPostedAt: null,
     createdAt: { $gte: cutoff },
     discordAttempts: { $lt: MAX_DELIVERY_ATTEMPTS }
@@ -425,7 +434,7 @@ async function pollMailbox(user, clientCache) {
       const msg = await fetchMessage(gmail, messageId);
 
       // Classify: rules (zero-cost, default) or AI (gpt-4o-mini) per config.
-      const ai =
+      const rawAi =
         CLASSIFIER_MODE === "ai"
           ? await summarizeMail({
               from: msg.meta.from,
@@ -440,6 +449,98 @@ async function pollMailbox(user, clientCache) {
               bodyText: msg.bodyText,
               snippet: msg.snippet
             });
+
+      // Learned exclusions: AI-written, DB-stored patterns from past verified
+      // false positives. A hit downgrades the category to "learned-excluded"
+      // before any eligibility or AI-verification cost.
+      const ai = await applyLearnedExclusions(rawAi, {
+        from: msg.meta.from,
+        subject: msg.meta.subject,
+        bodyText: msg.bodyText
+      });
+
+      // Second-stage AI verification, ONLY for rules-flagged milestones.
+      // deriveEligibility() is the cheap first gate; the verifier's job is to
+      // reject the promos, auto-acks and job-board blasts whose wording slips
+      // past the regexes (the 2026-08-12 Amazon auto-ack incident). Fail modes:
+      //   • verifier confirms  → client email + Discord line
+      //   • verifier rejects   → nothing sent, verdict stored on the digest
+      //   • verifier can't run → Discord line only (ops still see it); the
+      //     client is never emailed off an unverified classification.
+      const provisional = deriveEligibility({
+        ...ai,
+        confident: ai.aiSucceeded === true || ai.matched === true
+      });
+      let verifyFields = {};
+      let eligibility = { clientNotifyEligible: false, clientNotifyCategory: "", opsNotifyEligible: false };
+      const senderEmail = parseFromHeader(msg.meta.from).email;
+      // Learned suppression: a sender domain the AI has already rejected
+      // repeatedly (and never once confirmed) skips the AI entirely — the
+      // verdict is known, the check is free, and the alert stays silent.
+      const suppression = provisional.clientNotifyEligible
+        ? await shouldSuppressSender(senderEmail)
+        : { suppress: false };
+      if (provisional.clientNotifyEligible && suppression.suppress) {
+        eligibility = {
+          clientNotifyEligible: false,
+          clientNotifyCategory: "",
+          opsNotifyEligible: false,
+          clientNotifySkippedReason: `learned_suppression:${suppression.domain}(${suppression.rejectCount} rejections)`
+        };
+        console.log(
+          `[mail-learn] ${mailbox}: suppressed ${ai.category} candidate from ${suppression.domain} (${suppression.rejectCount} prior AI rejections) (${messageId})`
+        );
+      } else if (provisional.clientNotifyEligible) {
+        const verdict = await verifyMilestoneMail({
+          from: msg.meta.from,
+          subject: msg.meta.subject,
+          bodyText: msg.bodyText,
+          snippet: msg.snippet,
+          rulesCategory: ai.category
+        });
+        // Feed the loop: every real AI verdict updates the per-domain counters
+        // and evidence list that drive suppression + future regex tightening.
+        await recordVerdict({ fromEmail: senderEmail, rulesCategory: ai.category, subject: msg.meta.subject, verdict });
+        // Verified false positive → have the AI write a DB-stored exclusion
+        // pattern so this kind of mail dies at the regex stage next time.
+        // Validation + genuine-mail regression checks happen inside; a
+        // rejected proposal just means the other layers keep covering it.
+        if (verdict.ok && !verdict.genuine) {
+          const learned = await proposeAndStoreExclusion({
+            mail: { from: msg.meta.from, subject: msg.meta.subject, bodyText: msg.bodyText },
+            rulesCategory: ai.category,
+            verdict
+          });
+          if (learned.stored) {
+            console.log(`[mail-regex] ${mailbox}: new exclusion /${learned.pattern}/i from ${messageId}`);
+          }
+        }
+        const gate = milestoneGate(verdict);
+        verifyFields = {
+          verifyRan: true,
+          verifyGenuine: verdict.genuine,
+          verifyCategory: verdict.category,
+          verifyConfidence: verdict.confidence,
+          verifyReason: verdict.reason,
+          verifyModel: verdict.model,
+          verifyError: verdict.error
+        };
+        eligibility = gate.eligible
+          ? { clientNotifyEligible: true, clientNotifyCategory: gate.category, opsNotifyEligible: true }
+          : {
+              clientNotifyEligible: false,
+              clientNotifyCategory: "",
+              // Unverifiable (AI down) still reaches Discord; a verified
+              // rejection reaches nobody.
+              opsNotifyEligible: !verdict.ok,
+              clientNotifySkippedReason: gate.reason
+            };
+        if (!gate.eligible) {
+          console.log(
+            `[mail-verify] ${mailbox}: ${verdict.ok ? "rejected" : "unverifiable"} ${ai.category} candidate (${messageId}): ${gate.reason}`
+          );
+        }
+      }
 
       const uploadedNames = new Set(msg.textAttachments.map((a) => a.filename));
       const doc = {
@@ -471,10 +572,11 @@ async function pollMailbox(user, clientCache) {
           uploadedToDiscord: false // flipped below once Discord accepts the post
         })),
         discordPostedAt: null,
-        // Decide client-alert eligibility once, from the classification, and store
-        // it so the retry sweep and any future UI can read it without re-classifying.
-        // `confident` = the AI succeeded, or (in rules mode) a real category rule fired.
-        ...deriveEligibility({ ...ai, confident: ai.aiSucceeded === true || ai.matched === true })
+        // Eligibility decided once (rules gate + AI verification above) and
+        // stored so the retry sweeps and any future UI read it without
+        // re-classifying or re-verifying.
+        ...verifyFields,
+        ...eligibility
       };
 
       // Claim the message by inserting it. The unique (gmailEmail, messageId)
@@ -493,10 +595,11 @@ async function pollMailbox(user, clientCache) {
         throw e;
       }
 
-      // Discord update ONLY for milestones (interview / assignment / offer).
-      // Promos, job alerts, newsletters, rejections, recruiter outreach are
-      // stored and counted in the 5 AM summary, but never posted per-mail.
-      if (digestDoc.clientNotifyEligible) {
+      // Discord update ONLY for verified milestones (or unverifiable ones the
+      // ops team should eyeball). Promos, job alerts, newsletters, rejections,
+      // recruiter outreach and VERIFIED false positives are stored and counted
+      // in the 5 AM summary, but never posted per-mail.
+      if (digestDoc.opsNotifyEligible) {
         const ok = await deliver({ digestDoc, client, mailbox });
         if (ok) posted++;
       }

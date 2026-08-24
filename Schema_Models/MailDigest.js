@@ -60,6 +60,23 @@ const MailDigestSchema = new mongoose.Schema(
     discordError: { type: String, default: "" },
     discordAttempts: { type: Number, default: 0 },
 
+    // Second-stage AI verification (mailMilestoneVerifier). Runs only on mails
+    // the rules classifier flagged as interview/assessment/offer. verifyRan
+    // distinguishes "never a candidate" from "checked". verifyGenuine=false with
+    // verifyRan=true means the AI rejected it (verifyReason says why).
+    verifyRan: { type: Boolean, default: false },
+    verifyGenuine: { type: Boolean, default: false },
+    verifyCategory: { type: String, default: "" }, // interview|assessment|offer|not-milestone
+    verifyConfidence: { type: String, default: "" }, // high|medium|low
+    verifyReason: { type: String, default: "" },
+    verifyModel: { type: String, default: "" },
+    verifyError: { type: String, default: "" },
+
+    // Ops (Discord) eligibility: rules-flagged milestone that either passed
+    // verification OR could not be verified (AI down). Verified rejections are
+    // NOT ops-eligible — promos stop reaching Discord too.
+    opsNotifyEligible: { type: Boolean, default: false, index: true },
+
     // Client milestone-alert state (SendGrid → the client).
     // clientNotifyEligible is decided once, when the digest is created, from the
     // AI category. clientNotifiedAt !== null is the dedupe guard: the client is

@@ -1,57 +1,49 @@
 // Branded HTML email templates for client milestone alerts.
 //
-// One shell, one accent per category, matching the FlashFire dashboard theme:
-//   • flame gradient  #f97316 → #ef4444   (orange-500 → red-500)
-//   • dark slate head #1f2937
-//   • orange accent   #ea580c on #fff7ed / #fed7aa
+// Design (2026-08-24 redesign, modeled on Mattermost's notification mail):
+// one centered white card on a light-gray page, logo + wordmark on top, a big
+// centered headline, one quiet sub-line, a single CTA button, then a bordered
+// inner card with the source mail's facts. No gradients on surfaces, no
+// category tint blocks, no emoji in the body — the only brand color is the
+// flame-orange CTA and links.
 //
 // All CSS is inline and layout is table-based — the only thing email clients
-// (Gmail, Outlook, Apple Mail) render reliably. No external assets, no web fonts.
+// (Gmail, Outlook, Apple Mail) render reliably. No external assets except the
+// hosted logo, no web fonts.
 
 const BRAND = {
-  slate: "#1f2937",
-  ink: "#111827",
-  body: "#374151",
+  page: "#f4f4f6", // page background
+  card: "#ffffff",
+  ink: "#24262b", // headings
+  body: "#3f4350", // body text
   muted: "#6b7280",
-  faint: "#9ca3af",
-  line: "#e5e7eb",
-  flameFrom: "#f97316",
-  flameTo: "#ef4444"
+  faint: "#9aa0aa",
+  line: "#e3e3e7", // borders
+  accent: "#ea580c", // flame orange — buttons and links
+  accentDark: "#c2410c"
 };
 
 // Hosted FlashFire logo (public/Logo.png on the deployed portal). Email clients
 // need an absolute HTTPS URL — data URIs and local files are stripped by Gmail.
 const LOGO_URL = "https://portal.flashfirejobs.com/Logo.png";
 
-// Per-category art direction + copy. `key` is the AI category; `assessment`
-// is surfaced to the client as "Assignment".
+// Per-category copy. `key` is the classifier category; `assessment` is
+// surfaced to the client as "Assignment".
 const CATEGORY = {
   interview: {
-    label: "Interview",
-    emoji: "🎉",
-    accent: "#7c3aed", // violet
-    tint: "#f5f3ff",
-    border: "#ddd6fe",
-    headline: "You've got an interview",
-    blurb: "A company wants to talk to you. Here are the details we spotted."
+    label: "Interview invite",
+    headline: "You have an interview invite",
+    blurb: "A company in your connected inbox wants to schedule an interview with you."
   },
   assessment: {
     label: "Assignment",
-    emoji: "📝",
-    accent: "#0891b2", // cyan
-    tint: "#ecfeff",
-    border: "#a5f3fc",
-    headline: "You've received an assignment",
-    blurb: "A company sent you a task or assessment. Don't miss the deadline."
+    headline: "You have a new assignment",
+    blurb: "A company sent you an assessment to complete. Watch the deadline."
   },
   offer: {
     label: "Offer",
-    emoji: "🏆",
-    accent: "#16a34a", // green
-    tint: "#f0fdf4",
-    border: "#bbf7d0",
-    headline: "You've got an offer",
-    blurb: "This looks like an offer landed in your inbox. Congratulations."
+    headline: "You have an offer",
+    blurb: "An offer just landed in your connected inbox. Congratulations."
   }
 };
 
@@ -78,11 +70,25 @@ function safeUrl(u) {
   return /^https?:\/\//i.test(s) ? s : "";
 }
 
-function firstName(client) {
-  const n = (client?.name || "").trim();
-  if (n) return n.split(/\s+/)[0];
-  const email = client?.email || "";
-  return email ? email.split("@")[0] : "there";
+// "Aug 24, 2026, 2:35 PM ET" — clients are US-based; a labeled zone beats a
+// raw ISO timestamp in a client-facing mail.
+function formatReceived(date) {
+  const d = date instanceof Date ? date : date ? new Date(date) : null;
+  if (!d || Number.isNaN(d.getTime())) return "";
+  try {
+    return (
+      d.toLocaleString("en-US", {
+        timeZone: "America/New_York",
+        month: "short",
+        day: "numeric",
+        year: "numeric",
+        hour: "numeric",
+        minute: "2-digit"
+      }) + " ET"
+    );
+  } catch {
+    return d.toISOString();
+  }
 }
 
 /**
@@ -91,55 +97,22 @@ function firstName(client) {
  * @param {Object} a
  * @param {Object} a.client   - { name, email }
  * @param {Object} a.digest   - { category, subject, from, fromEmail, summary,
- *                               keyPoints[], actionRequired, urls[], date }
+ *                               actionRequired, urls[], date }
  * @param {string} [a.dashboardUrl] - CTA target (defaults to the dashboard root)
  * @returns {{subject: string, html: string, text: string, category: string}}
  */
 export function renderClientMilestoneEmail({ client = {}, digest = {}, dashboardUrl }) {
   const meta = CATEGORY[digest.category] || CATEGORY.interview;
-  const name = firstName(client);
 
   const subjectLine = digest.subject ? String(digest.subject) : "(no subject)";
   const sender = digest.from || digest.fromEmail || "a company";
-  const summary = digest.summary || digest.snippet || "";
-  const keyPoints = Array.isArray(digest.keyPoints) ? digest.keyPoints.slice(0, 5) : [];
-  const action = digest.actionRequired || "";
-  const primaryUrl = safeUrl((digest.urls || []).find((u) => safeUrl(u)));
-  const cta = safeUrl(dashboardUrl) || primaryUrl;
+  const summary = (digest.summary || digest.snippet || "").trim();
+  const action = (digest.actionRequired || "").trim();
+  const received = formatReceived(digest.date);
+  const cta = safeUrl(dashboardUrl) || "https://portal.flashfirejobs.com";
 
   // ── Subject line of OUR email ──
-  const subject = `${meta.emoji} ${meta.headline} — ${subjectLine}`.slice(0, 180);
-
-  // ── Key points list ──
-  const keyPointsHtml = keyPoints.length
-    ? `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:8px 0 4px;">
-         ${keyPoints
-           .map(
-             (k) => `<tr><td style="padding:4px 0;color:${BRAND.body};font-size:15px;line-height:1.5;vertical-align:top;">
-               <span style="color:${meta.accent};font-weight:700;">•</span>&nbsp; ${escapeHtml(k)}</td></tr>`
-           )
-           .join("")}
-       </table>`
-    : "";
-
-  const actionHtml = action
-    ? `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:16px 0 0;">
-         <tr><td style="background:${meta.tint};border:1px solid ${meta.border};border-radius:10px;padding:14px 16px;">
-           <div style="color:${meta.accent};font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px;">Next step</div>
-           <div style="color:${BRAND.body};font-size:15px;line-height:1.5;">${escapeHtml(action)}</div>
-         </td></tr>
-       </table>`
-    : "";
-
-  const ctaHtml = cta
-    ? `<table role="presentation" cellpadding="0" cellspacing="0" style="margin:24px 0 4px;">
-         <tr><td style="border-radius:10px;background-image:linear-gradient(90deg, ${BRAND.flameFrom}, ${BRAND.flameTo});">
-           <a href="${cta}" target="_blank"
-              style="display:inline-block;padding:13px 28px;font-size:15px;font-weight:700;color:#ffffff;text-decoration:none;border-radius:10px;">
-              ${primaryUrl && cta === primaryUrl ? "Open the email" : "Open your dashboard"} &rarr;</a>
-         </td></tr>
-       </table>`
-    : "";
+  const subject = `${meta.headline} - ${subjectLine}`.slice(0, 180);
 
   const html = `<!DOCTYPE html>
 <html lang="en">
@@ -149,76 +122,63 @@ export function renderClientMilestoneEmail({ client = {}, digest = {}, dashboard
   <meta name="color-scheme" content="light">
   <title>${escapeHtml(meta.headline)}</title>
 </head>
-<body style="margin:0;padding:0;background:#f3f4f6;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
-  <div style="display:none;max-height:0;overflow:hidden;opacity:0;">${escapeHtml(meta.headline)}: ${escapeHtml(subjectLine)}</div>
-  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f3f4f6;padding:24px 12px;">
+<body style="margin:0;padding:0;background:${BRAND.page};font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+  <div style="display:none;max-height:0;overflow:hidden;opacity:0;">${escapeHtml(meta.label)} from ${escapeHtml(sender)} - ${escapeHtml(subjectLine)}</div>
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:${BRAND.page};padding:32px 12px;">
     <tr><td align="center">
-      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;width:100%;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;width:100%;background:${BRAND.card};border:1px solid ${BRAND.line};border-radius:10px;">
+        <tr><td style="padding:36px 40px 32px;">
 
-        <!-- Header -->
-        <tr><td style="background:${BRAND.slate};border-radius:14px 14px 0 0;padding:22px 28px;">
-          <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
-            <td style="vertical-align:middle;">
-              ${
-                LOGO_URL
-                  ? `<img src="${LOGO_URL}" width="26" height="26" alt="FlashFire" style="display:inline-block;width:26px;height:26px;border-radius:7px;vertical-align:middle;border:0;outline:none;">`
-                  : ""
-              }
-              <span style="color:#ffffff;font-size:17px;font-weight:800;letter-spacing:-0.01em;vertical-align:middle;${LOGO_URL ? "margin-left:10px;" : ""}">FlashFire</span>
-            </td>
-            <td align="right" style="vertical-align:middle;">
-              <span style="color:${BRAND.faint};font-size:11px;text-transform:uppercase;letter-spacing:0.08em;">Job Alert</span>
-            </td>
-          </tr></table>
-        </td></tr>
-
-        <!-- Body -->
-        <tr><td style="background:#ffffff;padding:30px 28px 8px;">
-          <span style="display:inline-block;background:${meta.tint};color:${meta.accent};border:1px solid ${meta.border};font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;padding:5px 12px;border-radius:999px;">${meta.emoji}&nbsp; ${escapeHtml(meta.label)}</span>
-          <h1 style="margin:16px 0 6px;color:${BRAND.ink};font-size:24px;line-height:1.25;font-weight:800;">${escapeHtml(meta.headline)}, ${escapeHtml(name)}</h1>
-          <p style="margin:0 0 18px;color:${BRAND.muted};font-size:15px;line-height:1.5;">${escapeHtml(meta.blurb)}</p>
-
-          <!-- Source mail card -->
-          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid ${BRAND.line};border-radius:12px;overflow:hidden;">
-            <tr><td style="padding:16px 18px;">
-              <div style="color:${BRAND.faint};font-size:11px;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:3px;">From</div>
-              <div style="color:${BRAND.body};font-size:14px;font-weight:600;margin-bottom:12px;">${escapeHtml(sender)}</div>
-              <div style="color:${BRAND.faint};font-size:11px;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:3px;">Subject</div>
-              <div style="color:${BRAND.ink};font-size:16px;font-weight:700;line-height:1.35;">${escapeHtml(subjectLine)}</div>
+          <!-- Logo + wordmark -->
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+            <tr><td align="center" style="padding-bottom:26px;">
+              <img src="${LOGO_URL}" width="28" height="28" alt="" style="display:inline-block;width:28px;height:28px;border-radius:7px;vertical-align:middle;border:0;outline:none;">
+              <span style="color:${BRAND.ink};font-size:19px;font-weight:700;letter-spacing:-0.01em;vertical-align:middle;margin-left:9px;">Flashfire</span>
             </td></tr>
-            ${
-              summary
-                ? `<tr><td style="padding:0 18px 16px;">
-                     <div style="border-top:1px solid ${BRAND.line};padding-top:14px;">
-                       <div style="color:${BRAND.faint};font-size:11px;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:6px;">What it says</div>
-                       <div style="color:${BRAND.body};font-size:15px;line-height:1.55;">${escapeHtml(summary)}</div>
-                       ${keyPointsHtml}
-                     </div>
-                   </td></tr>`
-                : ""
-            }
           </table>
 
-          ${actionHtml}
-          ${ctaHtml}
-        </td></tr>
+          <!-- Headline -->
+          <h1 style="margin:0 0 10px;color:${BRAND.ink};font-size:26px;line-height:1.3;font-weight:700;text-align:center;">${escapeHtml(meta.headline)}</h1>
+          <p style="margin:0 0 24px;color:${BRAND.muted};font-size:15px;line-height:1.5;text-align:center;">See below for a summary of what we found in your inbox.</p>
 
-        <!-- Reassurance strip -->
-        <tr><td style="background:#ffffff;padding:8px 28px 26px;">
-          <p style="margin:14px 0 0;color:${BRAND.faint};font-size:13px;line-height:1.5;border-top:1px solid ${BRAND.line};padding-top:16px;">
-            We spotted this in your connected inbox and flagged it so it doesn't slip past you.
-            Your FlashFire team is on it.
-          </p>
-        </td></tr>
+          <!-- CTA -->
+          <table role="presentation" cellpadding="0" cellspacing="0" align="center" style="margin:0 auto 30px;">
+            <tr><td style="border-radius:8px;background:${BRAND.accent};">
+              <a href="${cta}" target="_blank"
+                 style="display:inline-block;padding:12px 26px;font-size:15px;font-weight:600;color:#ffffff;text-decoration:none;border-radius:8px;">Open your dashboard</a>
+            </td></tr>
+          </table>
 
-        <!-- Footer -->
-        <tr><td style="background:#ffffff;border-radius:0 0 14px 14px;padding:0 28px 24px;">
-          <div style="text-align:center;color:${BRAND.faint};font-size:12px;line-height:1.6;">
-            © 2026 FlashFire · You're receiving this because your job-search inbox is connected to FlashFire.
-          </div>
-        </td></tr>
+          <!-- Source mail card: inline bold labels, one flowing block -->
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid ${BRAND.line};border-radius:8px;">
+            <tr><td style="padding:18px 20px;">
+              <p style="margin:0;color:${BRAND.body};font-size:14px;line-height:1.7;">
+                <strong style="color:${BRAND.ink};">Category:</strong> ${escapeHtml(meta.label)}
+                &nbsp; <strong style="color:${BRAND.ink};">From:</strong> ${escapeHtml(sender)}<br>
+                <strong style="color:${BRAND.ink};">Subject:</strong> ${escapeHtml(subjectLine)}${received ? `<br><strong style="color:${BRAND.ink};">Received:</strong> ${escapeHtml(received)}` : ""}
+              </p>
+              ${
+                summary
+                  ? `<p style="margin:12px 0 0;color:${BRAND.body};font-size:14px;line-height:1.6;">${escapeHtml(summary.slice(0, 500))}</p>`
+                  : ""
+              }
+              <p style="margin:14px 0 0;">
+                <a href="${cta}" target="_blank" style="color:${BRAND.accent};font-size:14px;font-weight:600;text-decoration:none;">Open inbox</a>
+              </p>
+            </td></tr>
+          </table>
 
+        </td></tr>
       </table>
+
+      <!-- Footer -->
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;width:100%;">
+        <tr><td align="center" style="padding:18px 20px 0;color:${BRAND.faint};font-size:12px;line-height:1.7;">
+          © 2026 Flashfire · You're receiving this because your job-search inbox is connected to Flashfire.<br>
+          <a href="https://portal.flashfirejobs.com" target="_blank" style="color:${BRAND.faint};text-decoration:underline;">portal.flashfirejobs.com</a>
+        </td></tr>
+      </table>
+
     </td></tr>
   </table>
 </body>
@@ -226,18 +186,19 @@ export function renderClientMilestoneEmail({ client = {}, digest = {}, dashboard
 
   // ── Plaintext fallback ──
   const textLines = [
-    `${meta.headline}, ${name}`,
+    meta.headline,
     "",
     meta.blurb,
     "",
+    `Category: ${meta.label}`,
     `From: ${sender}`,
     `Subject: ${subjectLine}`
   ];
-  if (summary) textLines.push("", summary);
-  if (keyPoints.length) textLines.push("", ...keyPoints.map((k) => `- ${k}`));
+  if (received) textLines.push(`Received: ${received}`);
+  if (summary) textLines.push("", summary.slice(0, 500));
   if (action) textLines.push("", `Next step: ${action}`);
-  if (cta) textLines.push("", cta);
-  textLines.push("", "— FlashFire · flagged from your connected inbox.");
+  textLines.push("", `Open your dashboard: ${cta}`);
+  textLines.push("", "- Flashfire, flagged from your connected inbox.");
   const text = textLines.join("\n");
 
   return { subject, html, text, category: digest.category };

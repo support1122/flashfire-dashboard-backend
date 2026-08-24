@@ -16,6 +16,10 @@ import { checkConnectionsAndAlert, sendDailySummary } from "../src/services/mail
 import { mailNotifyWebhook, verifyWebhook, isGmailAuthError, errorText } from "../Utils/discordMailNotify.js";
 import { isMailPollEnabled } from "../src/services/mailPollWorker.js";
 import { getActiveUnpausedClients } from "../Schema_Models/ClientPaymentLookup.js";
+import { MailVerifierFeedback } from "../Schema_Models/MailVerifierFeedback.js";
+import { decideSuppression } from "../src/services/mailVerifierLearning.js";
+import { MailClassifierRule } from "../Schema_Models/MailClassifierRule.js";
+import { invalidateRuleCache } from "../src/services/mailRegexLearner.js";
 // This router talks to Gmail over native fetch + getAccessToken() below, not
 // through googleapis — its bundled node-fetch throws ERR_STREAM_PREMATURE_CLOSE
 // on Render. gmailClientForUser() is deliberately NOT imported here; only the
@@ -746,6 +750,74 @@ router.post("/star", async (req, res) => {
 // =========================
 // Mail → AI → Discord pipeline
 // =========================
+
+// Verifier feedback report: which sender domains the AI keeps rejecting, with
+// example subjects + reasons. This is the evidence an engineer reads to
+// tighten Utils/mailRulesClassifier.js deliberately (the classifier never
+// rewrites itself). Sorted worst-offender first.
+//   GET /gmail/mail-verify/feedback?limit=50
+router.get("/mail-verify/feedback", async (req, res) => {
+  try {
+    const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 50, 1), 200);
+    const rows = await MailVerifierFeedback.find({})
+      .sort({ rejectCount: -1, lastSeenAt: -1 })
+      .limit(limit)
+      .lean();
+    res.json({
+      ok: true,
+      count: rows.length,
+      domains: rows.map((r) => ({
+        domain: r.domain,
+        rejectCount: r.rejectCount,
+        genuineCount: r.genuineCount,
+        suppressed: decideSuppression({ domain: r.domain, rejectCount: r.rejectCount, genuineCount: r.genuineCount }),
+        lastSeenAt: r.lastSeenAt,
+        examples: (r.examples || []).slice(0, 5)
+      }))
+    });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err?.message || "feedback_failed" });
+  }
+});
+
+// AI-learned exclusion rules: list them (with provenance + hit counts) and
+// disable a bad one. Rules are written by the regex learner off verified
+// false positives; see src/services/mailRegexLearner.js.
+//   GET  /gmail/mail-verify/rules?status=active|disabled|all
+//   POST /gmail/mail-verify/rules/:id/disable
+//   POST /gmail/mail-verify/rules/:id/enable
+router.get("/mail-verify/rules", async (req, res) => {
+  try {
+    const status = String(req.query.status || "active");
+    const q = status === "all" ? {} : { status };
+    const rules = await MailClassifierRule.find(q).sort({ createdAt: -1 }).limit(500).lean();
+    res.json({ ok: true, count: rules.length, rules });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err?.message || "rules_failed" });
+  }
+});
+
+router.post("/mail-verify/rules/:id/disable", async (req, res) => {
+  try {
+    const r = await MailClassifierRule.findByIdAndUpdate(req.params.id, { $set: { status: "disabled" } }, { new: true });
+    if (!r) return res.status(404).json({ ok: false, error: "rule_not_found" });
+    invalidateRuleCache();
+    res.json({ ok: true, rule: r });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err?.message || "disable_failed" });
+  }
+});
+
+router.post("/mail-verify/rules/:id/enable", async (req, res) => {
+  try {
+    const r = await MailClassifierRule.findByIdAndUpdate(req.params.id, { $set: { status: "active" } }, { new: true });
+    if (!r) return res.status(404).json({ ok: false, error: "rule_not_found" });
+    invalidateRuleCache();
+    res.json({ ok: true, rule: r });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err?.message || "enable_failed" });
+  }
+});
 
 // Manual trigger for the hourly poll. Useful for ops ("I just sent a test mail")
 // and for verifying a freshly reconnected mailbox without waiting for the hour.

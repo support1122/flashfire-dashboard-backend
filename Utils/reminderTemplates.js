@@ -1,25 +1,34 @@
-// Email + Mattermost renderers for the client-reminder stream.
+// Client reminder templates - email + Mattermost renderings for every
+// catalogue item in Utils/reminderItems.js.
 //
-// Seven item kinds, one shared email shell. The shell owns all of the chrome
-// (header band, flame rule, wordmark, footer, preheader); each per-kind builder
-// only produces body blocks, a subject and a plaintext body. That split is the
-// whole point: when the brand changes we touch one function, not seven.
+// WHAT WE DELIBERATELY DO NOT SEND, and why. This is policy, not styling -
+// read it before adding anything to a client-facing template:
 //
-// Constraints these templates are built around, learned the hard way from the
-// onboarding + milestone mail streams already in this repo:
-//   • Table layout only. No flex, no grid, no CSS classes. Outlook drops them.
-//   • Inline CSS only, and no <img> anywhere. The owner asked for the wordmark
-//     as TEXT, and a blocked remote image is a broken-looking email.
-//   • No web fonts. System stack or nothing.
-//   • Every interpolated value goes through escapeHtml(), every link through
-//     safeUrl(). Job titles and company names come from scraped listings, so
-//     they are attacker-influenced text, not trusted copy.
-//   • The text/plain alternative is written by hand, not stripped from the
-//     HTML. Plenty of clients show it, and a tag-stripped dump reads like junk.
-//   • Every kind states the reporting window in the body. A digest that does
-//     not say which day it covers is worse than no digest.
-
-import { REMINDER_ITEMS, reminderItemMeta, MILESTONE_THRESHOLDS } from "./reminderItems.js";
+//   - NO job links. A posting is often closed by the time the client clicks,
+//     and "you applied me to dead jobs" is the exact complaint this product
+//     cannot afford. The dashboard is always current; every mail carries one
+//     link to it and nothing else.
+//   - NO per-job lists in the recurring reports. Listing ten roles every day
+//     invites line-item auditing of each application and turns a status mail
+//     into a support thread. Daily and weekly carry NUMBERS; the one list we
+//     do send is the interview digest, because good news is worth naming.
+//   - NO internal language. Operator names, "removed by AI", queue states and
+//     skip reasons never appear. The stats util strips removed cards before
+//     the numbers get here.
+//   - NO computed success rates. Offers divided by applications looks brutal
+//     at perfectly normal volumes; we report counts and let them speak.
+//   - NO hype. No emoji, no exclamation marks, no "crushing it". Plain
+//     statements of what happened, in a layout closer to a bank statement
+//     than a newsletter. If a number is ever disputed, calm copy survives
+//     the conversation; breezy copy does not.
+//   - Every mail states its exact reporting window ("18 Aug - 24 Aug 2026"),
+//     so any question about the numbers is anchored to checkable dates.
+//
+// Rendering constraints: inline CSS only, table layout only, no images, no
+// web fonts - the only things Gmail, Outlook and Apple Mail all honour. The
+// wordmark is styled text. Every interpolated value goes through escapeHtml
+// (email) or mmEscape (Mattermost); company and role names are scraped text
+// and get no more trust than any other user input.
 
 const BRAND = {
   slate: "#1f2937",
@@ -28,32 +37,33 @@ const BRAND = {
   muted: "#6b7280",
   faint: "#9ca3af",
   line: "#e5e7eb",
-  wash: "#f9fafb",
+  track: "#f3f4f6",
   page: "#f3f4f6",
-  flameFrom: "#f97316",
-  flameTo: "#ef4444",
+  flame: "#f97316",
+  flameDeep: "#ea580c",
   green: "#16a34a",
-  violet: "#7c3aed",
-  amber: "#b45309"
+  violet: "#7c3aed"
 };
 
 const FONT_STACK =
   "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif";
 
-const TZ = "Asia/Kolkata";
-const MAX_EMAIL_JOB_ROWS = 10;
-const MAX_MM_JOB_LINES = 8;
+const DASHBOARD_URL = "https://portal.flashfirejobs.com";
+
+// Interview digest is the one client mail that lists cards; cap it so a busy
+// pipeline cannot produce a scroll of doom.
+const MAX_DIGEST_ROWS = 12;
+
+// Hard ceiling for a Mattermost message; the server rejects ~16k but long
+// posts collapse badly on mobile, so we stay far under.
 const MM_MAX_CHARS = 4000;
 
-// Ordered key set, straight from the catalogue. Never re-declare item keys here.
-const KNOWN_KINDS = new Set(REMINDER_ITEMS.map((i) => i.key));
-
 /* ------------------------------------------------------------------ *
- * primitives
+ * escaping + small utilities
  * ------------------------------------------------------------------ */
 
-function escapeHtml(s) {
-  return String(s ?? "")
+function escapeHtml(v) {
+  return String(v ?? "")
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
@@ -61,128 +71,91 @@ function escapeHtml(s) {
     .replace(/'/g, "&#39;");
 }
 
-// Only http(s) reaches an href. Blocks javascript:, data:, and the mailto:
-// tricks that turn a scraped listing into a phishing vector.
-function safeUrl(u) {
-  const s = String(u ?? "").trim();
-  return /^https?:\/\//i.test(s) ? s : "";
-}
-
-// Mattermost renders markdown. A raw pipe inside a table cell splits the row,
-// a newline ends it, and backticks/asterisks flip formatting mid-sentence.
-function mmEscape(s) {
-  return String(s ?? "")
-    .replace(/[\r\n]+/g, " ")
-    .replace(/\|/g, "\\|")
-    .replace(/([*_`~])/g, "\\$1")
-    .trim();
+/**
+ * Escape Mattermost markdown. Brackets and parens are included on purpose: a
+ * scraped job title of `Engineer](https://phish.example/login` would otherwise
+ * close a link we opened around it and render as a working link somewhere
+ * else. Angle brackets stop autolinking and HTML-ish injection in clients
+ * that render a preview.
+ */
+function mmEscape(v) {
+  return String(v ?? "").replace(/([\\`*_{}[\]()<>#+\-.!|~])/g, "\\$1");
 }
 
 function num(v) {
   const n = Number(v);
-  return Number.isFinite(n) ? n : 0;
+  return Number.isFinite(n) ? Math.max(0, Math.round(n)) : 0;
+}
+
+/** "1,200" - thousands separator for anything that can plausibly exceed 999. */
+function fmtNum(v) {
+  return num(v).toLocaleString("en-US");
 }
 
 function plural(n, one, many) {
-  return num(n) === 1 ? one : many;
+  return n === 1 ? one : many;
 }
 
 function toDate(v) {
   if (v instanceof Date) return Number.isNaN(v.getTime()) ? null : v;
-  if (v === null || v === undefined || v === "") return null;
+  if (v == null || v === "") return null;
   const d = new Date(v);
   return Number.isNaN(d.getTime()) ? null : d;
 }
 
-const FMT_DAY = new Intl.DateTimeFormat("en-GB", {
-  timeZone: TZ,
-  weekday: "short",
-  day: "2-digit",
-  month: "short",
-  year: "numeric"
-});
-const FMT_DAY_SHORT = new Intl.DateTimeFormat("en-GB", {
-  timeZone: TZ,
-  day: "2-digit",
-  month: "short"
-});
-const FMT_DOW_SHORT = new Intl.DateTimeFormat("en-GB", {
-  timeZone: TZ,
-  weekday: "short",
-  day: "2-digit",
-  month: "short"
-});
+/* ------------------------------------------------------------------ *
+ * IST date formatting
+ * ------------------------------------------------------------------ */
+
+const TZ = "Asia/Kolkata";
+const FMT_DAY = new Intl.DateTimeFormat("en-GB", { timeZone: TZ, weekday: "short", day: "numeric", month: "short", year: "numeric" });
+const FMT_DAY_SHORT = new Intl.DateTimeFormat("en-GB", { timeZone: TZ, day: "numeric", month: "short" });
+const FMT_DOW_SHORT = new Intl.DateTimeFormat("en-GB", { timeZone: TZ, weekday: "short", day: "numeric", month: "short" });
 const FMT_YEAR = new Intl.DateTimeFormat("en-GB", { timeZone: TZ, year: "numeric" });
 const FMT_MONTH = new Intl.DateTimeFormat("en-GB", { timeZone: TZ, month: "long", year: "numeric" });
-const FMT_DAYKEY = new Intl.DateTimeFormat("en-CA", {
-  timeZone: TZ,
-  year: "numeric",
-  month: "2-digit",
-  day: "2-digit"
-});
-const FMT_STAMP = new Intl.DateTimeFormat("en-GB", {
-  timeZone: TZ,
-  day: "2-digit",
-  month: "short",
-  hour: "2-digit",
-  minute: "2-digit",
-  hour12: false
-});
 
 function fmtDay(d) {
-  const dt = toDate(d);
-  return dt ? FMT_DAY.format(dt) : "";
-}
-function fmtDayShort(d) {
-  const dt = toDate(d);
-  return dt ? FMT_DAY_SHORT.format(dt) : "";
-}
-function fmtMonth(d) {
-  const dt = toDate(d);
-  return dt ? FMT_MONTH.format(dt) : "";
-}
-function fmtStamp(d) {
-  const dt = toDate(d);
-  return dt ? FMT_STAMP.format(dt).replace(",", "") : "";
-}
-function dayKey(d) {
-  const dt = toDate(d);
-  return dt ? FMT_DAYKEY.format(dt) : "";
+  return d ? FMT_DAY.format(d) : "";
 }
 
-// "YYYY-MM-DD" rows from byDay are UTC midnight once parsed; +05:30 keeps them
-// on the same calendar day, so formatting in IST is safe and label-correct.
-function fmtByDayLabel(key) {
-  const dt = toDate(`${String(key || "")}T00:00:00Z`);
-  return dt ? FMT_DOW_SHORT.format(dt) : String(key || "");
+function fmtRange(from, to) {
+  if (!from || !to) return "";
+  const fy = FMT_YEAR.format(from);
+  const ty = FMT_YEAR.format(to);
+  return fy === ty
+    ? `${FMT_DAY_SHORT.format(from)} - ${FMT_DAY_SHORT.format(to)} ${ty}`
+    : `${FMT_DAY_SHORT.format(from)} ${fy} - ${FMT_DAY_SHORT.format(to)} ${ty}`;
 }
 
 /**
- * A human reporting window. Prefers the label the worker computed; falls back
- * to deriving one from from/to so a hand-built preview is never blank.
+ * The reporting-window line for one kind. Prefers the worker-supplied label
+ * (the same string the scheduling code computed) and falls back to formatting
+ * period.from/to, so preview and delivery can never disagree about the window.
  */
-function windowLabel(period) {
+function windowLabel(kind, period) {
   const label = String(period?.label || "").trim();
   if (label) return label;
   const from = toDate(period?.from);
   const to = toDate(period?.to);
   if (!from || !to) return "";
-  if (dayKey(from) === dayKey(to)) return fmtDay(from);
-  const fy = FMT_YEAR.format(from);
-  const ty = FMT_YEAR.format(to);
-  return fy === ty
-    ? `${fmtDayShort(from)} - ${fmtDayShort(to)} ${ty}`
-    : `${fmtDayShort(from)} ${fy} - ${fmtDayShort(to)} ${ty}`;
+  if (kind === "daily_summary") return fmtDay(from);
+  if (kind === "monthly_report") return FMT_MONTH.format(from);
+  return fmtRange(from, to);
 }
 
-function firstName(client) {
-  const n = String(client?.name || "").trim();
-  if (n) return n.split(/\s+/)[0];
-  const email = String(client?.email || "");
-  return email ? email.split("@")[0] : "there";
+/** "Mon 18 Aug" for a byDay row key like "2026-08-18" (an IST calendar day). */
+function fmtByDayLabel(dayKey) {
+  const m = String(dayKey || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return String(dayKey || "");
+  // Noon UTC is unambiguously inside that IST calendar day.
+  const d = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]), 12, 0, 0));
+  return FMT_DOW_SHORT.format(d);
 }
 
-/** Defensive read of the stats contract so a partial object never throws. */
+/* ------------------------------------------------------------------ *
+ * input normalisers - builders never touch raw caller input
+ * ------------------------------------------------------------------ */
+
 function normStats(stats) {
   const s = stats || {};
   const list = (v) => (Array.isArray(v) ? v : []);
@@ -219,150 +192,89 @@ function normLifetime(lifetime) {
 }
 
 /* ------------------------------------------------------------------ *
- * html building blocks
+ * html building blocks - the receipt vocabulary
  * ------------------------------------------------------------------ */
 
-function gradientRuleRow() {
-  return `<tr><td style="height:4px;font-size:0;line-height:0;background-color:${BRAND.flameFrom};background-image:linear-gradient(90deg, ${BRAND.flameFrom}, ${BRAND.flameTo});">&nbsp;</td></tr>`;
-}
-
-/** Horizontal bar drawn with two table cells. No image, no div tricks. */
-function barCells(percent, color) {
-  const filled = Math.max(0, Math.min(100, Math.round(num(percent))));
-  const rest = 100 - filled;
-  const fill = color || BRAND.flameFrom;
-  const gradient =
-    fill === BRAND.flameFrom
-      ? `background-color:${BRAND.flameFrom};background-image:linear-gradient(90deg, ${BRAND.flameFrom}, ${BRAND.flameTo});`
-      : `background-color:${fill};`;
-  return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="table-layout:fixed;border-collapse:collapse;background:#eef2f7;border-radius:999px;">
-    <tr>
-      ${filled > 0 ? `<td width="${filled}%" style="height:10px;font-size:0;line-height:0;${gradient}border-radius:999px;">&nbsp;</td>` : ""}
-      ${rest > 0 ? `<td width="${rest}%" style="height:10px;font-size:0;line-height:0;">&nbsp;</td>` : ""}
-    </tr>
+/**
+ * The lede: one large number and what it counts. This is the whole message;
+ * everything after it is supporting detail.
+ */
+function lede(value, unit, note) {
+  return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:18px 0 4px;">
+    <tr><td>
+      <div style="color:${BRAND.ink};font-size:46px;line-height:1;font-weight:800;letter-spacing:-0.02em;">${escapeHtml(value)}</div>
+      <div style="color:${BRAND.body};font-size:15px;line-height:1.5;padding-top:6px;">${escapeHtml(unit)}</div>
+      ${note ? `<div style="color:${BRAND.muted};font-size:13px;line-height:1.5;padding-top:2px;">${escapeHtml(note)}</div>` : ""}
+    </td></tr>
   </table>`;
 }
 
-function statTiles(tiles) {
-  const items = (tiles || []).filter(Boolean);
-  if (!items.length) return "";
-  const spacerPct = 3;
-  const tileW = Math.max(10, Math.floor((100 - (items.length - 1) * spacerPct) / items.length));
-  const cells = items
+/**
+ * Ruled label/value rows - the statement look. `rows` is [{label, value,
+ * strong?}]; falsy rows are skipped so callers can push conditionals inline.
+ */
+function ruledRows(rows) {
+  const body = (rows || [])
+    .filter(Boolean)
     .map(
-      (t) => `<td width="${tileW}%" style="background:${BRAND.wash};border:1px solid ${BRAND.line};border-radius:12px;padding:14px 14px 12px;vertical-align:top;">
-        <div style="color:${BRAND.faint};font-size:10px;font-weight:700;letter-spacing:0.09em;text-transform:uppercase;">${escapeHtml(t.label)}</div>
-        <div style="color:${t.accent || BRAND.ink};font-size:30px;line-height:1.15;font-weight:800;padding-top:4px;">${escapeHtml(String(t.value))}</div>
-        ${t.hint ? `<div style="color:${BRAND.muted};font-size:12px;line-height:1.4;padding-top:3px;">${escapeHtml(t.hint)}</div>` : ""}
-      </td>`
-    )
-    .join(`<td width="${spacerPct}%" style="font-size:0;line-height:0;">&nbsp;</td>`);
-  return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:18px 0 2px;border-collapse:collapse;"><tr>${cells}</tr></table>`;
-}
-
-function sectionTitle(text, note) {
-  return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:24px 0 0;"><tr>
-    <td style="color:${BRAND.ink};font-size:13px;font-weight:800;letter-spacing:0.05em;text-transform:uppercase;">${escapeHtml(text)}</td>
-    ${note ? `<td align="right" style="color:${BRAND.faint};font-size:12px;">${escapeHtml(note)}</td>` : ""}
-  </tr></table>`;
-}
-
-function paragraph(text, opts = {}) {
-  return `<p style="margin:${opts.tight ? "6px 0 0" : "14px 0 0"};color:${opts.color || BRAND.body};font-size:15px;line-height:1.55;">${escapeHtml(text)}</p>`;
-}
-
-function windowChip(label) {
-  if (!label) return "";
-  return `<table role="presentation" cellpadding="0" cellspacing="0" style="margin:14px 0 0;"><tr>
-    <td style="background:${BRAND.page};border:1px solid ${BRAND.line};border-radius:999px;padding:6px 13px;color:${BRAND.muted};font-size:12px;font-weight:600;letter-spacing:0.02em;">
-      Reporting period&nbsp;&middot;&nbsp;${escapeHtml(label)}
-    </td>
-  </tr></table>`;
-}
-
-function jobRows(jobs, opts = {}) {
-  const max = opts.max || MAX_EMAIL_JOB_ROWS;
-  const list = (jobs || []).filter(Boolean);
-  if (!list.length) return "";
-  const shown = list.slice(0, max);
-  const hidden = list.length - shown.length;
-
-  const rows = shown
-    .map((j, idx) => {
-      const role = String(j?.jobTitle || "Role not recorded");
-      const company = String(j?.companyName || "");
-      const url = safeUrl(j?.joblink);
-      const stamp = fmtStamp(j?.at);
-      return `<tr>
-        <td style="padding:11px 0;${idx ? `border-top:1px solid ${BRAND.line};` : ""}vertical-align:top;">
-          <div style="color:${BRAND.ink};font-size:15px;font-weight:700;line-height:1.35;">${escapeHtml(role)}</div>
-          <div style="color:${BRAND.muted};font-size:13px;line-height:1.45;padding-top:2px;">${company ? escapeHtml(company) : "Company not recorded"}${stamp ? ` &middot; ${escapeHtml(stamp)}` : ""}</div>
-        </td>
-        <td align="right" style="padding:11px 0;${idx ? `border-top:1px solid ${BRAND.line};` : ""}vertical-align:top;white-space:nowrap;">
-          ${url ? `<a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer" style="color:${BRAND.flameTo};font-size:13px;font-weight:700;text-decoration:none;">View&nbsp;&rarr;</a>` : `<span style="color:${BRAND.faint};font-size:12px;">no link</span>`}
-        </td>
-      </tr>`;
-    })
-    .join("");
-
-  const more = hidden > 0
-    ? `<tr><td colspan="2" style="padding:11px 0 0;border-top:1px solid ${BRAND.line};color:${BRAND.muted};font-size:13px;">+${hidden} more in your dashboard</td></tr>`
-    : "";
-
-  return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:8px 0 0;border-collapse:collapse;">${rows}${more}</table>`;
-}
-
-function byDayTable(byDay) {
-  const rows = (byDay || []).filter((r) => r && r.date);
-  if (!rows.length) return "";
-  const peak = rows.reduce((m, r) => Math.max(m, num(r.applied), num(r.added)), 0) || 1;
-
-  const body = rows
-    .map((r) => {
-      const applied = num(r.applied);
-      const added = num(r.added);
-      const pct = Math.round((applied / peak) * 100);
-      return `<tr>
-        <td width="26%" style="padding:7px 0;color:${BRAND.body};font-size:13px;white-space:nowrap;">${escapeHtml(fmtByDayLabel(r.date))}</td>
-        <td width="54%" style="padding:7px 8px;">${barCells(applied > 0 ? Math.max(pct, 4) : 0)}</td>
-        <td width="20%" align="right" style="padding:7px 0;color:${BRAND.ink};font-size:13px;font-weight:700;white-space:nowrap;">${applied}<span style="color:${BRAND.faint};font-weight:500;"> / ${added} added</span></td>
-      </tr>`;
-    })
-    .join("");
-
-  return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:10px 0 0;border-collapse:collapse;">${body}</table>`;
-}
-
-function companyTable(topCompanies) {
-  const rows = (topCompanies || []).filter((c) => c && c.name);
-  if (!rows.length) return "";
-  const peak = rows.reduce((m, c) => Math.max(m, num(c.count)), 0) || 1;
-  const body = rows
-    .map(
-      (c) => `<tr>
-        <td width="46%" style="padding:7px 0;color:${BRAND.body};font-size:14px;">${escapeHtml(c.name)}</td>
-        <td width="40%" style="padding:7px 8px;">${barCells(Math.max(Math.round((num(c.count) / peak) * 100), 6), BRAND.violet)}</td>
-        <td width="14%" align="right" style="padding:7px 0;color:${BRAND.ink};font-size:14px;font-weight:700;">${num(c.count)}</td>
+      (r) => `<tr>
+        <td style="padding:11px 0;border-top:1px solid ${BRAND.line};color:${BRAND.body};font-size:14px;">${escapeHtml(r.label)}</td>
+        <td align="right" style="padding:11px 0;border-top:1px solid ${BRAND.line};color:${r.strong ? BRAND.ink : BRAND.body};font-size:14px;font-weight:${r.strong ? 700 : 500};white-space:nowrap;">${escapeHtml(r.value)}</td>
       </tr>`
     )
     .join("");
-  return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:10px 0 0;border-collapse:collapse;">${body}</table>`;
+  if (!body) return "";
+  return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:16px 0 0;border-collapse:collapse;border-bottom:1px solid ${BRAND.line};">${body}</table>`;
 }
 
-function calloutBlock({ title, text, accent = BRAND.flameTo, tint = "#fff7ed", border = "#fed7aa" }) {
-  return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:20px 0 0;"><tr>
-    <td style="background:${tint};border:1px solid ${border};border-radius:12px;padding:14px 16px;">
-      ${title ? `<div style="color:${accent};font-size:11px;font-weight:800;letter-spacing:0.06em;text-transform:uppercase;margin-bottom:4px;">${escapeHtml(title)}</div>` : ""}
-      <div style="color:${BRAND.body};font-size:15px;line-height:1.55;">${escapeHtml(text)}</div>
-    </td>
+/** Small grey all-caps label above a table. Used sparingly. */
+function tableLabel(text) {
+  return `<div style="margin:24px 0 2px;color:${BRAND.faint};font-size:11px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;">${escapeHtml(text)}</div>`;
+}
+
+/**
+ * A single-colour horizontal bar, as nested table cells. Email-safe: no divs
+ * with percentage widths, no border-radius dependence for meaning.
+ */
+function bar(pct) {
+  const p = Math.max(0, Math.min(100, Math.round(pct)));
+  const fill = p > 0 ? Math.max(p, 3) : 0;
+  return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
+    ${fill > 0 ? `<td width="${fill}%" style="height:8px;background:${BRAND.flame};border-radius:4px;font-size:0;line-height:0;">&nbsp;</td>` : ""}
+    <td style="height:8px;background:${BRAND.track};border-radius:4px;font-size:0;line-height:0;">&nbsp;</td>
   </tr></table>`;
 }
 
 /**
- * The one and only email chrome. Every kind funnels through here so the header,
- * the flame rule, the wordmark and the footer can only ever differ by copy.
+ * Day-by-day (or week-by-week) activity table: label, bar scaled to the
+ * period's peak, count right. One colour; the shape carries the information.
  */
-function shell({ preheader, eyebrow, headline, subline, windowText, blocks, footerNote }) {
+function activityTable(rows) {
+  const peak = rows.reduce((m, r) => Math.max(m, r.applied), 0) || 1;
+  const body = rows
+    .map(
+      (r) => `<tr>
+        <td width="30%" style="padding:8px 0;border-top:1px solid ${BRAND.line};color:${BRAND.body};font-size:13px;white-space:nowrap;">${escapeHtml(r.label)}</td>
+        <td width="50%" style="padding:8px 10px;border-top:1px solid ${BRAND.line};">${bar((r.applied / peak) * 100)}</td>
+        <td width="20%" align="right" style="padding:8px 0;border-top:1px solid ${BRAND.line};color:${BRAND.ink};font-size:13px;font-weight:700;white-space:nowrap;">${fmtNum(r.applied)}</td>
+      </tr>`
+    )
+    .join("");
+  return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:4px 0 0;border-collapse:collapse;border-bottom:1px solid ${BRAND.line};">${body}</table>`;
+}
+
+/**
+ * One closing sentence carrying the single dashboard link - the only link we
+ * send. The link text is "your dashboard" so it reads as the noun of the
+ * caller's sentence ("The full list for the week is on your dashboard."),
+ * not as a button pasted mid-sentence.
+ */
+function dashboardLine(text) {
+  return `<p style="margin:20px 0 0;color:${BRAND.body};font-size:14px;line-height:1.6;">${escapeHtml(text)}
+    <a href="${DASHBOARD_URL}" style="color:${BRAND.flameDeep};font-weight:600;text-decoration:underline;">your dashboard</a>.</p>`;
+}
+
+function shell({ preheader, dateText, headline, subline, blocks, footerNote }) {
   const content = (blocks || []).filter(Boolean).join("\n");
   return `<!DOCTYPE html>
 <html lang="en">
@@ -373,35 +285,31 @@ function shell({ preheader, eyebrow, headline, subline, windowText, blocks, foot
   <title>${escapeHtml(headline)}</title>
 </head>
 <body style="margin:0;padding:0;background:${BRAND.page};font-family:${FONT_STACK};">
-  <!-- preheader: the grey preview line next to the subject in most inboxes -->
   <div style="display:none;max-height:0;overflow:hidden;opacity:0;mso-hide:all;">${escapeHtml(preheader || headline)}</div>
-  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:${BRAND.page};padding:24px 12px;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:${BRAND.page};padding:28px 12px;">
     <tr><td align="center">
-      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;width:100%;border-collapse:collapse;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;width:100%;border-collapse:collapse;">
 
-        <tr><td style="background:${BRAND.slate};border-radius:14px 14px 0 0;padding:20px 26px 18px;">
+        <tr><td style="background:${BRAND.slate};border-radius:12px 12px 0 0;padding:18px 28px;">
           <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
-            <td style="vertical-align:middle;">
-              <div style="color:#ffffff;font-size:18px;font-weight:800;letter-spacing:0.14em;text-transform:uppercase;line-height:1.1;">FlashFire</div>
-              <div style="color:${BRAND.faint};font-size:11px;letter-spacing:0.04em;padding-top:3px;">Your job search, run for you</div>
+            <td style="vertical-align:baseline;">
+              <span style="color:#ffffff;font-size:15px;font-weight:800;letter-spacing:0.16em;">FLASHFIRE</span>
             </td>
-            <td align="right" style="vertical-align:middle;">
-              <span style="color:${BRAND.faint};font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;">${escapeHtml(eyebrow || "Report")}</span>
+            <td align="right" style="vertical-align:baseline;">
+              <span style="color:${BRAND.faint};font-size:12px;">${escapeHtml(dateText || "")}</span>
             </td>
           </tr></table>
         </td></tr>
+        <tr><td style="height:3px;font-size:0;line-height:0;background:${BRAND.flame};">&nbsp;</td></tr>
 
-        ${gradientRuleRow()}
-
-        <tr><td style="background:#ffffff;padding:26px 26px 4px;">
-          <h1 style="margin:0;color:${BRAND.ink};font-size:22px;line-height:1.28;font-weight:800;">${escapeHtml(headline)}</h1>
-          ${subline ? `<p style="margin:8px 0 0;color:${BRAND.muted};font-size:15px;line-height:1.55;">${escapeHtml(subline)}</p>` : ""}
-          ${windowChip(windowText)}
+        <tr><td style="background:#ffffff;padding:26px 28px 6px;">
+          <h1 style="margin:0;color:${BRAND.ink};font-size:19px;line-height:1.35;font-weight:700;">${escapeHtml(headline)}</h1>
+          ${subline ? `<p style="margin:6px 0 0;color:${BRAND.muted};font-size:14px;line-height:1.55;">${escapeHtml(subline)}</p>` : ""}
           ${content}
         </td></tr>
 
-        <tr><td style="background:#ffffff;border-radius:0 0 14px 14px;padding:22px 26px 24px;">
-          <div style="border-top:1px solid ${BRAND.line};padding-top:16px;color:${BRAND.faint};font-size:12px;line-height:1.6;">
+        <tr><td style="background:#ffffff;border-radius:0 0 12px 12px;padding:24px 28px;">
+          <div style="border-top:1px solid ${BRAND.line};padding-top:14px;color:${BRAND.faint};font-size:12px;line-height:1.6;">
             ${escapeHtml(footerNote || "")}<br>
             &copy; ${new Date().getFullYear()} FlashFire
           </div>
@@ -415,477 +323,335 @@ function shell({ preheader, eyebrow, headline, subline, windowText, blocks, foot
 }
 
 /* ------------------------------------------------------------------ *
- * plaintext helpers
+ * plaintext part
  * ------------------------------------------------------------------ */
 
-function textHeading(t) {
-  return [t.toUpperCase(), "-".repeat(Math.min(t.length, 46))];
-}
-
-function textJobLines(jobs, max = MAX_EMAIL_JOB_ROWS) {
-  const list = (jobs || []).filter(Boolean);
-  const shown = list.slice(0, max);
-  const lines = shown.map((j) => {
-    const role = String(j?.jobTitle || "Role not recorded");
-    const company = String(j?.companyName || "Company not recorded");
-    const url = safeUrl(j?.joblink);
-    return `  - ${role} at ${company}${url ? `\n    ${url}` : ""}`;
-  });
-  if (list.length > shown.length) lines.push(`  + ${list.length - shown.length} more in your dashboard`);
-  return lines;
-}
-
-function buildText({ headline, subline, windowText, sections, footerNote }) {
-  const out = [headline];
-  if (subline) out.push("", subline);
-  if (windowText) out.push("", `Reporting period: ${windowText}`);
-  for (const sec of sections || []) {
-    if (!sec) continue;
-    const lines = (sec.lines || []).filter((l) => l !== null && l !== undefined && l !== "");
-    if (!lines.length && !sec.keepEmpty) continue;
-    out.push("", ...(sec.title ? textHeading(sec.title) : []), ...lines);
+function buildText({ headline, windowText, rows, extraLines, footerNote }) {
+  const out = ["FLASHFIRE", "", headline];
+  if (windowText) out.push(windowText);
+  out.push("");
+  for (const r of (rows || []).filter(Boolean)) {
+    out.push(`  ${r.label}: ${r.value}`);
   }
-  out.push("", "-".repeat(46), footerNote || "FlashFire");
-  return out.join("\n");
+  if (extraLines && extraLines.length) {
+    out.push("", ...extraLines);
+  }
+  out.push("", `Full detail: ${DASHBOARD_URL}`, "", footerNote || "");
+  return out.join("\n").trim() + "\n";
 }
 
 /* ------------------------------------------------------------------ *
- * per-kind builders
- * each returns { subject, preheader, eyebrow, headline, subline, blocks, sections }
+ * per-kind email builders
  * ------------------------------------------------------------------ */
 
-function buildDailySummary({ name, stats, windowText }) {
+function buildDailySummary({ client, stats, windowText }) {
   const applied = stats.appliedCount;
   const added = stats.addedCount;
 
-  const headline =
-    applied > 0
-      ? `${applied} ${plural(applied, "application", "applications")} submitted for you`
-      : `${added} new ${plural(added, "role", "roles")} lined up for you`;
+  // Numbers only, by design. The roles themselves live on the dashboard; a
+  // daily list in the inbox is the fastest way to turn a status mail into a
+  // line-item audit. See the policy block at the top of this file.
+  const rows = [
+    { label: "Applications submitted", value: fmtNum(applied), strong: true },
+    { label: "New roles added", value: fmtNum(added) },
+    stats.interviewCount > 0 && { label: "Moved to interview", value: fmtNum(stats.interviewCount) },
+    stats.offerCount > 0 && { label: "Offers", value: fmtNum(stats.offerCount) }
+  ];
 
   const subject =
     applied > 0
-      ? `${name}, ${applied} ${plural(applied, "application", "applications")} submitted today (${windowText})`
-      : `${name}, ${added} new ${plural(added, "role", "roles")} added today (${windowText})`;
+      ? `Daily update: ${applied} ${plural(applied, "application", "applications")} submitted (${windowText})`
+      : `Daily update: ${added} new ${plural(added, "role", "roles")} added (${windowText})`;
 
-  const blocks = [
-    statTiles([
-      { label: "Applications", value: applied, accent: BRAND.flameTo, hint: "submitted in this period" },
-      { label: "Roles added", value: added, accent: BRAND.ink, hint: "queued for review" }
-    ])
-  ];
-
-  if (stats.interviewCount > 0 || stats.offerCount > 0) {
-    blocks.push(
-      calloutBlock({
-        title: "Pipeline movement",
-        text: `${stats.interviewCount} ${plural(stats.interviewCount, "card", "cards")} at interview stage and ${stats.offerCount} at offer stage today.`,
-        accent: BRAND.violet,
-        tint: "#f5f3ff",
-        border: "#ddd6fe"
-      })
-    );
-  }
-
-  if (stats.appliedJobs.length) {
-    blocks.push(sectionTitle("Applied today", `${applied} total`), jobRows(stats.appliedJobs));
-  }
-  if (stats.addedJobs.length) {
-    blocks.push(sectionTitle("Added today", `${added} total`), jobRows(stats.addedJobs));
-  }
-  blocks.push(
-    paragraph(
-      "Everything above is live on your dashboard. Reply to this email if a role looks wrong and we will pull it from the queue."
-    )
-  );
+  const ledeBlock =
+    applied > 0
+      ? lede(fmtNum(applied), `${plural(applied, "application", "applications")} submitted today`)
+      : lede(fmtNum(added), `new ${plural(added, "role", "roles")} added to your tracker today`);
 
   return {
     subject,
-    preheader: `${applied} applied, ${added} added on ${windowText}.`,
-    eyebrow: "Daily summary",
-    headline: `${name}, ${headline}`,
-    subline: `Here is what your FlashFire team moved on ${windowText}.`,
-    blocks,
-    sections: [
-      { title: "Totals", lines: [`  Applications submitted: ${applied}`, `  Roles added: ${added}`] },
-      { title: "Applied today", lines: textJobLines(stats.appliedJobs) },
-      { title: "Added today", lines: textJobLines(stats.addedJobs) }
-    ]
+    preheader: `${applied} applied, ${added} added.`,
+    dateText: windowText,
+    headline: "Today on your account",
+    subline: "",
+    blocks: [ledeBlock, ruledRows(rows), dashboardLine("Every role, with its status, is on")],
+    text: buildText({
+      headline: "Today on your account",
+      windowText,
+      rows,
+      footerNote: `Daily summary for ${client.email}. Reply to this email to change what we send.`
+    }),
+    footerNote: `Daily summary for ${client.email}. Reply to this email to change what we send.`
   };
 }
 
-function buildWeeklyReport({ name, stats, windowText }) {
+function buildWeeklyReport({ client, stats, windowText }) {
   const applied = stats.appliedCount;
-  const added = stats.addedCount;
+
+  const rows = [
+    { label: "Applications submitted", value: fmtNum(applied), strong: true },
+    { label: "New roles added", value: fmtNum(stats.addedCount) },
+    stats.interviewCount > 0 && { label: "Moved to interview", value: fmtNum(stats.interviewCount) },
+    stats.offerCount > 0 && { label: "Offers", value: fmtNum(stats.offerCount) }
+  ];
 
   const blocks = [
-    statTiles([
-      { label: "Applied", value: applied, accent: BRAND.flameTo },
-      { label: "Added", value: added, accent: BRAND.ink },
-      { label: "Interviews", value: stats.interviewCount, accent: BRAND.violet },
-      { label: "Offers", value: stats.offerCount, accent: BRAND.green }
-    ])
+    lede(fmtNum(applied), `${plural(applied, "application", "applications")} submitted this week`),
+    ruledRows(rows)
   ];
 
   if (stats.byDay.length > 1) {
-    blocks.push(sectionTitle("Day by day", "applications / roles added"), byDayTable(stats.byDay));
-  }
-  if (stats.topCompanies.length) {
-    blocks.push(sectionTitle("Most applied companies"), companyTable(stats.topCompanies));
-  }
-  if (stats.interviewJobs.length) {
-    blocks.push(sectionTitle("Reached interview"), jobRows(stats.interviewJobs, { max: 6 }));
-  }
-  if (stats.offerJobs.length) {
-    blocks.push(sectionTitle("Offers"), jobRows(stats.offerJobs, { max: 6 }));
-  }
-  if (stats.appliedJobs.length) {
-    blocks.push(sectionTitle("Applications this week", `${applied} total`), jobRows(stats.appliedJobs));
-  }
-  blocks.push(
-    paragraph(
-      stats.interviewCount > 0
-        ? "Interviews are the number that matters. Keep your calendar open and we will keep the top of the funnel full."
-        : "Volume is what turns into interviews. We are keeping the applications flowing next week."
-    )
-  );
-
-  return {
-    subject: `${name}, your week: ${applied} ${plural(applied, "application", "applications")}${stats.interviewCount ? `, ${stats.interviewCount} ${plural(stats.interviewCount, "interview", "interviews")}` : ""} (${windowText})`,
-    preheader: `${applied} applications, ${added} roles added, ${stats.interviewCount} interviews.`,
-    eyebrow: "Weekly report",
-    headline: `${name}, here is your week`,
-    subline: `Seven days of activity on your FlashFire account.`,
-    blocks,
-    sections: [
-      {
-        title: "Totals",
-        lines: [
-          `  Applications submitted: ${applied}`,
-          `  Roles added: ${added}`,
-          `  Interviews: ${stats.interviewCount}`,
-          `  Offers: ${stats.offerCount}`
-        ]
-      },
-      {
-        title: "Day by day",
-        lines: stats.byDay.map((r) => `  ${fmtByDayLabel(r.date)}: ${num(r.applied)} applied, ${num(r.added)} added`)
-      },
-      {
-        title: "Most applied companies",
-        lines: stats.topCompanies.map((c) => `  ${c.name}: ${num(c.count)}`)
-      },
-      { title: "Reached interview", lines: textJobLines(stats.interviewJobs, 6) },
-      { title: "Applications this week", lines: textJobLines(stats.appliedJobs) }
-    ]
-  };
-}
-
-function buildMonthlyReport({ name, stats, period, windowText }) {
-  const monthName = fmtMonth(period?.from) || windowText;
-  const applied = stats.appliedCount;
-  const weeks = weekBuckets(stats.byDay);
-
-  const blocks = [
-    statTiles([
-      { label: "Applied", value: applied, accent: BRAND.flameTo },
-      { label: "Added", value: stats.addedCount, accent: BRAND.ink },
-      { label: "Interviews", value: stats.interviewCount, accent: BRAND.violet },
-      { label: "Offers", value: stats.offerCount, accent: BRAND.green }
-    ])
-  ];
-
-  if (weeks.length > 1) {
-    blocks.push(sectionTitle("Week by week"), weekTable(weeks));
-  }
-  if (stats.topCompanies.length) {
-    blocks.push(sectionTitle("Most applied companies"), companyTable(stats.topCompanies));
-  }
-  if (stats.interviewJobs.length) {
-    blocks.push(sectionTitle("Interview conversations"), jobRows(stats.interviewJobs, { max: 8 }));
-  }
-  if (stats.offerJobs.length) {
-    blocks.push(sectionTitle("Offers"), jobRows(stats.offerJobs, { max: 6 }));
-  }
-  blocks.push(
-    calloutBlock({
-      title: "Momentum",
-      text:
-        applied > 0
-          ? `That is an average of ${(applied / Math.max(daysInWindow(period), 1)).toFixed(1)} applications a day across ${monthName}. Consistency is what pulls interviews forward, and we are carrying the same pace into this month.`
-          : `${monthName} was quiet on submissions. We are rebuilding the queue and you should see movement within days.`
-    })
-  );
-
-  return {
-    subject: `${name}, ${monthName} in review: ${applied} ${plural(applied, "application", "applications")}`,
-    preheader: `${applied} applications, ${stats.interviewCount} interviews, ${stats.offerCount} offers in ${monthName}.`,
-    eyebrow: "Monthly report",
-    headline: `${monthName} in review`,
-    subline: `${name}, here is the full month on your FlashFire account.`,
-    blocks,
-    sections: [
-      {
-        title: `${monthName} totals`,
-        lines: [
-          `  Applications submitted: ${applied}`,
-          `  Roles added: ${stats.addedCount}`,
-          `  Interviews: ${stats.interviewCount}`,
-          `  Offers: ${stats.offerCount}`
-        ]
-      },
-      { title: "Week by week", lines: weeks.map((w) => `  ${w.label}: ${w.applied} applied, ${w.added} added`) },
-      { title: "Most applied companies", lines: stats.topCompanies.map((c) => `  ${c.name}: ${num(c.count)}`) },
-      { title: "Interview conversations", lines: textJobLines(stats.interviewJobs, 8) },
-      { title: "Offers", lines: textJobLines(stats.offerJobs, 6) }
-    ]
-  };
-}
-
-function buildInterviewDigest({ name, stats, windowText }) {
-  const total = stats.interviewCount + stats.offerCount;
-  const cards = [...stats.offerJobs, ...stats.interviewJobs];
-
-  const blocks = [
-    statTiles([
-      { label: "Interviews", value: stats.interviewCount, accent: BRAND.violet },
-      { label: "Offers", value: stats.offerCount, accent: BRAND.green }
-    ])
-  ];
-
-  if (stats.offerJobs.length) {
-    blocks.push(sectionTitle("Offers"), jobRows(stats.offerJobs, { max: 8 }));
-  }
-  if (stats.interviewJobs.length) {
-    blocks.push(sectionTitle("Interviews and assignments"), jobRows(stats.interviewJobs, { max: 12 }));
-  }
-  if (!cards.length) {
     blocks.push(
-      calloutBlock({
-        title: "Pipeline",
-        text: `No card moved to interview, assignment or offer in ${windowText}. Applications are still going out and we will flag the moment one converts.`
-      })
-    );
-  }
-  blocks.push(
-    paragraph("Prep notes and recruiter threads live on your dashboard. Tell us which of these you want help preparing for.")
-  );
-
-  return {
-    subject: `${name}, ${total} ${plural(total, "card", "cards")} in your interview pipeline (${windowText})`,
-    preheader: `${stats.interviewCount} interviews and ${stats.offerCount} offers in the last seven days.`,
-    eyebrow: "Interview pipeline",
-    headline: `${name}, your interview pipeline`,
-    subline: "Every card that reached interview, assignment or offer stage this week.",
-    blocks,
-    sections: [
-      { title: "Totals", lines: [`  Interviews: ${stats.interviewCount}`, `  Offers: ${stats.offerCount}`] },
-      { title: "Offers", lines: textJobLines(stats.offerJobs, 8) },
-      { title: "Interviews and assignments", lines: textJobLines(stats.interviewJobs, 12) }
-    ]
-  };
-}
-
-function buildPlanUsage({ name, lifetime, windowText }) {
-  const cap = lifetime.effectiveCap;
-  const used = lifetime.totalApplied || lifetime.totalJobs;
-  const remaining = lifetime.remaining;
-  const percent =
-    lifetime.percentUsed !== null
-      ? Math.max(0, Math.min(100, Math.round(lifetime.percentUsed)))
-      : cap && cap > 0
-        ? Math.max(0, Math.min(100, Math.round((used / cap) * 100)))
-        : null;
-  const planName = lifetime.planType || "your plan";
-
-  const blocks = [
-    statTiles([
-      { label: "Used", value: used, accent: BRAND.flameTo },
-      { label: "Plan cap", value: cap === null ? "No cap" : cap, accent: BRAND.ink },
-      { label: "Remaining", value: remaining === null ? "Unlimited" : remaining, accent: BRAND.green }
-    ])
-  ];
-
-  if (percent !== null) {
-    blocks.push(
-      `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:22px 0 0;"><tr>
-        <td style="padding:0 0 6px;color:${BRAND.muted};font-size:12px;font-weight:700;letter-spacing:0.05em;text-transform:uppercase;">${escapeHtml(planName)} usage &middot; ${percent}%</td>
-      </tr><tr><td>${barCells(percent)}</td></tr></table>`
+      tableLabel("Day by day"),
+      activityTable(stats.byDay.map((d) => ({ label: fmtByDayLabel(d.date), applied: num(d.applied) })))
     );
   }
 
-  blocks.push(
-    paragraph(
-      remaining !== null && remaining <= 0
-        ? `You have used the full ${planName} allocation. Reply here and we will talk through topping it up so applications do not pause.`
-        : remaining !== null
-          ? `${remaining} ${plural(remaining, "application", "applications")} left on ${planName}. We pace these so the strongest roles are never the ones that get skipped.`
-          : `${used} ${plural(used, "application", "applications")} submitted on ${planName} so far.`
-    )
-  );
-
-  return {
-    subject: `${name}, ${used}${cap === null ? "" : ` of ${cap}`} ${plural(used, "application", "applications")} used on ${planName}`,
-    preheader: `${used} used${remaining === null ? "" : `, ${remaining} remaining`} on ${planName}.`,
-    eyebrow: "Plan usage",
-    headline: `${name}, where your plan stands`,
-    subline: `Usage on ${planName} as of ${windowText}.`,
-    blocks,
-    sections: [
-      {
-        title: "Plan usage",
-        lines: [
-          `  Plan: ${planName}`,
-          `  Applications used: ${used}`,
-          `  Plan cap: ${cap === null ? "no cap" : cap}`,
-          `  Remaining: ${remaining === null ? "unlimited" : remaining}`,
-          percent === null ? "" : `  Used: ${percent}%`
-        ]
-      },
-      {
-        title: "Lifetime",
-        lines: [
-          `  Total roles tracked: ${lifetime.totalJobs}`,
-          `  Interviews: ${lifetime.totalInterviews}`,
-          `  Offers: ${lifetime.totalOffers}`
-        ]
-      }
-    ]
-  };
-}
-
-function buildMilestone({ name, lifetime, extra, windowText }) {
-  const threshold = num(extra?.threshold) || nearestThresholdBelow(lifetime.totalApplied);
-  const next = MILESTONE_THRESHOLDS.find((t) => t > threshold) || null;
-
-  const blocks = [
-    statTiles([
-      { label: "Milestone", value: threshold, accent: BRAND.flameTo, hint: "applications crossed" },
-      { label: "Lifetime applied", value: lifetime.totalApplied, accent: BRAND.ink },
-      { label: "Interviews", value: lifetime.totalInterviews, accent: BRAND.violet }
-    ]),
-    calloutBlock({
-      title: "What this means",
-      text: `${threshold} applications is a real sample size. It is enough for us to see which titles and which company sizes answer you fastest, and to weight the next batch towards them.`
-    })
-  ];
-
-  if (next) {
+  // Companies are an aggregate, not a per-application list - a different and
+  // much safer level of detail. Names only, no links.
+  const companies = stats.topCompanies.slice(0, 5).filter((c) => c && c.name);
+  if (companies.length) {
     blocks.push(
-      paragraph(
-        `Next stop is ${next}. At your current pace we will get there without you lifting a finger, and we will tell you when it lands.`
-      )
+      tableLabel("Most applied"),
+      ruledRows(companies.map((c) => ({ label: String(c.name), value: `${fmtNum(c.count)} ${plural(num(c.count), "application", "applications")}` })))
     );
   }
 
-  return {
-    subject: `${name}, you just crossed ${threshold} applications`,
-    preheader: `${lifetime.totalApplied} applications submitted for you so far.`,
-    eyebrow: "Milestone",
-    headline: `${threshold} applications submitted for you`,
-    subline: `${name}, that is a milestone worth marking.`,
-    blocks,
-    sections: [
-      {
-        title: "Milestone",
-        lines: [
-          `  Crossed: ${threshold} applications`,
-          `  Lifetime applications: ${lifetime.totalApplied}`,
-          `  Interviews: ${lifetime.totalInterviews}`,
-          `  Offers: ${lifetime.totalOffers}`,
-          next ? `  Next milestone: ${next}` : ""
-        ]
-      },
-      { title: "As of", lines: [`  ${windowText || fmtDay(new Date())}`] }
-    ]
-  };
-}
+  blocks.push(dashboardLine("The full list for the week is on"));
 
-function buildInactivityAlert({ name, client, stats, lifetime, extra, windowText }) {
-  const days = num(extra?.days);
-  const blocks = [
-    statTiles([
-      { label: "Days idle", value: days, accent: BRAND.amber, hint: "no adds, no applications" },
-      { label: "Lifetime applied", value: lifetime.totalApplied, accent: BRAND.ink }
-    ]),
-    calloutBlock({
-      title: "Internal alert",
-      text: `No job was added and no application was submitted for ${client?.email || name} in the last ${days} ${plural(days, "day", "days")}. This is an operations notice, not a client-facing message.`,
-      accent: BRAND.amber,
-      tint: "#fffbeb",
-      border: "#fde68a"
+  const interviewClause = stats.interviewCount > 0 ? `, ${stats.interviewCount} ${plural(stats.interviewCount, "interview", "interviews")}` : "";
+
+  return {
+    subject: `Weekly report: ${applied} ${plural(applied, "application", "applications")}${interviewClause} (${windowText})`,
+    preheader: `${applied} applications across the week.`,
+    dateText: windowText,
+    headline: "Your week in review",
+    subline: "",
+    blocks,
+    text: buildText({
+      headline: "Your week in review",
+      windowText,
+      rows,
+      extraLines: [
+        ...(stats.byDay.length > 1
+          ? ["Day by day:", ...stats.byDay.map((d) => `  ${fmtByDayLabel(d.date)}: ${num(d.applied)} applied, ${num(d.added)} added`)]
+          : []),
+        ...(companies.length ? ["", "Most applied:", ...companies.map((c) => `  ${c.name}: ${num(c.count)}`)] : [])
+      ],
+      footerNote: `Weekly report for ${client.email}. Reply to this email to change what we send.`
     }),
-    paragraph("Check the assigned operator, the plan status and whether the resume queue is blocked.")
-  ];
-
-  return {
-    subject: `[Internal] No activity for ${days} ${plural(days, "day", "days")}: ${client?.email || name}`,
-    preheader: `${days} days with zero adds and zero applications.`,
-    eyebrow: "Internal alert",
-    headline: `No activity for ${days} ${plural(days, "day", "days")}`,
-    subline: `${client?.email || name} has had nothing added and nothing applied.`,
-    blocks,
-    sections: [
-      {
-        title: "Alert",
-        lines: [
-          `  Client: ${client?.email || name}`,
-          `  Days idle: ${days}`,
-          `  Applications in window: ${stats.appliedCount}`,
-          `  Roles added in window: ${stats.addedCount}`,
-          `  Lifetime applications: ${lifetime.totalApplied}`
-        ]
-      },
-      { title: "Checked at", lines: [`  ${windowText || fmtDay(new Date())}`] }
-    ]
+    footerNote: `Weekly report for ${client.email}. Reply to this email to change what we send.`
   };
 }
 
-/* ------------------------------------------------------------------ *
- * small shared computations
- * ------------------------------------------------------------------ */
-
-function nearestThresholdBelow(total) {
-  let hit = MILESTONE_THRESHOLDS[0];
-  for (const t of MILESTONE_THRESHOLDS) if (num(total) >= t) hit = t;
-  return hit;
-}
-
-function daysInWindow(period) {
-  const from = toDate(period?.from);
-  const to = toDate(period?.to);
-  if (!from || !to) return 30;
-  return Math.max(1, Math.round((to.getTime() - from.getTime()) / 86400000));
-}
-
-/** Group byDay rows into runs of seven for the monthly week-by-week table. */
+/** Bucket a month's byDay rows into calendar weeks for the monthly table. */
 function weekBuckets(byDay) {
-  const rows = (byDay || []).filter((r) => r && r.date);
-  const out = [];
-  for (let i = 0; i < rows.length; i += 7) {
-    const chunk = rows.slice(i, i + 7);
-    out.push({
-      label: `${fmtByDayLabel(chunk[0].date)} - ${fmtByDayLabel(chunk[chunk.length - 1].date)}`,
-      applied: chunk.reduce((s, r) => s + num(r.applied), 0),
-      added: chunk.reduce((s, r) => s + num(r.added), 0)
+  const weeks = [];
+  for (let i = 0; i < byDay.length; i += 7) {
+    const chunk = byDay.slice(i, i + 7);
+    if (!chunk.length) continue;
+    weeks.push({
+      label: `Week of ${fmtByDayLabel(chunk[0].date).replace(/^\w+\s/, "")}`,
+      applied: chunk.reduce((a, d) => a + num(d.applied), 0),
+      added: chunk.reduce((a, d) => a + num(d.added), 0)
     });
   }
-  return out;
+  return weeks;
 }
 
-function weekTable(weeks) {
-  if (!weeks.length) return "";
-  const peak = weeks.reduce((m, w) => Math.max(m, w.applied), 0) || 1;
-  const body = weeks
+function buildMonthlyReport({ client, stats, windowText }) {
+  const applied = stats.appliedCount;
+
+  const rows = [
+    { label: "Applications submitted", value: fmtNum(applied), strong: true },
+    { label: "New roles added", value: fmtNum(stats.addedCount) },
+    stats.interviewCount > 0 && { label: "Moved to interview", value: fmtNum(stats.interviewCount) },
+    stats.offerCount > 0 && { label: "Offers", value: fmtNum(stats.offerCount) }
+  ];
+
+  const blocks = [
+    lede(fmtNum(applied), `${plural(applied, "application", "applications")} submitted in ${windowText}`),
+    ruledRows(rows)
+  ];
+
+  const weeks = weekBuckets(stats.byDay);
+  if (weeks.length > 1) {
+    blocks.push(tableLabel("Week by week"), activityTable(weeks));
+  }
+
+  const companies = stats.topCompanies.slice(0, 5).filter((c) => c && c.name);
+  if (companies.length) {
+    blocks.push(
+      tableLabel("Most applied"),
+      ruledRows(companies.map((c) => ({ label: String(c.name), value: `${fmtNum(c.count)} ${plural(num(c.count), "application", "applications")}` })))
+    );
+  }
+
+  blocks.push(dashboardLine("The month's full history is on"));
+
+  const interviewClause = stats.interviewCount > 0 ? `, ${stats.interviewCount} ${plural(stats.interviewCount, "interview", "interviews")}` : "";
+
+  return {
+    subject: `${windowText} report: ${applied} ${plural(applied, "application", "applications")}${interviewClause}`,
+    preheader: `${applied} applications in ${windowText}.`,
+    dateText: windowText,
+    headline: `${windowText} in review`,
+    subline: "",
+    blocks,
+    text: buildText({
+      headline: `${windowText} in review`,
+      windowText: "",
+      rows,
+      extraLines: [
+        ...(weeks.length > 1 ? ["Week by week:", ...weeks.map((w) => `  ${w.label}: ${w.applied} applied, ${w.added} added`)] : []),
+        ...(companies.length ? ["", "Most applied:", ...companies.map((c) => `  ${c.name}: ${num(c.count)}`)] : [])
+      ],
+      footerNote: `Monthly report for ${client.email}. Reply to this email to change what we send.`
+    }),
+    footerNote: `Monthly report for ${client.email}. Reply to this email to change what we send.`
+  };
+}
+
+function buildInterviewDigest({ client, stats, windowText }) {
+  // The one report that names cards, because it is the good news. Role and
+  // company only - still no links (the posting may already be down; the
+  // conversation is what matters now, not the ad).
+  const cards = [
+    ...stats.offerJobs.map((j) => ({ ...j, stage: "Offer", color: BRAND.green })),
+    ...stats.interviewJobs.map((j) => ({ ...j, stage: "Interview", color: BRAND.violet }))
+  ];
+  const total = cards.length;
+  const shown = cards.slice(0, MAX_DIGEST_ROWS);
+
+  const listRows = shown
     .map(
-      (w) => `<tr>
-        <td width="38%" style="padding:7px 0;color:${BRAND.body};font-size:13px;white-space:nowrap;">${escapeHtml(w.label)}</td>
-        <td width="42%" style="padding:7px 8px;">${barCells(w.applied > 0 ? Math.max(Math.round((w.applied / peak) * 100), 4) : 0)}</td>
-        <td width="20%" align="right" style="padding:7px 0;color:${BRAND.ink};font-size:13px;font-weight:700;white-space:nowrap;">${w.applied}<span style="color:${BRAND.faint};font-weight:500;"> / ${w.added}</span></td>
+      (j) => `<tr>
+        <td style="padding:12px 0;border-top:1px solid ${BRAND.line};">
+          <div style="color:${BRAND.ink};font-size:14px;font-weight:600;line-height:1.4;">${escapeHtml(j.jobTitle || "Role")}</div>
+          <div style="color:${BRAND.muted};font-size:13px;line-height:1.4;padding-top:1px;">${escapeHtml(j.companyName || "")}</div>
+        </td>
+        <td align="right" style="padding:12px 0;border-top:1px solid ${BRAND.line};vertical-align:middle;">
+          <span style="color:${j.color};font-size:12px;font-weight:700;">${escapeHtml(j.stage)}</span>
+        </td>
       </tr>`
     )
     .join("");
-  return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:10px 0 0;border-collapse:collapse;">${body}</table>`;
+
+  const listTable = `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:14px 0 0;border-collapse:collapse;border-bottom:1px solid ${BRAND.line};">${listRows}</table>
+  ${total > shown.length ? `<p style="margin:8px 0 0;color:${BRAND.muted};font-size:13px;">And ${total - shown.length} more on your dashboard.</p>` : ""}`;
+
+  return {
+    subject: `Interview pipeline: ${total} active ${plural(total, "conversation", "conversations")}`,
+    preheader: `${total} ${plural(total, "card", "cards")} at interview or offer stage.`,
+    dateText: windowText,
+    headline: "Where things stand",
+    subline: `${plural(total, "This conversation", "These conversations")} reached interview or offer stage in the last week.`,
+    blocks: [listTable, dashboardLine("Notes and next steps for each are on")],
+    text: buildText({
+      headline: "Where things stand",
+      windowText,
+      rows: [],
+      extraLines: shown.map((j) => `  ${j.stage}: ${j.jobTitle || "Role"} - ${j.companyName || ""}`),
+      footerNote: `Interview digest for ${client.email}. Reply to this email to change what we send.`
+    }),
+    footerNote: `Interview digest for ${client.email}. Reply to this email to change what we send.`
+  };
+}
+
+function buildPlanUsage({ client, lifetime, windowText }) {
+  const used = lifetime.totalJobs;
+  const cap = lifetime.effectiveCap;
+  const capped = cap != null && cap > 0;
+  const pct = capped ? Math.min(100, Math.round((used / cap) * 100)) : null;
+
+  const rows = [
+    lifetime.planType && { label: "Plan", value: lifetime.planType },
+    { label: "Applications used", value: fmtNum(used), strong: true },
+    capped && { label: "Included in plan", value: fmtNum(cap) },
+    capped && { label: "Remaining", value: fmtNum(Math.max(0, cap - used)) }
+  ];
+
+  const blocks = [
+    capped
+      ? lede(`${fmtNum(used)}`, `of ${fmtNum(cap)} applications used`, `${pct}% of your plan`)
+      : lede(fmtNum(used), "applications submitted so far"),
+    capped ? `<div style="margin:14px 0 2px;">${bar(pct)}</div>` : "",
+    ruledRows(rows),
+    dashboardLine("Add-ons and referral credit are visible on")
+  ];
+
+  return {
+    subject: capped
+      ? `Plan usage: ${fmtNum(used)} of ${fmtNum(cap)} applications`
+      : `Plan usage: ${fmtNum(used)} applications submitted`,
+    preheader: capped ? `${pct}% of your plan used.` : `${fmtNum(used)} applications so far.`,
+    dateText: windowText,
+    headline: "Your plan usage",
+    subline: "",
+    blocks,
+    text: buildText({
+      headline: "Your plan usage",
+      windowText,
+      rows,
+      footerNote: `Plan usage summary for ${client.email}. Reply to this email to change what we send.`
+    }),
+    footerNote: `Plan usage summary for ${client.email}. Reply to this email to change what we send.`
+  };
+}
+
+function buildMilestone({ client, lifetime, windowText, extra }) {
+  const threshold = num(extra?.threshold) || lifetime.totalJobs;
+
+  const rows = [
+    { label: "Applications submitted", value: fmtNum(lifetime.totalJobs), strong: true },
+    lifetime.totalInterviews > 0 && { label: "Interviews so far", value: fmtNum(lifetime.totalInterviews) },
+    lifetime.totalOffers > 0 && { label: "Offers so far", value: fmtNum(lifetime.totalOffers) }
+  ];
+
+  return {
+    subject: `Milestone: ${fmtNum(threshold)} applications submitted`,
+    preheader: `Your search just passed ${fmtNum(threshold)} applications.`,
+    dateText: windowText,
+    headline: `${fmtNum(threshold)} applications`,
+    subline: "Your search just passed this mark. Each one was tailored and submitted on your behalf.",
+    blocks: [ruledRows(rows), dashboardLine("The full history is on")],
+    text: buildText({
+      headline: `Milestone: ${fmtNum(threshold)} applications`,
+      windowText,
+      rows,
+      footerNote: `Milestone note for ${client.email}. Reply to this email to change what we send.`
+    }),
+    footerNote: `Milestone note for ${client.email}. Reply to this email to change what we send.`
+  };
+}
+
+function buildInactivityAlert({ client, stats, windowText, extra }) {
+  // Internal only - the catalogue defaults this item to Mattermost, and the
+  // copy assumes an operations reader. It must never soften into client mail.
+  const days = num(extra?.days);
+
+  const rows = [
+    { label: "Days without activity", value: String(days), strong: true },
+    { label: "Client", value: client.email },
+    { label: "Added in the window", value: fmtNum(stats.addedCount) },
+    { label: "Applied in the window", value: fmtNum(stats.appliedCount) }
+  ];
+
+  return {
+    subject: `[Internal] No activity for ${days} ${plural(days, "day", "days")}: ${client.email}`,
+    preheader: `Internal alert - ${client.email} has been idle ${days} ${plural(days, "day", "days")}.`,
+    dateText: windowText,
+    headline: "Internal: client account idle",
+    subline: "Operations alert. This is not sent to the client.",
+    blocks: [ruledRows(rows)],
+    text: buildText({
+      headline: "Internal: client account idle",
+      windowText,
+      rows,
+      footerNote: "Internal operations alert."
+    }),
+    footerNote: "Internal operations alert."
+  };
 }
 
 const EMAIL_BUILDERS = {
@@ -906,229 +672,183 @@ const EMAIL_BUILDERS = {
  * Render one reminder as a branded HTML email plus a hand-written text part.
  *
  * @param {object} a
- * @param {string} a.kind    a REMINDER_ITEM_KEYS value
- * @param {object} a.client  { name, email }
- * @param {object} a.stats   getClientActivityStats() shape
+ * @param {string} a.kind     a REMINDER_ITEM_KEYS value
+ * @param {object} a.client   { name, email }
+ * @param {object} a.stats    getClientActivityStats() shape
  * @param {object} a.lifetime getClientLifetimeStats() shape
- * @param {object} a.period  { label, from, to }
- * @param {object} [a.extra] milestone -> { threshold }, inactivity_alert -> { days }
+ * @param {object} a.period   { label, from, to }
+ * @param {object} [a.extra]  milestone -> { threshold }, inactivity_alert -> { days }
  * @returns {{subject:string, html:string, text:string}|null} null for an unknown kind.
  */
 export function renderReminderEmail({ kind, client = {}, stats, lifetime, period = {}, extra = {} } = {}) {
   const key = String(kind || "");
-  if (!KNOWN_KINDS.has(key)) return null;
   const build = EMAIL_BUILDERS[key];
   if (!build) return null;
 
-  const meta = reminderItemMeta(key);
-  const s = normStats(stats);
-  const lt = normLifetime(lifetime);
-  const windowText = windowLabel(period);
-  const name = firstName(client);
-
-  const spec = build({ name, client, stats: s, lifetime: lt, period, windowText, extra });
-
-  const footerNote =
-    key === "inactivity_alert"
-      ? `FlashFire operations alert (${meta.label}). Internal distribution only.`
-      : `You are receiving the ${meta.label.toLowerCase()} for ${client?.email || "your FlashFire account"}. Reply to this email to change what we send.`;
-
-  const html = shell({
-    preheader: spec.preheader,
-    eyebrow: spec.eyebrow,
-    headline: spec.headline,
-    subline: spec.subline,
-    windowText,
-    blocks: spec.blocks,
-    footerNote
+  const c = { name: String(client.name || ""), email: String(client.email || "") };
+  const built = build({
+    client: c,
+    stats: normStats(stats),
+    lifetime: normLifetime(lifetime),
+    windowText: windowLabel(key, period),
+    extra: extra || {}
   });
 
-  const text = buildText({
-    headline: spec.headline,
-    subline: spec.subline,
-    windowText,
-    sections: spec.sections,
-    footerNote
-  });
-
-  return { subject: String(spec.subject).slice(0, 180), html, text };
+  return {
+    subject: built.subject,
+    html: shell(built),
+    text: built.text
+  };
 }
 
 /* ------------------------------------------------------------------ *
  * public: mattermost
  * ------------------------------------------------------------------ */
 
+/** "| Metric | Value |" table from [{label, value}] rows, falsy rows skipped. */
 function mmTable(rows) {
-  const clean = (rows || []).filter((r) => Array.isArray(r) && r.length === 2);
-  if (!clean.length) return [];
-  return [
-    "| Metric | Value |",
-    "|:--|--:|",
-    ...clean.map(([k, v]) => `| ${mmEscape(k)} | ${mmEscape(String(v))} |`)
-  ];
-}
-
-function mmJobLines(jobs, max = MAX_MM_JOB_LINES) {
-  const list = (jobs || []).filter(Boolean);
-  const shown = list.slice(0, max);
-  const lines = shown.map((j) => {
-    const role = mmEscape(j?.jobTitle || "Role not recorded");
-    const company = mmEscape(j?.companyName || "Company not recorded");
-    const url = safeUrl(j?.joblink);
-    // Markdown link form on purpose: Mattermost mangles a bare
-    // angle-bracket-wrapped URL, and a naked long URL wrecks the line.
-    return `- *${role}* at **${company}**${url ? ` - [open](${url})` : ""}`;
-  });
-  if (list.length > shown.length) lines.push(`- _+${list.length - shown.length} more in the dashboard_`);
-  return lines;
+  const body = (rows || [])
+    .filter(Boolean)
+    .map((r) => `| ${mmEscape(r.label)} | ${mmEscape(String(r.value))} |`)
+    .join("\n");
+  return `| Metric | Value |\n|:--|--:|\n${body}`;
 }
 
 const MM_BUILDERS = {
-  daily_summary: ({ name, stats, windowText }) => ({
-    title: `Daily summary for ${name}`,
-    sub: windowText,
-    rows: [
-      ["Applications submitted", stats.appliedCount],
-      ["Roles added", stats.addedCount],
-      ["Interviews", stats.interviewCount],
-      ["Offers", stats.offerCount]
-    ],
-    groups: [
-      { heading: "Applied", jobs: stats.appliedJobs },
-      { heading: "Added", jobs: stats.addedJobs }
-    ]
-  }),
-
-  weekly_report: ({ name, stats, windowText }) => ({
-    title: `Weekly report for ${name}`,
-    sub: windowText,
-    rows: [
-      ["Applications submitted", stats.appliedCount],
-      ["Roles added", stats.addedCount],
-      ["Interviews", stats.interviewCount],
-      ["Offers", stats.offerCount],
-      ["Top company", stats.topCompanies[0] ? `${stats.topCompanies[0].name} (${num(stats.topCompanies[0].count)})` : "n/a"]
-    ],
-    groups: [
-      { heading: "Interviews", jobs: stats.interviewJobs },
-      { heading: "Applications", jobs: stats.appliedJobs }
-    ]
-  }),
-
-  monthly_report: ({ name, stats, period, windowText }) => ({
-    title: `${fmtMonth(period?.from) || "Monthly"} report for ${name}`,
-    sub: windowText,
-    rows: [
-      ["Applications submitted", stats.appliedCount],
-      ["Roles added", stats.addedCount],
-      ["Interviews", stats.interviewCount],
-      ["Offers", stats.offerCount]
-    ],
-    groups: [
-      { heading: "Offers", jobs: stats.offerJobs },
-      { heading: "Interviews", jobs: stats.interviewJobs }
-    ]
-  }),
-
-  interview_digest: ({ name, stats, windowText }) => ({
-    title: `Interview pipeline for ${name}`,
-    sub: windowText,
-    rows: [
-      ["Interviews", stats.interviewCount],
-      ["Offers", stats.offerCount]
-    ],
-    groups: [
-      { heading: "Offers", jobs: stats.offerJobs },
-      { heading: "Interviews and assignments", jobs: stats.interviewJobs }
-    ]
-  }),
-
-  plan_usage: ({ name, lifetime, windowText }) => ({
-    title: `Plan usage for ${name}`,
-    sub: windowText,
-    rows: [
-      ["Plan", lifetime.planType || "n/a"],
-      ["Applications used", lifetime.totalApplied || lifetime.totalJobs],
-      ["Plan cap", lifetime.effectiveCap === null ? "no cap" : lifetime.effectiveCap],
-      ["Remaining", lifetime.remaining === null ? "unlimited" : lifetime.remaining],
-      ["Used", lifetime.percentUsed === null ? "n/a" : `${Math.round(lifetime.percentUsed)}%`]
-    ],
-    groups: []
-  }),
-
-  milestone: ({ name, lifetime, extra }) => {
-    const threshold = num(extra?.threshold) || nearestThresholdBelow(lifetime.totalApplied);
-    const next = MILESTONE_THRESHOLDS.find((t) => t > threshold) || null;
-    return {
-      title: `Milestone: ${name} crossed ${threshold} applications`,
-      sub: fmtDay(new Date()),
-      rows: [
-        ["Milestone", threshold],
-        ["Lifetime applications", lifetime.totalApplied],
-        ["Interviews", lifetime.totalInterviews],
-        ["Offers", lifetime.totalOffers],
-        ["Next milestone", next === null ? "top of the ladder" : next]
-      ],
-      groups: []
-    };
+  daily_summary({ stats, windowText }) {
+    return [
+      `#### Daily update - ${windowText}`,
+      "",
+      mmTable([
+        { label: "Applications submitted", value: stats.appliedCount },
+        { label: "New roles added", value: stats.addedCount },
+        stats.interviewCount > 0 && { label: "Moved to interview", value: stats.interviewCount },
+        stats.offerCount > 0 && { label: "Offers", value: stats.offerCount }
+      ])
+    ].join("\n");
   },
 
-  inactivity_alert: ({ name, client, stats, lifetime, extra }) => {
+  weekly_report({ stats, windowText }) {
+    const days = stats.byDay
+      .map((d) => `- ${mmEscape(fmtByDayLabel(d.date))}: **${num(d.applied)}** applied, ${num(d.added)} added`)
+      .join("\n");
+    const companies = stats.topCompanies
+      .slice(0, 5)
+      .filter((c) => c && c.name)
+      .map((c) => `- ${mmEscape(c.name)}: ${num(c.count)}`)
+      .join("\n");
+    return [
+      `#### Weekly report - ${windowText}`,
+      "",
+      mmTable([
+        { label: "Applications submitted", value: stats.appliedCount },
+        { label: "New roles added", value: stats.addedCount },
+        stats.interviewCount > 0 && { label: "Moved to interview", value: stats.interviewCount },
+        stats.offerCount > 0 && { label: "Offers", value: stats.offerCount }
+      ]),
+      ...(days ? ["", "**Day by day**", days] : []),
+      ...(companies ? ["", "**Most applied**", companies] : [])
+    ].join("\n");
+  },
+
+  monthly_report({ stats, windowText }) {
+    const weeks = weekBuckets(stats.byDay)
+      .map((w) => `- ${mmEscape(w.label)}: **${w.applied}** applied, ${w.added} added`)
+      .join("\n");
+    return [
+      `#### ${windowText} report`,
+      "",
+      mmTable([
+        { label: "Applications submitted", value: stats.appliedCount },
+        { label: "New roles added", value: stats.addedCount },
+        stats.interviewCount > 0 && { label: "Moved to interview", value: stats.interviewCount },
+        stats.offerCount > 0 && { label: "Offers", value: stats.offerCount }
+      ]),
+      ...(weeks ? ["", "**Week by week**", weeks] : [])
+    ].join("\n");
+  },
+
+  interview_digest({ stats, windowText }) {
+    const cards = [
+      ...stats.offerJobs.map((j) => ({ ...j, stage: "Offer" })),
+      ...stats.interviewJobs.map((j) => ({ ...j, stage: "Interview" }))
+    ];
+    const shown = cards.slice(0, MAX_DIGEST_ROWS);
+    const lines = shown.map(
+      (j) => `- **${mmEscape(j.jobTitle || "Role")}** at ${mmEscape(j.companyName || "")} - ${j.stage}`
+    );
+    if (cards.length > shown.length) lines.push(`- and ${cards.length - shown.length} more on the dashboard`);
+    return [
+      `#### Interview pipeline - ${windowText}`,
+      "",
+      `${cards.length} active ${cards.length === 1 ? "conversation" : "conversations"}:`,
+      "",
+      ...lines
+    ].join("\n");
+  },
+
+  plan_usage({ lifetime }) {
+    const capped = lifetime.effectiveCap != null && lifetime.effectiveCap > 0;
+    return [
+      "#### Plan usage",
+      "",
+      mmTable([
+        lifetime.planType && { label: "Plan", value: lifetime.planType },
+        { label: "Applications used", value: fmtNum(lifetime.totalJobs) },
+        capped && { label: "Included in plan", value: fmtNum(lifetime.effectiveCap) },
+        capped && { label: "Remaining", value: fmtNum(Math.max(0, lifetime.effectiveCap - lifetime.totalJobs)) }
+      ])
+    ].join("\n");
+  },
+
+  milestone({ lifetime, extra }) {
+    const threshold = num(extra?.threshold) || lifetime.totalJobs;
+    return [
+      `#### Milestone: ${fmtNum(threshold)} applications`,
+      "",
+      `This search just passed **${fmtNum(threshold)}** submitted applications.`,
+      lifetime.totalInterviews > 0 ? `Interviews so far: ${fmtNum(lifetime.totalInterviews)}.` : "",
+      lifetime.totalOffers > 0 ? `Offers so far: ${fmtNum(lifetime.totalOffers)}.` : ""
+    ]
+      .filter(Boolean)
+      .join("\n");
+  },
+
+  inactivity_alert({ client, stats, extra }) {
     const days = num(extra?.days);
-    return {
-      title: `No activity alert: ${name}`,
-      sub: `${days} ${plural(days, "day", "days")} with nothing added and nothing applied`,
-      rows: [
-        ["Client", client?.email || name],
-        ["Days idle", days],
-        ["Applied in window", stats.appliedCount],
-        ["Added in window", stats.addedCount],
-        ["Lifetime applications", lifetime.totalApplied]
-      ],
-      groups: [],
-      tail: "_Internal notice. Check the assigned operator, plan status and the resume queue._"
-    };
+    return [
+      `#### Internal: no activity for ${days} ${days === 1 ? "day" : "days"}`,
+      "",
+      mmTable([
+        { label: "Client", value: client.email },
+        { label: "Days idle", value: days },
+        { label: "Added in window", value: stats.addedCount },
+        { label: "Applied in window", value: stats.appliedCount }
+      ])
+    ].join("\n");
   }
 };
 
 /**
- * Render one reminder as a Mattermost markdown post.
- * Hard-capped under 4000 chars, since Mattermost silently truncates past that.
- *
- * @returns {{text: string}|null} null for an unknown kind.
+ * Render one reminder as a Mattermost markdown message.
+ * Same input contract as renderReminderEmail; null for an unknown kind.
+ * @returns {{text:string}|null}
  */
 export function renderReminderMattermost({ kind, client = {}, stats, lifetime, period = {}, extra = {} } = {}) {
   const key = String(kind || "");
-  if (!KNOWN_KINDS.has(key)) return null;
   const build = MM_BUILDERS[key];
   if (!build) return null;
 
-  const s = normStats(stats);
-  const lt = normLifetime(lifetime);
-  const windowText = windowLabel(period);
-  const name = firstName(client);
+  let text = build({
+    client: { name: String(client.name || ""), email: String(client.email || "") },
+    stats: normStats(stats),
+    lifetime: normLifetime(lifetime),
+    windowText: windowLabel(key, period),
+    extra: extra || {}
+  });
 
-  const spec = build({ name, client, stats: s, lifetime: lt, period, windowText, extra });
-
-  const lines = [`#### ${mmEscape(spec.title)}`];
-  if (spec.sub) lines.push(`_${mmEscape(spec.sub)}_`);
-  lines.push("", ...mmTable(spec.rows));
-
-  for (const group of spec.groups || []) {
-    const jobLines = mmJobLines(group.jobs);
-    if (!jobLines.length) continue;
-    lines.push("", `**${mmEscape(group.heading)}**`, ...jobLines);
-  }
-  if (spec.tail) lines.push("", spec.tail);
-
-  let text = lines.join("\n");
   if (text.length > MM_MAX_CHARS) {
-    // Trim on a line boundary so we never cut a markdown link in half.
-    const budget = MM_MAX_CHARS - 30;
-    const cut = text.slice(0, budget);
-    text = `${cut.slice(0, cut.lastIndexOf("\n"))}\n_truncated_`;
+    text = text.slice(0, MM_MAX_CHARS - 22).trimEnd() + "\n\n_(truncated)_";
   }
   return { text };
 }
-
-export default { renderReminderEmail, renderReminderMattermost };

@@ -116,9 +116,17 @@ export const REMINDER_ITEMS = [
     key: "inactivity_alert",
     label: "No-activity alert",
     description:
-      "Internal warning when nothing has been added or applied for N consecutive days. Off by default and Mattermost-only - clients should not be told we went quiet.",
+      "Internal warning when nothing has been added or applied for N consecutive days. Off by default. Goes to the FlashFire team only - the email channel delivers to the team inbox, never to the client.",
     cadence: "daily",
     activityGated: false,
+    /**
+     * Internal items are FOR US, never for the client. The worker routes the
+     * email channel of an internal item to OPS_ALERT_EMAIL (falling back to
+     * SMTP_USER) and never to the client's payment address - so ticking the
+     * email box on this row cannot leak "we went quiet on your account" into
+     * a paying client's inbox. The UI labels the checkbox accordingly.
+     */
+    internal: true,
     scheduleFields: ["inactivityDays", "sendAtIST"],
     defaults: {
       enabled: false,
