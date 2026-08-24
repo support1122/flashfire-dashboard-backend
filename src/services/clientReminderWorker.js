@@ -456,6 +456,24 @@ function trim300(value) {
  * practice at most one of the two is populated. When an operator has gone out
  * of their way to type an address into the tab, that address wins.
  */
+/**
+ * Where an INTERNAL item's email goes: our own inbox, never the client's.
+ *
+ * OPS_ALERT_EMAIL when set, else the SMTP account itself (support@...), else
+ * nothing - in which case the email channel reports no_internal_email rather
+ * than quietly falling back to the client's payment address. The fallback
+ * direction matters: an inactivity alert landing in a paying client's inbox
+ * says "we went quiet on your account", which is the one message this feature
+ * must never deliver.
+ */
+export function resolveInternalAlertEmail() {
+  const explicit = String(process.env.OPS_ALERT_EMAIL || "").toLowerCase().trim();
+  if (EMAIL_RE.test(explicit)) return explicit;
+  const smtpUser = String(process.env.SMTP_USER || "").toLowerCase().trim();
+  if (EMAIL_RE.test(smtpUser)) return smtpUser;
+  return "";
+}
+
 async function resolveDestinationEmail(config) {
   const override = String(config?.paymentEmailOverride || "").toLowerCase().trim();
   if (EMAIL_RE.test(override)) return { to: override, source: "override", clientName: "" };
@@ -677,13 +695,24 @@ export async function deliverReminder({
 
   // ── Email ──
   if (channels.email) {
-    const dest = await resolveDestinationEmail(merged);
+    // Internal items mail the TEAM, full stop. The client's payment address is
+    // never even looked up for them, so no code path below this line can leak
+    // an internal alert into a client inbox - not a bad override, not a
+    // mislinked tracking row, nothing.
+    const dest = meta.internal === true
+      ? { to: resolveInternalAlertEmail(), source: "internal", clientName: "" }
+      : await resolveDestinationEmail(merged);
     if (!client.name && dest.clientName) client.name = dest.clientName;
 
     if (!dest.to) {
       // Not forceable and not a failure of ours: there is simply no address on
       // file. Reported, logged, and the Mattermost half still goes out.
-      out.email = { attempted: false, ok: false, to: "", error: "no_payment_email" };
+      out.email = {
+        attempted: false,
+        ok: false,
+        to: "",
+        error: meta.internal === true ? "no_internal_email" : "no_payment_email"
+      };
     } else if (!isSmtpConfigured()) {
       out.email = { attempted: false, ok: false, to: dest.to, error: "smtp_not_configured" };
     } else {

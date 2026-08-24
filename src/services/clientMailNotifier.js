@@ -34,7 +34,35 @@ const PRIORITY_RANK = { low: 0, medium: 1, high: 2 };
 const MAX_ATTEMPTS = 4; // give up after this many failed sends
 const DASHBOARD_URL = "https://portal.flashfirejobs.com"; // email CTA target
 const FROM_EMAIL = ""; // SMTP path uses SMTP_FROM_EMAIL / SMTP_USER
-const FROM_NAME = "FlashFire";
+const FROM_NAME = "Flashfire";
+
+// ─── Rollout gate (2026-08-24) ─────────────────────────────────────────
+// The stream just came back from a 12-day pause behind the new AI verifier.
+// While we prove it in production, milestone alerts send ONLY for the clients
+// listed here — matched against the client's dashboard email, payment email,
+// or connected mailbox, all lowercased. EMPTY SET = everyone. To go live for
+// all clients, clear the set.
+const ROLLOUT_ALLOWLIST = new Set(["rijuljain17@gmail.com"]);
+
+/** Pure rollout check — exported for tests. */
+export function rolloutAllows({ clientEmail, paymentEmail, mailbox }) {
+  if (ROLLOUT_ALLOWLIST.size === 0) return true;
+  return [clientEmail, paymentEmail, mailbox].some((e) =>
+    ROLLOUT_ALLOWLIST.has(String(e || "").trim().toLowerCase())
+  );
+}
+
+// A milestone alert is time-sensitive; a digest that sat unsent for days
+// (rollout gate, long outage, widened allowlist) must not suddenly flush a
+// stale "you've got an interview" to a client.
+const MAX_ALERT_AGE_HOURS = 48;
+
+/** Pure staleness check — exported for tests. Unknown date → not stale. */
+export function isTooOldToNotify(digestDate, now = Date.now()) {
+  const t = digestDate ? new Date(digestDate).getTime() : NaN;
+  if (Number.isNaN(t)) return false;
+  return now - t > MAX_ALERT_AGE_HOURS * 3600 * 1000;
+}
 
 function isChannelConfigured() {
   return CHANNEL === "smtp" ? isSmtpConfigured() : isSendgridConfigured();
@@ -83,6 +111,17 @@ export async function notifyClientForDigest({ digestDoc, client, mailbox }) {
   // 'client-milestone' category is un-paused (see Utils/smtpSender.js).
   if (isMailCategoryPaused(MAIL_CATEGORY.CLIENT_MILESTONE)) return "disabled";
   if (!digestDoc?.clientNotifyEligible) return "skipped";
+  // Verification is mandatory on the send path (2026-08-24). Digests created
+  // before the verifier existed — including the pause-era backlog whose sends
+  // were deferred, false positives among them — carry verifyGenuine=false and
+  // must never flush to a client.
+  if (digestDoc.verifyGenuine !== true) {
+    await MailDigest.updateOne(
+      { _id: digestDoc._id },
+      { $set: { clientNotifySkippedReason: "unverified_pre_verifier_digest" } }
+    ).catch(() => {});
+    return "skipped";
+  }
   if (digestDoc.clientNotifiedAt) return "already";
 
   // Give up after repeated failures rather than emailing forever.
@@ -99,6 +138,20 @@ export async function notifyClientForDigest({ digestDoc, client, mailbox }) {
 
   if (!isChannelConfigured()) {
     await recordSkip(CHANNEL === "smtp" ? "smtp_not_configured" : "sendgrid_not_configured");
+    return "skipped";
+  }
+
+  // Rollout gate: during the staged rollout only allowlisted clients get
+  // alerts. Attempts are NOT burned, so widening the list later lets fresh
+  // digests send normally (stale ones are stopped by the age guard below).
+  if (!rolloutAllows({ clientEmail: client?.email, paymentEmail: client?.paymentEmail, mailbox })) {
+    await recordSkip("rollout_allowlist");
+    return "skipped";
+  }
+
+  // Never flush an old milestone: the mail is only useful near receipt.
+  if (isTooOldToNotify(digestDoc.date || digestDoc.createdAt)) {
+    await recordSkip("stale_digest");
     return "skipped";
   }
 
@@ -176,6 +229,8 @@ export async function retryPendingClientNotifications({ gmailEmail, client, limi
   const pending = await MailDigest.find({
     gmailEmail,
     clientNotifyEligible: true,
+    // Only AI-verified milestones may retry; pre-verifier backlog stays parked.
+    verifyGenuine: true,
     clientNotifiedAt: null,
     clientNotifyAttempts: { $lt: MAX_ATTEMPTS }
   })

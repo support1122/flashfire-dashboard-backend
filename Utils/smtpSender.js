@@ -27,10 +27,12 @@ import nodemailer from "nodemailer";
 // normally. To resume a stream, delete its name from the set.
 //
 //  client-milestone — the interview / assignment / offer alerts driven by the
-//    inbox classifier (src/services/clientMailNotifier.js). PAUSED since
-//    2026-08-12: the classifier produced a false "you've got an interview" off
-//    an Amazon "Thank you for applying" auto-acknowledgement. Stays paused
-//    until detection is fixed.
+//    inbox classifier (src/services/clientMailNotifier.js). Was PAUSED
+//    2026-08-12 → 2026-08-24 after the classifier produced a false "you've got
+//    an interview" off an Amazon "Thank you for applying" auto-acknowledgement.
+//    RESUMED 2026-08-24: every rules-flagged milestone now passes a second-stage
+//    AI verification (src/services/mailMilestoneVerifier.js) before the client
+//    is emailed; unverified or rejected candidates never send.
 //
 //  onboarding — the base résumé / cover letter / LinkedIn sequence
 //    (src/services/onboardingMailWorker.js). LIVE. It fires off the client's
@@ -45,7 +47,7 @@ export const MAIL_CATEGORY = {
   ONBOARDING: "onboarding"
 };
 
-const PAUSED_CATEGORIES = new Set([MAIL_CATEGORY.CLIENT_MILESTONE]);
+const PAUSED_CATEGORIES = new Set([]);
 
 export function isSmtpConfigured() {
   return Boolean(process.env.SMTP_USER && process.env.SMTP_PASS);
