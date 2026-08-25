@@ -5,6 +5,8 @@ import Login from "./Controllers/Login.js";
 import Register from "./Controllers/Register.js";
 import GoogleOAuth from "./Controllers/GoogleOAuth.js";
 import { getAllClients } from './Controllers/ClientController.js';
+import { getClientTrackingStatus } from './Controllers/ClientTrackingStatus.js';
+import { listAutopilotCreds, getAutopilotCreds, putAutopilotCreds } from './Controllers/AutopilotCreds.js';
 import { getDashboardManagers, getDashboardManagerByName, syncDashboardManagers } from './Controllers/DashboardManagerController.js';
 import Add_Update_Profile from "./Controllers/Add_Update_Profile.js";
 import AddJob from "./Controllers/AddJob.js";
@@ -120,6 +122,11 @@ app.post("/google-oauth", GoogleOAuth);
 // exists, so nothing about this endpoint may be self-service.
 app.post("/api/clients/register", AdminKeyVerify, RegisterVerify, Register);
 app.get("/api/clients/all", getAllClients);
+app.get("/api/clients/tracking-status", getClientTrackingStatus);
+// Autopilot credential store - shared-secret gated, see Controllers/AutopilotCreds.js
+app.get("/autopilot/creds", requireOpsKey, listAutopilotCreds);
+app.get("/autopilot/creds/:email", requireOpsKey, getAutopilotCreds);
+app.put("/autopilot/creds/:email", requireOpsKey, putAutopilotCreds);
 app.get("/api/dashboard-managers", getDashboardManagers);
 app.get("/sync/managers", syncDashboardManagers);
 app.post("/refresh-token", RefreshToken);
