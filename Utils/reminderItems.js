@@ -32,84 +32,14 @@ export const REMINDER_ITEMS = [
       "Jobs added and applications submitted for the client today, with the companies and roles.",
     cadence: "daily",
     activityGated: true,
-    scheduleFields: ["sendAtIST"],
+    scheduleFields: ["sendAtIST", "autoOnThreshold"],
     defaults: {
       enabled: true,
       channels: { mattermost: true, email: true },
-      sendAtIST: "21:30"
-    }
-  },
-  {
-    key: "weekly_report",
-    label: "Weekly progress report",
-    description:
-      "Seven-day rollup: totals, a day-by-day breakdown and the companies applied to most.",
-    cadence: "weekly",
-    activityGated: true,
-    scheduleFields: ["dayOfWeek", "sendAtIST"],
-    defaults: {
-      enabled: true,
-      channels: { mattermost: true, email: true },
-      dayOfWeek: 1, // Monday
-      sendAtIST: "10:00"
-    }
-  },
-  {
-    key: "monthly_report",
-    label: "Monthly performance report",
-    description:
-      "Previous calendar month in full: applications, interviews, offers and week-by-week momentum.",
-    cadence: "monthly",
-    activityGated: true,
-    scheduleFields: ["dayOfMonth", "sendAtIST"],
-    defaults: {
-      enabled: false,
-      channels: { mattermost: true, email: true },
-      dayOfMonth: 1,
-      sendAtIST: "10:30"
-    }
-  },
-  {
-    key: "interview_digest",
-    label: "Interview & offer pipeline",
-    description:
-      "Every card that reached interview, assignment or offer in the last seven days.",
-    cadence: "weekly",
-    activityGated: true,
-    scheduleFields: ["dayOfWeek", "sendAtIST"],
-    defaults: {
-      enabled: false,
-      channels: { mattermost: true, email: false },
-      dayOfWeek: 5, // Friday
-      sendAtIST: "18:00"
-    }
-  },
-  {
-    key: "plan_usage",
-    label: "Plan usage & remaining quota",
-    description:
-      "Applications used against the client's plan cap, plus what is left. Skipped while the count is zero.",
-    cadence: "weekly",
-    activityGated: false,
-    scheduleFields: ["dayOfWeek", "sendAtIST"],
-    defaults: {
-      enabled: false,
-      channels: { mattermost: true, email: false },
-      dayOfWeek: 0, // Sunday
-      sendAtIST: "19:00"
-    }
-  },
-  {
-    key: "milestone",
-    label: "Application milestones",
-    description:
-      "Fires once each time the client's lifetime application count crosses 25, 50, 100, 150, 200, 250, 300, 400, 500, 750 or 1000.",
-    cadence: "event",
-    activityGated: false,
-    scheduleFields: [],
-    defaults: {
-      enabled: false,
-      channels: { mattermost: true, email: true }
+      sendAtIST: "21:30",
+      autoOnThreshold: false,
+      autoThresholdCount: 5,
+      autoDelayMinutes: 60
     }
   },
   {
@@ -121,8 +51,8 @@ export const REMINDER_ITEMS = [
     activityGated: false,
     /**
      * Internal items are FOR US, never for the client. The worker routes the
-     * email channel of an internal item to OPS_ALERT_EMAIL (falling back to
-     * SMTP_USER) and never to the client's payment address - so ticking the
+     * email channel of an internal item to the SMTP account itself (SMTP_USER)
+     * and never to the client's payment address - so ticking the
      * email box on this row cannot leak "we went quiet on your account" into
      * a paying client's inbox. The UI labels the checkbox accordingly.
      */
@@ -137,12 +67,11 @@ export const REMINDER_ITEMS = [
   }
 ];
 
-/** Lifetime application counts that trigger the `milestone` item, ascending. */
-export const MILESTONE_THRESHOLDS = [25, 50, 100, 150, 200, 250, 300, 400, 500, 750, 1000];
-
 /**
- * Event-cadence items never deliver outside this IST window. A milestone that
- * trips at 03:00 waits for 08:00 rather than pinging a client at night.
+ * Event-cadence items never deliver outside this IST window: something that
+ * trips at 03:00 waits for 08:00 rather than pinging a client at night. No
+ * catalogue item uses the event cadence today; the guard stays for the next
+ * one that does.
  */
 export const QUIET_HOURS_IST = { startHour: 8, endHour: 22 };
 
@@ -176,6 +105,11 @@ export function defaultItemConfig(key) {
       email: d.channels?.email === true
     },
     sendAtIST: d.sendAtIST || "09:00",
+    // Threshold auto-send. Only the daily summary declares these today, but
+    // every row carries them so the worker and the UI never branch on undefined.
+    autoOnThreshold: d.autoOnThreshold === true,
+    autoThresholdCount: Number.isInteger(d.autoThresholdCount) ? d.autoThresholdCount : 5,
+    autoDelayMinutes: Number.isInteger(d.autoDelayMinutes) ? d.autoDelayMinutes : 60,
     dayOfWeek: Number.isInteger(d.dayOfWeek) ? d.dayOfWeek : 1,
     dayOfMonth: Number.isInteger(d.dayOfMonth) ? d.dayOfMonth : 1,
     inactivityDays: Number.isInteger(d.inactivityDays) ? d.inactivityDays : 3,

@@ -35,29 +35,29 @@ test("internal alert routing", async (t) => {
     assert.equal(d.enabled, false, "the whole item is off until an operator turns it on");
   });
 
-  await t.test("resolveInternalAlertEmail prefers OPS_ALERT_EMAIL, falls back to SMTP_USER, never invents", () => {
-    const saved = { OPS_ALERT_EMAIL: process.env.OPS_ALERT_EMAIL, SMTP_USER: process.env.SMTP_USER };
+  await t.test("resolveInternalAlertEmail returns the SMTP account, and never invents one", () => {
+    // We mail ourselves from the account we send from. No separate env var, so
+    // there is nothing extra to configure and nothing that can be set in one
+    // environment and forgotten in another.
+    const saved = process.env.SMTP_USER;
     try {
-      process.env.OPS_ALERT_EMAIL = "alerts@flashfirejobs.com";
       process.env.SMTP_USER = "support@flashfirejobs.com";
-      assert.equal(resolveInternalAlertEmail(), "alerts@flashfirejobs.com");
-
-      delete process.env.OPS_ALERT_EMAIL;
       assert.equal(resolveInternalAlertEmail(), "support@flashfirejobs.com");
 
-      // A malformed explicit address falls through to the SMTP account rather
-      // than being sent to verbatim.
-      process.env.OPS_ALERT_EMAIL = "not-an-address";
+      // Case is normalised, so a stray capital in .env still matches.
+      process.env.SMTP_USER = "Support@FlashFireJobs.com";
       assert.equal(resolveInternalAlertEmail(), "support@flashfirejobs.com");
 
-      delete process.env.OPS_ALERT_EMAIL;
+      // A malformed value is not an address. Better to send nothing than to
+      // send somewhere unintended.
+      process.env.SMTP_USER = "not-an-address";
+      assert.equal(resolveInternalAlertEmail(), "");
+
       delete process.env.SMTP_USER;
-      assert.equal(resolveInternalAlertEmail(), "", "no address means no send, never a guess");
+      assert.equal(resolveInternalAlertEmail(), "", "no SMTP account means no send, never a guess");
     } finally {
-      for (const [k, v] of Object.entries(saved)) {
-        if (v === undefined) delete process.env[k];
-        else process.env[k] = v;
-      }
+      if (saved === undefined) delete process.env.SMTP_USER;
+      else process.env.SMTP_USER = saved;
     }
   });
 

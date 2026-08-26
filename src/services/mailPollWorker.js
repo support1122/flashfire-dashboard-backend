@@ -54,7 +54,7 @@ import { applyLearnedExclusions, proposeAndStoreExclusion } from "./mailRegexLea
 import { notifyUsefulMailLine, notifyGmailAuthError, isGmailAuthError, errorText } from "../../Utils/discordMailNotify.js";
 import {
   deriveEligibility,
-  notifyClientForDigest,
+  notifyClientForDigestAllChannels,
   retryPendingClientNotifications
 } from "./clientMailNotifier.js";
 
@@ -604,13 +604,19 @@ async function pollMailbox(user, clientCache) {
         if (ok) posted++;
       }
 
-      // Client milestone alert (interview / assignment / offer). Independent of
-      // Discord and fail-soft — a send failure is recorded on the digest and
-      // retried on a later tick, never blocking the poll.
+      // Client milestone alert (interview / assignment / offer) over the payment
+      // email AND the client's Mattermost channel, both gated on the per-client
+      // opt-in in the Client Reminders tab. Independent of Discord and
+      // fail-soft: a send failure is recorded on the digest and retried on a
+      // later tick, never blocking the poll. Each channel is at-most-once on
+      // its own stamp, so a retry cannot double-deliver either half.
       try {
-        const outcome = await notifyClientForDigest({ digestDoc, client, mailbox });
-        if (outcome === "sent") {
-          console.log(`[client-notify] ${mailbox}: alerted client — ${digestDoc.clientNotifyCategory} (${messageId})`);
+        const outcome = await notifyClientForDigestAllChannels({ digestDoc, client, mailbox });
+        if (outcome.email === "sent" || outcome.mattermost === "sent") {
+          console.log(
+            `[client-notify] ${mailbox}: alerted client — ${digestDoc.clientNotifyCategory} (${messageId}) ` +
+              `email=${outcome.email} mattermost=${outcome.mattermost}`
+          );
         }
       } catch (e) {
         console.warn(`[client-notify] ${mailbox}: unexpected error for ${messageId}: ${e.message}`);

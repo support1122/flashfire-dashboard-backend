@@ -40,7 +40,6 @@ import cron from "node-cron";
 import {
   REMINDER_ITEMS,
   REMINDER_ITEM_KEYS,
-  MILESTONE_THRESHOLDS,
   QUIET_HOURS_IST,
   reminderItemMeta,
   parseSendAt,
@@ -61,7 +60,8 @@ import {
   endOfCalendarDayIST,
   getClientActivityStats,
   getClientLifetimeStats,
-  daysSinceLastActivity
+  daysSinceLastActivity,
+  nthRoleAddedTodayIST
 } from "../../Utils/clientActivityStats.js";
 import { renderReminderEmail, renderReminderMattermost } from "../../Utils/reminderTemplates.js";
 import { sendViaSmtp, isSmtpConfigured } from "../../Utils/smtpSender.js";
@@ -92,8 +92,6 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 export const FORCEABLE_REASONS = new Set([
   "no_activity",
   "client_is_active",
-  "no_milestone",
-  "milestone_already_sent"
 ]);
 
 // Enable only on the real Render deploy (or when forced). A developer laptop
@@ -174,10 +172,8 @@ function istDayShift(date, n) {
  * and so a stored value is self-describing when an operator reads the raw doc.
  *
  *   daily   → "daily_summary:2026-08-22"
- *   weekly  → "weekly_report:2026-W34"     (ISO week, computed in IST)
  *   monthly → "monthly_report:2026-08"
- *   event   → ""                            (milestones key off the threshold,
- *                                             see deliverReminder)
+ *   event   → ""                            (no catalogue item uses this today)
  *
  * PURE. Depends on nothing but its arguments.
  *
@@ -197,8 +193,9 @@ export function periodKeyFor(itemKey, now = new Date()) {
       return `${meta.key}:${istMonthKey(now)}`;
     case "event":
     default:
-      // Event items are not period-bounded. Their idempotency token is derived
-      // from the event itself (milestone:<threshold>), not from the calendar.
+      // Event items are not period-bounded: their idempotency token is derived
+      // from the event itself, not from the calendar. No catalogue item uses
+      // this cadence today.
       return "";
   }
 }
@@ -235,16 +232,6 @@ export function reportWindowFor(itemKey, now = new Date()) {
     return { from, to, label: fmtIstDay(from) };
   }
 
-  if (key === "weekly_report" || key === "interview_digest") {
-    // Seven whole IST days ending YESTERDAY. Never includes today: a Monday
-    // 10:00 report that counted Monday morning would double-count those cards
-    // in next week's report as well.
-    const lastDay = istDayShift(now, 1);
-    const from = startOfCalendarDayIST(istDayShift(lastDay, 6));
-    const to = endOfCalendarDayIST(lastDay);
-    return { from, to, label: fmtIstRange(from, to) };
-  }
-
   if (key === "monthly_report") {
     // The PREVIOUS IST calendar month in full. Built from the first IST day of
     // the current month minus one day, so month lengths and year rollover fall
@@ -271,11 +258,9 @@ export function reportWindowFor(itemKey, now = new Date()) {
     return { from, to, label: `Last 7 days to ${fmtIstDay(to)}` };
   }
 
-  // plan_usage, milestone and anything unrecognised: lifetime items. The
-  // templates for these read only the lifetime counters, so the window is a
-  // no-op. It is pinned to today rather than to the epoch on purpose - a
-  // literal lifetime range would make getClientActivityStats scan every card
-  // the client has ever had for numbers nobody renders.
+  // Anything unrecognised. The window is pinned to today rather than to the
+  // epoch on purpose: a literal lifetime range would make
+  // getClientActivityStats scan every card the client has ever had.
   const from = startOfCalendarDayIST(now);
   const to = endOfCalendarDayIST(now);
   return { from, to, label: "Lifetime to date" };
@@ -340,14 +325,49 @@ export function isItemDue(item, meta, now = new Date()) {
   return key !== String(item.lastPeriodKey || "");
 }
 
-/** Highest MILESTONE_THRESHOLDS entry at or below `count`, or null. */
-function crossedMilestone(count) {
-  let hit = null;
-  for (const t of MILESTONE_THRESHOLDS) {
-    if (count >= t) hit = t;
-    else break;
-  }
-  return hit;
+/**
+ * The threshold auto-send: "once N roles are added, mail an hour later".
+ *
+ * An ALTERNATIVE way for a daily item to become due, never a replacement. The
+ * period key is still the plain daily one, so whichever trigger fires first
+ * consumes the day and the other becomes a no-op. That is what stops a client
+ * getting the summary twice - once at 15:40 because five roles landed, and
+ * again at 21:30 because the clock came round.
+ *
+ * The delay is measured from the Nth add, not the newest one. Measuring from
+ * the newest would let a trickle of roles reset the timer all afternoon and the
+ * mail would never go out.
+ *
+ * PURE. Depends on nothing but its arguments.
+ *
+ * @param {object} a
+ * @param {object} a.item      merged config row
+ * @param {object} a.meta      catalogue entry
+ * @param {number} a.addedCount roles added today, removals already excluded
+ * @param {Date|null} a.nthAt  when the Nth role was added
+ * @param {Date} [a.now]
+ * @returns {boolean}
+ */
+export function isThresholdAutoDue({ item, meta, addedCount, nthAt, now = new Date() }) {
+  if (!item || !meta) return false;
+  if (meta.cadence !== "daily") return false;
+  if (item.autoOnThreshold !== true) return false;
+
+  const need = Number.isInteger(item.autoThresholdCount) && item.autoThresholdCount > 0
+    ? item.autoThresholdCount
+    : 5;
+  if (!Number.isFinite(addedCount) || addedCount < need) return false;
+  if (!(nthAt instanceof Date) || Number.isNaN(nthAt.getTime())) return false;
+
+  const delayMin = Number.isInteger(item.autoDelayMinutes) && item.autoDelayMinutes >= 0
+    ? item.autoDelayMinutes
+    : 60;
+  if (now.getTime() < nthAt.getTime() + delayMin * 60 * 1000) return false;
+
+  // Same once-per-period guard the scheduled path uses.
+  const key = periodKeyFor(meta.key, now);
+  if (!key) return false;
+  return key !== String(item.lastPeriodKey || "");
 }
 
 function hasEnabledChannel(channels) {
@@ -362,8 +382,8 @@ function hasEnabledChannel(channels) {
  * exactly one definition of "there was nothing to report".
  *
  * `extra` is returned even when shouldSend is false wherever it is computable,
- * so a forced send-now can still render a coherent milestone or inactivity
- * message instead of falling back to placeholder numbers.
+ * so a forced send-now can still render a coherent message instead of falling
+ * back to placeholder numbers.
  *
  * PURE. Depends on nothing but its arguments.
  *
@@ -385,19 +405,6 @@ export function decideDelivery({ meta, item, stats, lifetime, inactivityDays, da
 
   const lt = lifetime || {};
   const st = stats || {};
-
-  if (meta.key === "milestone") {
-    const totalApplied = Number(lt.totalApplied) || 0;
-    const crossed = crossedMilestone(totalApplied);
-    // Under force we still need a number to render; the lowest threshold is
-    // the honest choice for a client who has not crossed anything yet.
-    const extra = { threshold: crossed ?? MILESTONE_THRESHOLDS[0] };
-    if (crossed === null) return { shouldSend: false, reason: "no_milestone", extra };
-    if (String(item.lastPeriodKey || "") === `milestone:${crossed}`) {
-      return { shouldSend: false, reason: "milestone_already_sent", extra };
-    }
-    return { shouldSend: true, reason: "ok", extra };
-  }
 
   if (meta.key === "inactivity_alert") {
     // INVERTED against every other item: this one fires precisely BECAUSE
@@ -457,21 +464,19 @@ function trim300(value) {
  * of their way to type an address into the tab, that address wins.
  */
 /**
- * Where an INTERNAL item's email goes: our own inbox, never the client's.
+ * Where an INTERNAL item's email goes: the SMTP account itself, so we mail
+ * ourselves. No dedicated env var - the account we send FROM is the account we
+ * send TO, which means there is nothing extra to configure and nothing that can
+ * be left unset in one environment and not another.
  *
- * OPS_ALERT_EMAIL when set, else the SMTP account itself (support@...), else
- * nothing - in which case the email channel reports no_internal_email rather
- * than quietly falling back to the client's payment address. The fallback
- * direction matters: an inactivity alert landing in a paying client's inbox
- * says "we went quiet on your account", which is the one message this feature
- * must never deliver.
+ * Returns "" when SMTP is not configured, and the caller then reports
+ * no_internal_email rather than falling back to anything else. That direction
+ * matters: an inactivity alert landing in a paying client's inbox reads as "we
+ * went quiet on your account", which is the one message this must never send.
  */
 export function resolveInternalAlertEmail() {
-  const explicit = String(process.env.OPS_ALERT_EMAIL || "").toLowerCase().trim();
-  if (EMAIL_RE.test(explicit)) return explicit;
   const smtpUser = String(process.env.SMTP_USER || "").toLowerCase().trim();
-  if (EMAIL_RE.test(smtpUser)) return smtpUser;
-  return "";
+  return EMAIL_RE.test(smtpUser) ? smtpUser : "";
 }
 
 async function resolveDestinationEmail(config) {
@@ -511,8 +516,7 @@ async function resolveDestinationEmail(config) {
  * A manual skip does NOT burn the key, because an operator poking the button
  * at 10:00 must not cancel the real 21:30 send. A FORCED send does not burn it
  * either: force is the "prove the template works" button, and consuming the
- * period (or a milestone threshold, which never comes back) to prove it would
- * cost the client the real message.
+ * period to prove it would cost the client the real message.
  */
 async function persistOutcome({ clientEmail, itemKey, periodKey, writePeriodKey, result, sentAt }) {
   const historyRow = {
@@ -666,12 +670,15 @@ export async function deliverReminder({
   });
   const extra = decision.extra || {};
 
-  // Milestones are keyed by the threshold, not by the calendar: each threshold
-  // fires exactly once for a client, forever, however many years the account
-  // stays open.
-  const periodKey =
-    key === "milestone" && extra.threshold ? `milestone:${extra.threshold}` : periodKeyFor(key, now);
+  const periodKey = periodKeyFor(key, now);
   out.periodKey = periodKey;
+
+  // Which triggers consume the day. The scheduled tick does, and so does the
+  // threshold auto-send - if the auto-send did NOT burn the key, the client
+  // would get the summary at 15:40 because five roles landed AND again at
+  // 21:30 when the clock came round. A manual send-now never consumes it, so
+  // an operator testing the template cannot cancel the real send.
+  const consumesPeriod = trigger === "cron" || trigger === "auto-threshold";
 
   const forcedThrough = force && !decision.shouldSend && FORCEABLE_REASONS.has(decision.reason);
   if (!decision.shouldSend && !forcedThrough) {
@@ -682,7 +689,7 @@ export async function deliverReminder({
       clientEmail,
       itemKey: key,
       periodKey,
-      writePeriodKey: trigger === "cron",
+      writePeriodKey: consumesPeriod,
       result: out,
       sentAt: now
     });
@@ -721,13 +728,12 @@ export async function deliverReminder({
         out.email = { attempted: false, ok: false, to: dest.to, error: "template_unavailable" };
       } else {
         out.subject = rendered.subject;
-        // NO category on purpose. Utils/smtpSender.js keeps CLIENT_MILESTONE in
-        // PAUSED_CATEGORIES, and an unlabelled send is explicitly allowed
-        // through by sendViaSmtp. Tagging reminders with any paused category
-        // would have this whole feature silently deliver nothing while the
-        // history rows cheerfully logged "emails_paused". Reminders are an
-        // independent, operator-controlled stream; they are paused by turning
-        // the item off in the tab, not by the classifier's pause list.
+        // NO category on purpose. Reminders are an independent,
+        // operator-controlled stream: they are stopped by switching the item
+        // off in the tab, never by the transport-level pause list in
+        // Utils/smtpSender.js. Tagging them with a category that later gets
+        // paused would have this whole feature silently deliver nothing while
+        // the history rows cheerfully logged "emails_paused".
         const res = await sendViaSmtp({
           to: dest.to,
           subject: rendered.subject,
@@ -802,7 +808,7 @@ export async function deliverReminder({
     itemKey: key,
     periodKey,
     // A forced send is a test. It records history but never consumes the real
-    // period or a one-shot milestone threshold.
+    // period.
     writePeriodKey: !force,
     result: out,
     sentAt: now
@@ -875,10 +881,29 @@ export async function runReminderTick({ now = new Date() } = {}) {
         if (!hasEnabledChannel(item.channels)) continue;
 
         summary.evaluated += 1;
-        if (!isItemDue(item, meta, now)) continue;
+
+        // Two ways a daily item becomes due: the clock, or the threshold
+        // auto-send. Both consume the SAME period key, so whichever fires first
+        // wins the day and the other is a no-op - the client never gets the
+        // summary twice.
+        //
+        // The threshold path costs an extra query, so it is only reached when
+        // the scheduled time has not arrived and the operator actually switched
+        // the automation on.
+        let due = isItemDue(item, meta, now);
+        let trigger = "cron";
+        if (!due && item.autoOnThreshold === true && meta.cadence === "daily") {
+          const need = Number.isInteger(item.autoThresholdCount) ? item.autoThresholdCount : 5;
+          const { count, nthAt } = await nthRoleAddedTodayIST(merged.clientEmail, need, now);
+          if (isThresholdAutoDue({ item, meta, addedCount: count, nthAt, now })) {
+            due = true;
+            trigger = "auto-threshold";
+          }
+        }
+        if (!due) continue;
 
         deliveries += 1;
-        const res = await deliverReminder({ config: raw, itemKey: meta.key, trigger: "cron", now });
+        const res = await deliverReminder({ config: raw, itemKey: meta.key, trigger, now });
         if (res.status === "sent" || res.status === "partial") summary.sent += 1;
         else if (res.status === "failed") summary.failed += 1;
         else summary.skipped += 1;

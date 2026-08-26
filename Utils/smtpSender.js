@@ -47,6 +47,19 @@ export const MAIL_CATEGORY = {
   ONBOARDING: "onboarding"
 };
 
+// EMPTY = nothing is hard-stopped at the transport. client-milestone was
+// unpaused after the AI verifier shipped; four gates now stand between a
+// classified mail and a client, and all four must pass:
+//
+//   1. mailMilestoneVerifier - second-stage AI check. verifyGenuine must be
+//      true, and pre-verifier digests are permanently parked.
+//   2. ROLLOUT_ALLOWLIST in src/services/clientMailNotifier.js.
+//   3. inboxAlertsEnabled on the client's ClientReminderConfig - opt-in, OFF by
+//      default, flipped per client from the Client Reminders tab.
+//   4. MAX_ALERT_AGE_HOURS - a milestone older than 48h is never flushed.
+//
+// To stop the stream without a deploy, switch the clients off in the tab.
+// Re-add a category here only as a true emergency stop.
 const PAUSED_CATEGORIES = new Set([]);
 
 export function isSmtpConfigured() {
