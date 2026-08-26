@@ -16,7 +16,6 @@ import {
 } from "../../Schema_Models/ClientReminderConfig.js";
 import {
   REMINDER_ITEMS,
-  MILESTONE_THRESHOLDS,
   isReminderItemKey,
   reminderItemMeta
 } from "../../Utils/reminderItems.js";
@@ -161,6 +160,9 @@ async function readOrCreateConfig(clientEmail, updatedBy = "") {
       $setOnInsert: {
         clientEmail,
         clientName: "",
+        // Off until an operator opts this client in. See the field comment in
+        // the schema for why this one in particular must never default on.
+        inboxAlertsEnabled: false,
         paymentEmailOverride: "",
         mattermostWebhookUrl: "",
         items: mergeWithDefaults(null).items,
@@ -241,9 +243,14 @@ export const updateClientReminderConfig = async (req, res) => {
   if (!clientEmail) return undefined;
 
   try {
-    const { mattermostWebhookUrl, items, updatedBy, clientName } = req.body || {};
+    const { mattermostWebhookUrl, items, updatedBy, clientName, inboxAlertsEnabled } = req.body || {};
 
-    const webhook = normalizeWebhookUrl(mattermostWebhookUrl);
+    // ABSENT MEANS "LEAVE IT ALONE", and that distinction matters: a caller
+    // that saves only one field (the inbox-alerts switch) must not blank the
+    // webhook simply by not mentioning it. Storing normalizeWebhookUrl(undefined)
+    // unconditionally erased a working credential on every partial save.
+    const webhookProvided = mattermostWebhookUrl !== undefined;
+    const webhook = webhookProvided ? normalizeWebhookUrl(mattermostWebhookUrl) : "";
     // An empty webhook is a legitimate state (email-only client). A non-empty
     // one that is not https is rejected loudly rather than silently stored and
     // then failing on every tick for weeks.
@@ -259,12 +266,15 @@ export const updateClientReminderConfig = async (req, res) => {
 
     const now = getCurrentISTTime();
     const set = {
-      mattermostWebhookUrl: webhook,
       items: sanitized,
       updatedBy: String(updatedBy || "").slice(0, 120),
       updatedAt: now
     };
+    if (webhookProvided) set.mattermostWebhookUrl = webhook;
     if (clientName !== undefined) set.clientName = String(clientName || "").slice(0, 200);
+    // Strict === true. A stray string must never read as "start forwarding this
+    // client's inbox milestones to them".
+    if (inboxAlertsEnabled !== undefined) set.inboxAlertsEnabled = inboxAlertsEnabled === true;
 
     const saved = await ClientReminderConfig.findOneAndUpdate(
       { clientEmail },
@@ -440,19 +450,6 @@ export const testClientReminderMattermost = async (req, res) => {
 /* POST /operations/reminders/preview                                  */
 /* ------------------------------------------------------------------ */
 
-/**
- * Pick the milestone the preview should illustrate: the highest threshold the
- * client has already passed, or the first one when they have not passed any.
- * A preview with no threshold at all would render an empty milestone card.
- */
-function previewMilestoneThreshold(totalApplied) {
-  let picked = MILESTONE_THRESHOLDS[0];
-  for (const t of MILESTONE_THRESHOLDS) {
-    if (totalApplied >= t) picked = t;
-  }
-  return picked;
-}
-
 export const previewClientReminder = async (req, res) => {
   const clientEmail = readClientEmail(req, res);
   if (!clientEmail) return undefined;
@@ -489,9 +486,7 @@ export const previewClientReminder = async (req, res) => {
     ]);
 
     const extra = {};
-    if (itemKey === "milestone") {
-      extra.threshold = previewMilestoneThreshold(lifetime.totalApplied);
-    } else if (itemKey === "inactivity_alert") {
+    if (itemKey === "inactivity_alert") {
       const item = merged.items.find((i) => i.key === "inactivity_alert");
       const days = await daysSinceLastActivity(clientEmail, Math.max(item?.inactivityDays || 3, 30));
       extra.days = days;

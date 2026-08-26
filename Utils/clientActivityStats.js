@@ -32,7 +32,7 @@
 import mongoose from "mongoose";
 import { JobModel } from "../Schema_Models/JobModel.js";
 import { readPlanCap } from "./dailyCapGuard.js";
-import { parseLocaleDateMs } from "./jobActivityTime.js";
+import { parseLocaleDateMs, objectIdTimeMs } from "./jobActivityTime.js";
 
 /** IST is a fixed UTC+05:30. India has never observed DST, so plain arithmetic
  *  is exact here and we never have to round-trip through toLocaleString for a
@@ -482,7 +482,7 @@ function emptyLifetime() {
 }
 
 /**
- * All-time counters plus the plan picture, for the plan_usage and milestone
+ * All-time counters plus the plan picture, for the milestone
  * items.
  *
  * One projected read of currentStatus for the whole client (a single small
@@ -594,5 +594,54 @@ export async function daysSinceLastActivity(clientEmail, maxLookbackDays = 30) {
     // means it will fire. That is the internal-only Mattermost warning, and a
     // spurious warning is cheaper than missing a genuinely stalled client.
     return lookback;
+  }
+}
+
+/**
+ * When did the Nth role get added to this client's tracker today?
+ *
+ * Backs the daily summary's threshold auto-send: "once 5 roles are added, mail
+ * an hour later". The clock has to start at the Nth add, not at the newest one,
+ * or a client whose roles trickle in all day would have the timer reset by
+ * every new card and the mail would never go out.
+ *
+ * Creation time comes from the ObjectId, never from the stored locale strings -
+ * see Utils/jobActivityTime.js for why those cannot be trusted for ordering.
+ * Removed cards do not count toward the threshold, matching getClientActivityStats.
+ *
+ * @param {string} clientEmail
+ * @param {number} n            the threshold, 1-based
+ * @param {Date}   [now]
+ * @returns {Promise<{count: number, nthAt: Date|null}>} nthAt is null until the
+ *          client has at least n added roles today.
+ */
+export async function nthRoleAddedTodayIST(clientEmail, n, now = new Date()) {
+  const email = String(clientEmail || "").trim().toLowerCase();
+  const threshold = Number.isInteger(n) && n > 0 ? n : 5;
+  if (!email) return { count: 0, nthAt: null };
+
+  try {
+    const from = startOfCalendarDayIST(now);
+    const to = endOfCalendarDayIST(now);
+
+    const rows = await JobModel.find({
+      userID: email,
+      _id: { $gte: objectIdAtOrAfter(from), $lte: objectIdAtOrAfter(to) }
+    })
+      .select("_id currentStatus")
+      .sort({ _id: 1 })
+      .lean();
+
+    const live = rows.filter((r) => classifyStatus(r.currentStatus) !== "removed");
+    const nth = live[threshold - 1];
+    return {
+      count: live.length,
+      nthAt: nth ? new Date(objectIdTimeMs(nth._id)) : null
+    };
+  } catch (err) {
+    // Never throw into the tick. No answer means "not due", which is the safe
+    // direction for a trigger that sends client-facing mail.
+    console.error(`${LOG_PREFIX} nthRoleAddedTodayIST failed for ${email}:`, err?.message || err);
+    return { count: 0, nthAt: null };
   }
 }

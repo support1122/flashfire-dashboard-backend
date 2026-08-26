@@ -56,15 +56,7 @@ const LIFETIME = {
   percentUsed: 34
 };
 
-const KINDS = [
-  "daily_summary",
-  "weekly_report",
-  "monthly_report",
-  "interview_digest",
-  "plan_usage",
-  "milestone",
-  "inactivity_alert"
-];
+const KINDS = ["daily_summary", "inactivity_alert"];
 
 const render = (kind, over = {}) =>
   renderReminderEmail({
@@ -127,44 +119,12 @@ test("reminderTemplates", async (t) => {
       assert.ok(!out.html.includes(needle), `daily html must not name ${needle}`);
       assert.ok(!out.text.includes(needle), `daily text must not name ${needle}`);
     }
-    // The numbers themselves must be there.
-    assert.ok(out.html.includes("12"), "applied count present");
-    assert.ok(out.html.includes("Applications submitted"), "labelled");
+    // The number itself must be there. Roles added, not applications - see the
+    // dedicated case below for why the applications row was removed.
+    assert.ok(out.html.includes("New roles added"), "labelled");
+    assert.ok(out.html.includes(">5<") || out.html.includes("5"), "added count present");
     const mm = renderMm("daily_summary");
     assert.ok(!mm.text.includes("Stripe"), "Mattermost daily is numbers only too");
-  });
-
-  await t.test("POLICY: weekly and monthly aggregate companies but never list individual roles", () => {
-    for (const kind of ["weekly_report", "monthly_report"]) {
-      const out = render(kind);
-      assert.ok(out.html.includes("Stripe"), `${kind}: top companies named (aggregate is fine)`);
-      assert.ok(!out.html.includes("Senior Backend Engineer"), `${kind}: no per-role rows`);
-    }
-  });
-
-  await t.test("interview digest names role and company, capped, still linkless", () => {
-    const many = {
-      ...STATS,
-      interviewJobs: Array.from({ length: 30 }, (_, i) => job(`Role ${i}`, `Company ${i}`)),
-      offerJobs: []
-    };
-    const out = render("interview_digest", { stats: many });
-    assert.ok(out.html.includes("Role 0"), "cards are named");
-    assert.ok(!out.html.includes("Role 29"), "list is capped");
-    assert.ok(out.html.includes("more on your dashboard"), "overflow is stated");
-    assert.ok(!out.html.includes("greenhouse.io"), "still no job links");
-  });
-
-  await t.test("a hostile company or role name is escaped in html and mattermost", () => {
-    const hostileTitle = 'Senior Engineer](https://phish.example/login';
-    const hostileCompany = '<script>alert(1)</script>"Co';
-    const s = { ...STATS, interviewJobs: [job(hostileTitle, hostileCompany)], offerJobs: [] };
-    const out = render("interview_digest", { stats: s });
-    assert.ok(!out.html.includes("<script>"), "script tag escaped in html");
-    assert.ok(out.html.includes("&lt;script&gt;"), "escaped form present");
-    const mm = renderMm("interview_digest", { stats: s });
-    assert.ok(!mm.text.includes(hostileTitle), "raw payload does not survive markdown");
-    assert.ok(mm.text.includes("\\]\\("), "brackets escaped so no link can be forged");
   });
 
   await t.test("no hype: no emoji, no exclamation marks, no em dashes in client output", () => {
@@ -184,7 +144,7 @@ test("reminderTemplates", async (t) => {
   });
 
   await t.test("every client mail states its reporting window", () => {
-    for (const kind of KINDS.filter((k) => k !== "plan_usage" && k !== "milestone")) {
+    for (const kind of KINDS) {
       const out = render(kind);
       assert.ok(
         out.html.includes("18 Aug - 24 Aug 2026") || out.subject.includes("18 Aug - 24 Aug 2026"),
@@ -214,15 +174,32 @@ test("reminderTemplates", async (t) => {
     }
   });
 
-  await t.test("plan usage handles an uncapped client without inventing a cap", () => {
-    const out = render("plan_usage", { lifetime: { ...LIFETIME, effectiveCap: null, remaining: null, percentUsed: null } });
-    assert.ok(!out.html.includes("Remaining"), "no remaining row without a cap");
-    assert.ok(!out.subject.includes("of"), `subject has no denominator: ${out.subject}`);
-    assert.ok(out.html.includes("412"), "the count is still there");
+  await t.test("removed report types render nothing at all", () => {
+    // Retired from the catalogue over several rounds. An unknown kind must
+    // return null rather than a half-built mail, so a stale config row
+    // referencing one cannot resurrect it.
+    for (const gone of ["monthly_report", "plan_usage", "weekly_report", "interview_digest", "milestone"]) {
+      assert.equal(renderReminderEmail({ kind: gone }), null, `${gone} email`);
+      assert.equal(renderReminderMattermost({ kind: gone }), null, `${gone} mattermost`);
+    }
   });
 
-  await t.test("thousands are formatted for readability", () => {
-    const out = render("plan_usage");
-    assert.ok(out.html.includes("1,200"), "cap rendered with separator");
+  await t.test("the daily summary counts roles added and never applications", () => {
+    // "Applications submitted" was removed on purpose: on a normal day it reads
+    // 0, because applying happens after roles are queued, and a daily mail
+    // whose headline number is zero reads as "nothing happened". Submissions
+    // are counted in the weekly report, over a window long enough to be real.
+    const out = render("daily_summary", { stats: { ...STATS, addedCount: 11, appliedCount: 0 } });
+    assert.ok(!out.html.includes("Applications submitted"), "no applications row");
+    assert.ok(!out.text.includes("Applications submitted"), "no applications row in text");
+    assert.ok(out.html.includes("New roles added"), "roles row present");
+    // Interview and offer counts were removed too: those reach the client the
+    // moment they land, via the inbox milestone alert, which names the company
+    // and carries the real mail. A bare count a day later invites "which one?".
+    assert.ok(!out.html.includes("Moved to interview"), "no interview row");
+    assert.ok(!out.html.includes("Offers"), "no offers row");
+    assert.match(out.subject, /11 new roles added/, out.subject);
+    const mm = renderMm("daily_summary", { stats: { ...STATS, addedCount: 11, appliedCount: 0 } });
+    assert.ok(!mm.text.includes("Applications submitted"), "mattermost too");
   });
 });

@@ -345,32 +345,30 @@ function buildText({ headline, windowText, rows, extraLines, footerNote }) {
  * ------------------------------------------------------------------ */
 
 function buildDailySummary({ client, stats, windowText }) {
-  const applied = stats.appliedCount;
   const added = stats.addedCount;
 
-  // Numbers only, by design. The roles themselves live on the dashboard; a
+  // ROLES ADDED ONLY. "Applications submitted" was removed deliberately: on a
+  // normal day it reads 0 because the applying happens after the roles are
+  // queued, and a daily mail whose headline number is zero reads as "nothing
+  // happened" no matter what sits underneath it. The weekly report is where
+  // submissions get counted, over a window long enough to be non-zero.
+  //
+  // Numbers only, no role list. The roles themselves live on the dashboard; a
   // daily list in the inbox is the fastest way to turn a status mail into a
   // line-item audit. See the policy block at the top of this file.
-  const rows = [
-    { label: "Applications submitted", value: fmtNum(applied), strong: true },
-    { label: "New roles added", value: fmtNum(added) },
-    stats.interviewCount > 0 && { label: "Moved to interview", value: fmtNum(stats.interviewCount) },
-    stats.offerCount > 0 && { label: "Offers", value: fmtNum(stats.offerCount) }
-  ];
+  // ONE NUMBER. Interview and offer rows were removed too: those events reach
+  // the client the moment they land, through the inbox milestone alert, which
+  // carries the company and the actual mail. Repeating them here as a bare
+  // count adds nothing and invites "which offer?" a day after the fact.
+  const rows = [{ label: "New roles added", value: fmtNum(added), strong: true }];
 
-  const subject =
-    applied > 0
-      ? `Daily update: ${applied} ${plural(applied, "application", "applications")} submitted (${windowText})`
-      : `Daily update: ${added} new ${plural(added, "role", "roles")} added (${windowText})`;
+  const subject = `Daily update: ${added} new ${plural(added, "role", "roles")} added (${windowText})`;
 
-  const ledeBlock =
-    applied > 0
-      ? lede(fmtNum(applied), `${plural(applied, "application", "applications")} submitted today`)
-      : lede(fmtNum(added), `new ${plural(added, "role", "roles")} added to your tracker today`);
+  const ledeBlock = lede(fmtNum(added), `new ${plural(added, "role", "roles")} added to your tracker today`);
 
   return {
     subject,
-    preheader: `${applied} applied, ${added} added.`,
+    preheader: `${added} new ${plural(added, "role", "roles")} added.`,
     dateText: windowText,
     headline: "Today on your account",
     subline: "",
@@ -385,64 +383,6 @@ function buildDailySummary({ client, stats, windowText }) {
   };
 }
 
-function buildWeeklyReport({ client, stats, windowText }) {
-  const applied = stats.appliedCount;
-
-  const rows = [
-    { label: "Applications submitted", value: fmtNum(applied), strong: true },
-    { label: "New roles added", value: fmtNum(stats.addedCount) },
-    stats.interviewCount > 0 && { label: "Moved to interview", value: fmtNum(stats.interviewCount) },
-    stats.offerCount > 0 && { label: "Offers", value: fmtNum(stats.offerCount) }
-  ];
-
-  const blocks = [
-    lede(fmtNum(applied), `${plural(applied, "application", "applications")} submitted this week`),
-    ruledRows(rows)
-  ];
-
-  if (stats.byDay.length > 1) {
-    blocks.push(
-      tableLabel("Day by day"),
-      activityTable(stats.byDay.map((d) => ({ label: fmtByDayLabel(d.date), applied: num(d.applied) })))
-    );
-  }
-
-  // Companies are an aggregate, not a per-application list - a different and
-  // much safer level of detail. Names only, no links.
-  const companies = stats.topCompanies.slice(0, 5).filter((c) => c && c.name);
-  if (companies.length) {
-    blocks.push(
-      tableLabel("Most applied"),
-      ruledRows(companies.map((c) => ({ label: String(c.name), value: `${fmtNum(c.count)} ${plural(num(c.count), "application", "applications")}` })))
-    );
-  }
-
-  blocks.push(dashboardLine("The full list for the week is on"));
-
-  const interviewClause = stats.interviewCount > 0 ? `, ${stats.interviewCount} ${plural(stats.interviewCount, "interview", "interviews")}` : "";
-
-  return {
-    subject: `Weekly report: ${applied} ${plural(applied, "application", "applications")}${interviewClause} (${windowText})`,
-    preheader: `${applied} applications across the week.`,
-    dateText: windowText,
-    headline: "Your week in review",
-    subline: "",
-    blocks,
-    text: buildText({
-      headline: "Your week in review",
-      windowText,
-      rows,
-      extraLines: [
-        ...(stats.byDay.length > 1
-          ? ["Day by day:", ...stats.byDay.map((d) => `  ${fmtByDayLabel(d.date)}: ${num(d.applied)} applied, ${num(d.added)} added`)]
-          : []),
-        ...(companies.length ? ["", "Most applied:", ...companies.map((c) => `  ${c.name}: ${num(c.count)}`)] : [])
-      ],
-      footerNote: `Weekly report for ${client.email}. Reply to this email to change what we send.`
-    }),
-    footerNote: `Weekly report for ${client.email}. Reply to this email to change what we send.`
-  };
-}
 
 /** Bucket a month's byDay rows into calendar weeks for the monthly table. */
 function weekBuckets(byDay) {
@@ -459,171 +399,9 @@ function weekBuckets(byDay) {
   return weeks;
 }
 
-function buildMonthlyReport({ client, stats, windowText }) {
-  const applied = stats.appliedCount;
 
-  const rows = [
-    { label: "Applications submitted", value: fmtNum(applied), strong: true },
-    { label: "New roles added", value: fmtNum(stats.addedCount) },
-    stats.interviewCount > 0 && { label: "Moved to interview", value: fmtNum(stats.interviewCount) },
-    stats.offerCount > 0 && { label: "Offers", value: fmtNum(stats.offerCount) }
-  ];
 
-  const blocks = [
-    lede(fmtNum(applied), `${plural(applied, "application", "applications")} submitted in ${windowText}`),
-    ruledRows(rows)
-  ];
 
-  const weeks = weekBuckets(stats.byDay);
-  if (weeks.length > 1) {
-    blocks.push(tableLabel("Week by week"), activityTable(weeks));
-  }
-
-  const companies = stats.topCompanies.slice(0, 5).filter((c) => c && c.name);
-  if (companies.length) {
-    blocks.push(
-      tableLabel("Most applied"),
-      ruledRows(companies.map((c) => ({ label: String(c.name), value: `${fmtNum(c.count)} ${plural(num(c.count), "application", "applications")}` })))
-    );
-  }
-
-  blocks.push(dashboardLine("The month's full history is on"));
-
-  const interviewClause = stats.interviewCount > 0 ? `, ${stats.interviewCount} ${plural(stats.interviewCount, "interview", "interviews")}` : "";
-
-  return {
-    subject: `${windowText} report: ${applied} ${plural(applied, "application", "applications")}${interviewClause}`,
-    preheader: `${applied} applications in ${windowText}.`,
-    dateText: windowText,
-    headline: `${windowText} in review`,
-    subline: "",
-    blocks,
-    text: buildText({
-      headline: `${windowText} in review`,
-      windowText: "",
-      rows,
-      extraLines: [
-        ...(weeks.length > 1 ? ["Week by week:", ...weeks.map((w) => `  ${w.label}: ${w.applied} applied, ${w.added} added`)] : []),
-        ...(companies.length ? ["", "Most applied:", ...companies.map((c) => `  ${c.name}: ${num(c.count)}`)] : [])
-      ],
-      footerNote: `Monthly report for ${client.email}. Reply to this email to change what we send.`
-    }),
-    footerNote: `Monthly report for ${client.email}. Reply to this email to change what we send.`
-  };
-}
-
-function buildInterviewDigest({ client, stats, windowText }) {
-  // The one report that names cards, because it is the good news. Role and
-  // company only - still no links (the posting may already be down; the
-  // conversation is what matters now, not the ad).
-  const cards = [
-    ...stats.offerJobs.map((j) => ({ ...j, stage: "Offer", color: BRAND.green })),
-    ...stats.interviewJobs.map((j) => ({ ...j, stage: "Interview", color: BRAND.violet }))
-  ];
-  const total = cards.length;
-  const shown = cards.slice(0, MAX_DIGEST_ROWS);
-
-  const listRows = shown
-    .map(
-      (j) => `<tr>
-        <td style="padding:12px 0;border-top:1px solid ${BRAND.line};">
-          <div style="color:${BRAND.ink};font-size:14px;font-weight:600;line-height:1.4;">${escapeHtml(j.jobTitle || "Role")}</div>
-          <div style="color:${BRAND.muted};font-size:13px;line-height:1.4;padding-top:1px;">${escapeHtml(j.companyName || "")}</div>
-        </td>
-        <td align="right" style="padding:12px 0;border-top:1px solid ${BRAND.line};vertical-align:middle;">
-          <span style="color:${j.color};font-size:12px;font-weight:700;">${escapeHtml(j.stage)}</span>
-        </td>
-      </tr>`
-    )
-    .join("");
-
-  const listTable = `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:14px 0 0;border-collapse:collapse;border-bottom:1px solid ${BRAND.line};">${listRows}</table>
-  ${total > shown.length ? `<p style="margin:8px 0 0;color:${BRAND.muted};font-size:13px;">And ${total - shown.length} more on your dashboard.</p>` : ""}`;
-
-  return {
-    subject: `Interview pipeline: ${total} active ${plural(total, "conversation", "conversations")}`,
-    preheader: `${total} ${plural(total, "card", "cards")} at interview or offer stage.`,
-    dateText: windowText,
-    headline: "Where things stand",
-    subline: `${plural(total, "This conversation", "These conversations")} reached interview or offer stage in the last week.`,
-    blocks: [listTable, dashboardLine("Notes and next steps for each are on")],
-    text: buildText({
-      headline: "Where things stand",
-      windowText,
-      rows: [],
-      extraLines: shown.map((j) => `  ${j.stage}: ${j.jobTitle || "Role"} - ${j.companyName || ""}`),
-      footerNote: `Interview digest for ${client.email}. Reply to this email to change what we send.`
-    }),
-    footerNote: `Interview digest for ${client.email}. Reply to this email to change what we send.`
-  };
-}
-
-function buildPlanUsage({ client, lifetime, windowText }) {
-  const used = lifetime.totalJobs;
-  const cap = lifetime.effectiveCap;
-  const capped = cap != null && cap > 0;
-  const pct = capped ? Math.min(100, Math.round((used / cap) * 100)) : null;
-
-  const rows = [
-    lifetime.planType && { label: "Plan", value: lifetime.planType },
-    { label: "Applications used", value: fmtNum(used), strong: true },
-    capped && { label: "Included in plan", value: fmtNum(cap) },
-    capped && { label: "Remaining", value: fmtNum(Math.max(0, cap - used)) }
-  ];
-
-  const blocks = [
-    capped
-      ? lede(`${fmtNum(used)}`, `of ${fmtNum(cap)} applications used`, `${pct}% of your plan`)
-      : lede(fmtNum(used), "applications submitted so far"),
-    capped ? `<div style="margin:14px 0 2px;">${bar(pct)}</div>` : "",
-    ruledRows(rows),
-    dashboardLine("Add-ons and referral credit are visible on")
-  ];
-
-  return {
-    subject: capped
-      ? `Plan usage: ${fmtNum(used)} of ${fmtNum(cap)} applications`
-      : `Plan usage: ${fmtNum(used)} applications submitted`,
-    preheader: capped ? `${pct}% of your plan used.` : `${fmtNum(used)} applications so far.`,
-    dateText: windowText,
-    headline: "Your plan usage",
-    subline: "",
-    blocks,
-    text: buildText({
-      headline: "Your plan usage",
-      windowText,
-      rows,
-      footerNote: `Plan usage summary for ${client.email}. Reply to this email to change what we send.`
-    }),
-    footerNote: `Plan usage summary for ${client.email}. Reply to this email to change what we send.`
-  };
-}
-
-function buildMilestone({ client, lifetime, windowText, extra }) {
-  const threshold = num(extra?.threshold) || lifetime.totalJobs;
-
-  const rows = [
-    { label: "Applications submitted", value: fmtNum(lifetime.totalJobs), strong: true },
-    lifetime.totalInterviews > 0 && { label: "Interviews so far", value: fmtNum(lifetime.totalInterviews) },
-    lifetime.totalOffers > 0 && { label: "Offers so far", value: fmtNum(lifetime.totalOffers) }
-  ];
-
-  return {
-    subject: `Milestone: ${fmtNum(threshold)} applications submitted`,
-    preheader: `Your search just passed ${fmtNum(threshold)} applications.`,
-    dateText: windowText,
-    headline: `${fmtNum(threshold)} applications`,
-    subline: "Your search just passed this mark. Each one was tailored and submitted on your behalf.",
-    blocks: [ruledRows(rows), dashboardLine("The full history is on")],
-    text: buildText({
-      headline: `Milestone: ${fmtNum(threshold)} applications`,
-      windowText,
-      rows,
-      footerNote: `Milestone note for ${client.email}. Reply to this email to change what we send.`
-    }),
-    footerNote: `Milestone note for ${client.email}. Reply to this email to change what we send.`
-  };
-}
 
 function buildInactivityAlert({ client, stats, windowText, extra }) {
   // Internal only - the catalogue defaults this item to Mattermost, and the
@@ -656,11 +434,6 @@ function buildInactivityAlert({ client, stats, windowText, extra }) {
 
 const EMAIL_BUILDERS = {
   daily_summary: buildDailySummary,
-  weekly_report: buildWeeklyReport,
-  monthly_report: buildMonthlyReport,
-  interview_digest: buildInterviewDigest,
-  plan_usage: buildPlanUsage,
-  milestone: buildMilestone,
   inactivity_alert: buildInactivityAlert
 };
 
@@ -719,100 +492,14 @@ const MM_BUILDERS = {
     return [
       `#### Daily update - ${windowText}`,
       "",
-      mmTable([
-        { label: "Applications submitted", value: stats.appliedCount },
-        { label: "New roles added", value: stats.addedCount },
-        stats.interviewCount > 0 && { label: "Moved to interview", value: stats.interviewCount },
-        stats.offerCount > 0 && { label: "Offers", value: stats.offerCount }
-      ])
+      mmTable([{ label: "New roles added", value: stats.addedCount }])
     ].join("\n");
   },
 
-  weekly_report({ stats, windowText }) {
-    const days = stats.byDay
-      .map((d) => `- ${mmEscape(fmtByDayLabel(d.date))}: **${num(d.applied)}** applied, ${num(d.added)} added`)
-      .join("\n");
-    const companies = stats.topCompanies
-      .slice(0, 5)
-      .filter((c) => c && c.name)
-      .map((c) => `- ${mmEscape(c.name)}: ${num(c.count)}`)
-      .join("\n");
-    return [
-      `#### Weekly report - ${windowText}`,
-      "",
-      mmTable([
-        { label: "Applications submitted", value: stats.appliedCount },
-        { label: "New roles added", value: stats.addedCount },
-        stats.interviewCount > 0 && { label: "Moved to interview", value: stats.interviewCount },
-        stats.offerCount > 0 && { label: "Offers", value: stats.offerCount }
-      ]),
-      ...(days ? ["", "**Day by day**", days] : []),
-      ...(companies ? ["", "**Most applied**", companies] : [])
-    ].join("\n");
-  },
 
-  monthly_report({ stats, windowText }) {
-    const weeks = weekBuckets(stats.byDay)
-      .map((w) => `- ${mmEscape(w.label)}: **${w.applied}** applied, ${w.added} added`)
-      .join("\n");
-    return [
-      `#### ${windowText} report`,
-      "",
-      mmTable([
-        { label: "Applications submitted", value: stats.appliedCount },
-        { label: "New roles added", value: stats.addedCount },
-        stats.interviewCount > 0 && { label: "Moved to interview", value: stats.interviewCount },
-        stats.offerCount > 0 && { label: "Offers", value: stats.offerCount }
-      ]),
-      ...(weeks ? ["", "**Week by week**", weeks] : [])
-    ].join("\n");
-  },
 
-  interview_digest({ stats, windowText }) {
-    const cards = [
-      ...stats.offerJobs.map((j) => ({ ...j, stage: "Offer" })),
-      ...stats.interviewJobs.map((j) => ({ ...j, stage: "Interview" }))
-    ];
-    const shown = cards.slice(0, MAX_DIGEST_ROWS);
-    const lines = shown.map(
-      (j) => `- **${mmEscape(j.jobTitle || "Role")}** at ${mmEscape(j.companyName || "")} - ${j.stage}`
-    );
-    if (cards.length > shown.length) lines.push(`- and ${cards.length - shown.length} more on the dashboard`);
-    return [
-      `#### Interview pipeline - ${windowText}`,
-      "",
-      `${cards.length} active ${cards.length === 1 ? "conversation" : "conversations"}:`,
-      "",
-      ...lines
-    ].join("\n");
-  },
 
-  plan_usage({ lifetime }) {
-    const capped = lifetime.effectiveCap != null && lifetime.effectiveCap > 0;
-    return [
-      "#### Plan usage",
-      "",
-      mmTable([
-        lifetime.planType && { label: "Plan", value: lifetime.planType },
-        { label: "Applications used", value: fmtNum(lifetime.totalJobs) },
-        capped && { label: "Included in plan", value: fmtNum(lifetime.effectiveCap) },
-        capped && { label: "Remaining", value: fmtNum(Math.max(0, lifetime.effectiveCap - lifetime.totalJobs)) }
-      ])
-    ].join("\n");
-  },
 
-  milestone({ lifetime, extra }) {
-    const threshold = num(extra?.threshold) || lifetime.totalJobs;
-    return [
-      `#### Milestone: ${fmtNum(threshold)} applications`,
-      "",
-      `This search just passed **${fmtNum(threshold)}** submitted applications.`,
-      lifetime.totalInterviews > 0 ? `Interviews so far: ${fmtNum(lifetime.totalInterviews)}.` : "",
-      lifetime.totalOffers > 0 ? `Offers so far: ${fmtNum(lifetime.totalOffers)}.` : ""
-    ]
-      .filter(Boolean)
-      .join("\n");
-  },
 
   inactivity_alert({ client, stats, extra }) {
     const days = num(extra?.days);

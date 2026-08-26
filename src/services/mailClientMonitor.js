@@ -173,10 +173,23 @@ export async function sendDailySummary() {
   for (const c of clients) if (clientConnection(c, index) !== "not_connected") connectedCount++;
   const notConnected = clients.length - connectedCount;
 
-  const [totalMails, usefulDocs] = await Promise.all([
+  const [totalMails, usefulInWindow, usefulDocs] = await Promise.all([
     MailDigest.countDocuments({ date: { $gte: since } }).catch(() => 0),
-    MailDigest.find({ date: { $gte: since }, category: { $in: [...USEFUL] } })
-      .select("gmailEmail ownerEmail subject from date category clientNotifyCategory")
+    // Headline count = every milestone in the window, posted or not. usefulDocs
+    // below is only the unposted remainder, so the two must not be conflated.
+    MailDigest.countDocuments({ date: { $gte: since }, category: { $in: [...USEFUL] } }).catch(() => 0),
+    // discordPostedAt: null is THE fix for double-posting. mailPollWorker
+    // already posts one Discord line per milestone the moment it detects it,
+    // and stamps discordPostedAt. This query used to ignore that stamp, so at
+    // 5 AM every milestone from the previous 24h was posted a SECOND time -
+    // the same offer mail appearing twice in the channel, hours apart, with no
+    // indication which was the real event.
+    //
+    // Filtering on it turns this from a re-post into what it should always
+    // have been: a catch-up for the handful the hourly poll genuinely failed
+    // to deliver (webhook 5xx, a crash between post and stamp).
+    MailDigest.find({ date: { $gte: since }, category: { $in: [...USEFUL] }, discordPostedAt: null })
+      .select("gmailEmail ownerEmail subject from date category clientNotifyCategory messageId")
       .sort({ date: 1 })
       .lean()
       .catch(() => [])
@@ -197,7 +210,7 @@ export async function sendDailySummary() {
     connectedMailboxes: connectedCount,
     notConnected,
     totalMails,
-    usefulMails: usefulDocs.length,
+    usefulMails: usefulInWindow,
     windowHours: SUMMARY_WINDOW_HOURS,
     dateLabel: new Date().toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata" })
   });
@@ -214,12 +227,26 @@ export async function sendDailySummary() {
       from: d.from,
       receivedAt: d.date
     });
-    if (res.ok) posted++;
+    if (res.ok) {
+      posted++;
+      // STAMP IT. Without this the catch-up is not a catch-up: a digest the
+      // poll never managed to post would be re-posted by this summary every
+      // single morning, forever. The stamp is what makes "at most once" true
+      // across both delivery paths rather than just within the poll.
+      await MailDigest.updateOne(
+        { _id: d._id, discordPostedAt: null },
+        { $set: { discordPostedAt: new Date(), discordError: "" }, $inc: { discordAttempts: 1 } }
+      ).catch((e) => {
+        console.error(
+          `[mail-monitor] posted ${d.messageId || d._id} but could not stamp it - it may repeat: ${e.message}`
+        );
+      });
+    }
   }
 
   console.log(
     `[mail-monitor] daily summary — clients=${clients.length} connected=${connectedCount} ` +
-      `notConnected=${notConnected} mails=${totalMails} useful=${usefulDocs.length} posted=${posted}`
+      `notConnected=${notConnected} mails=${totalMails} useful=${usefulInWindow} catchUpPosted=${posted}`
   );
-  return { clients: clients.length, connectedCount, notConnected, totalMails, useful: usefulDocs.length, posted };
+  return { clients: clients.length, connectedCount, notConnected, totalMails, useful: usefulInWindow, posted };
 }

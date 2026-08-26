@@ -37,6 +37,15 @@ const DAY_OF_MONTH_MIN = 1;
 const DAY_OF_MONTH_MAX = 28;
 const INACTIVITY_DAYS_MIN = 1;
 const INACTIVITY_DAYS_MAX = 30;
+// A threshold of 1 would mail on the first role of the day, which is noise.
+// 200 is far above any real daily push and stops a typo disabling the feature
+// silently by setting an unreachable bar.
+const AUTO_THRESHOLD_MIN = 2;
+const AUTO_THRESHOLD_MAX = 200;
+// Zero is allowed (send immediately). The ceiling keeps the delay inside the
+// same IST day, or the period key rolls over and the mail is never sent.
+const AUTO_DELAY_MIN = 0;
+const AUTO_DELAY_MAX = 720;
 
 const reminderItemSchema = new mongoose.Schema(
   {
@@ -50,6 +59,14 @@ const reminderItemSchema = new mongoose.Schema(
     dayOfWeek: { type: Number, default: 1 },
     dayOfMonth: { type: Number, default: 1 },
     inactivityDays: { type: Number, default: 3 },
+
+    // Threshold auto-send for the daily summary: once autoThresholdCount roles
+    // have been added today, deliver autoDelayMinutes later instead of waiting
+    // for sendAtIST. Consumes the same daily period key, so the client still
+    // gets exactly one summary per day.
+    autoOnThreshold: { type: Boolean, default: false },
+    autoThresholdCount: { type: Number, default: 5 },
+    autoDelayMinutes: { type: Number, default: 60 },
 
     // Delivery bookkeeping, written only by the worker / send-now path.
     // lastPeriodKey is the idempotency token: the worker refuses to send an
@@ -92,6 +109,20 @@ const clientReminderConfigSchema = new mongoose.Schema(
   {
     clientEmail: { type: String, required: true, unique: true, lowercase: true, trim: true, index: true },
     clientName: { type: String, default: "" },
+
+    /**
+     * Forward inbox milestones (interview / assignment / offer) detected by the
+     * hourly mail poll to this client, over whichever of the two channels below
+     * are configured.
+     *
+     * Default FALSE, and it must stay that way. Unlike the scheduled reports
+     * this is driven by a CLASSIFIER reading the client's real mailbox, so a
+     * false positive does not send a wrong number - it sends "you've got an
+     * offer" to somebody who has not. That has happened before (an Amazon
+     * "thank you for applying" auto-reply), which is why the whole stream was
+     * paused. Opt in per client, deliberately.
+     */
+    inboxAlertsEnabled: { type: Boolean, default: false },
 
     // Only consulted when dashboardtrackings has no paymentEmail for this
     // client. The tracking collection is owned by the applications-monitor
@@ -165,6 +196,9 @@ function normaliseItemRow(raw, key) {
     dayOfWeek: clampInt(src.dayOfWeek, DAY_OF_WEEK_MIN, DAY_OF_WEEK_MAX, base.dayOfWeek),
     dayOfMonth: clampInt(src.dayOfMonth, DAY_OF_MONTH_MIN, DAY_OF_MONTH_MAX, base.dayOfMonth),
     inactivityDays: clampInt(src.inactivityDays, INACTIVITY_DAYS_MIN, INACTIVITY_DAYS_MAX, base.inactivityDays),
+    autoOnThreshold: boolOr(src.autoOnThreshold, base.autoOnThreshold),
+    autoThresholdCount: clampInt(src.autoThresholdCount, AUTO_THRESHOLD_MIN, AUTO_THRESHOLD_MAX, base.autoThresholdCount),
+    autoDelayMinutes: clampInt(src.autoDelayMinutes, AUTO_DELAY_MIN, AUTO_DELAY_MAX, base.autoDelayMinutes),
     lastPeriodKey: String(src.lastPeriodKey || ""),
     lastSentAt: src.lastSentAt ? new Date(src.lastSentAt) : null,
     lastStatus: String(src.lastStatus || ""),
@@ -237,6 +271,10 @@ export function mergeWithDefaults(doc) {
   return {
     clientEmail: String(src.clientEmail || "").toLowerCase().trim(),
     clientName: String(src.clientName || ""),
+    // Absent on every row written before this shipped. Reading a missing field
+    // as false is the safe direction: an un-migrated client stays silent until
+    // somebody opts them in.
+    inboxAlertsEnabled: src.inboxAlertsEnabled === true,
     paymentEmailOverride: String(src.paymentEmailOverride || "").toLowerCase().trim(),
     mattermostWebhookUrl: String(src.mattermostWebhookUrl || "").trim(),
     items,
@@ -327,6 +365,20 @@ export function sanitizeItemsInput(items, existingItems = []) {
         INACTIVITY_DAYS_MIN,
         INACTIVITY_DAYS_MAX,
         base.inactivityDays
+      ),
+
+      autoOnThreshold: boolOr(pick("autoOnThreshold", base.autoOnThreshold), base.autoOnThreshold),
+      autoThresholdCount: clampInt(
+        pick("autoThresholdCount", base.autoThresholdCount),
+        AUTO_THRESHOLD_MIN,
+        AUTO_THRESHOLD_MAX,
+        base.autoThresholdCount
+      ),
+      autoDelayMinutes: clampInt(
+        pick("autoDelayMinutes", base.autoDelayMinutes),
+        AUTO_DELAY_MIN,
+        AUTO_DELAY_MAX,
+        base.autoDelayMinutes
       ),
 
       // Worker-owned. Never sourced from `items`. See the trap note above.
