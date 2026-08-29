@@ -504,6 +504,17 @@ export const profileSchema = new mongoose.Schema({
     // cron sweeper to skip recently-failed profiles, avoiding wasted
     // OpenAI/Gemini calls on broken profiles every 30 min.
     lastAttemptAt: { type: Date, required: false, default: null },
+    // Async build lifecycle. POST /build-ai-summary now returns 202 and runs
+    // the OpenAI work in the background (the full build is 90-150s, longer
+    // than Cloudflare's ~100s origin timeout, so a synchronous response 502s).
+    //   status         — "idle" | "building" | "done" | "error"
+    //   buildStartedAt — when the current/last background build began
+    //   lastError      — { error, message, step } from the last failed build
+    // The clients-tracking AI Summary page polls GET /ai-summary-status until
+    // status leaves "building".
+    status: { type: String, required: false, default: "idle" },
+    buildStartedAt: { type: Date, required: false, default: null },
+    lastError: { type: Object, required: false, default: null },
     // Per-bullet provenance map from the AI build. Each # section header
     // maps to two parallel arrays of source codes — one per bullet, one per
     // prose line — in document order. Codes: "R" = resume, "P" = profile,

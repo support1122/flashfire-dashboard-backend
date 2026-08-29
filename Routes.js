@@ -81,7 +81,7 @@ import { UserModel } from "./Schema_Models/UserModel.js";
 import CheckProfile from "./Controllers/CheckProfile.js";
 import GetProfile from "./Controllers/GetProfile.js";
 import UpdateAiSummary from "./Controllers/UpdateAiSummary.js";
-import BuildAiSummary from "./Controllers/BuildAiSummary.js";
+import BuildAiSummary, { AiSummaryStatus } from "./Controllers/BuildAiSummary.js";
 import {
   SaveSummaryOverlay,
   ClearSummaryOverlay,
@@ -398,6 +398,9 @@ app.post("/update-ai-summary", UpdateAiSummary);
 // Server-side candidate brief builder. Consumers (JR-direct extension)
 // just POST { email } — backend pulls profile + resume + calls OpenAI.
 app.post("/build-ai-summary", BuildAiSummary);
+// Poll target for the async build above — returns { status, builtAt,
+// lastError, aiSummary, ... }. status: idle|building|done|error.
+app.get("/ai-summary-status", AiSummaryStatus);
 // Summary format overlay: operator-saved "format snapshot" so future rebuilds
 // re-inject operator-added bullets. Save = enable + write snapshot.
 // Clear = disable (snapshot retained). Get = read current state + stats.
