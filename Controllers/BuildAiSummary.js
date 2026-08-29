@@ -25,6 +25,35 @@ import { mergeOverlay, mergeWithLocks, countOverlayBullets, parseSections, extra
 
 const RESUME_API_URL = process.env.RESUME_API_URL || "http://localhost:5000";
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
+// Per-call timeout for the OpenAI chat.completions requests. The structured
+// brief is a large prompt and on a small Render instance a single call can
+// legitimately run past 60s — which surfaced as OPENAI_NETWORK "timeout of
+// 60000ms exceeded" and a failed build. Now that the build is fully async
+// (POST /build-ai-summary returns 202, no proxy in the path) the only ceiling
+// is this value, so give it real headroom. Override with OPENAI_TIMEOUT_MS.
+const OPENAI_TIMEOUT_MS = Number(process.env.OPENAI_TIMEOUT_MS) || 180_000;
+
+// postOpenAI — axios POST to chat.completions with one retry on a timeout /
+// transient network abort (ECONNABORTED / ECONNRESET / no response). A real
+// HTTP error (4xx/5xx with a body) is NOT retried — it re-throws immediately.
+async function postOpenAI(body, apiKey) {
+  const cfg = {
+    timeout: OPENAI_TIMEOUT_MS,
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${apiKey || OPENAI_API_KEY}`,
+    },
+  };
+  try {
+    return await axios.post("https://api.openai.com/v1/chat/completions", body, cfg);
+  } catch (err) {
+    const transient = !err.response
+      && (err.code === "ECONNABORTED" || err.code === "ECONNRESET" || err.code === "ETIMEDOUT");
+    if (!transient) throw err;
+    console.warn(`[BuildAiSummary] OpenAI call ${err.code} — retrying once`);
+    return await axios.post("https://api.openai.com/v1/chat/completions", body, cfg);
+  }
+}
 const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4o-mini";
 // Summary builds use gpt-4o-mini exclusively. Gemini path removed after it
 // repeatedly miscategorised operator-notes directives. To restore Gemini,
@@ -1118,13 +1147,7 @@ async function callOpenAI(profile, resume, existingSummary, profileDiff, apiKey,
     temperature: SUMMARY_TEMPERATURE,
   };
   try {
-    const res = await axios.post("https://api.openai.com/v1/chat/completions", body, {
-      timeout: 60_000,
-      headers: {
-        "content-type": "application/json",
-        authorization: `Bearer ${apiKey || OPENAI_API_KEY}`,
-      },
-    });
+    const res = await postOpenAI(body, apiKey);
     recordAiUsage({
       source: AI_USAGE_SOURCES.AI_SUMMARY,
       model: res.data?.model || OPENAI_MODEL,
@@ -1166,11 +1189,11 @@ Rules:
     : "";
   const user = `Operator notes:\n<<<NOTES>>>\n${notesText || "(none)"}\n<<<END>>>${removalBlock}\n\nCurrent brief:\n<<<BRIEF>>>\n${brief}\n<<<END>>>\n\nReturn the corrected full brief.`;
   try {
-    const res = await axios.post("https://api.openai.com/v1/chat/completions", {
+    const res = await postOpenAI({
       model: OPENAI_MODEL,
       messages: [{ role: "system", content: sys }, { role: "user", content: user }],
       temperature: 0,
-    }, { timeout: 60_000, headers: { "content-type": "application/json", authorization: `Bearer ${apiKey || OPENAI_API_KEY}` } });
+    }, apiKey);
     recordAiUsage({
       source: AI_USAGE_SOURCES.AI_SUMMARY,
       model: res.data?.model || OPENAI_MODEL,
