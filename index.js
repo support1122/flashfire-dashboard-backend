@@ -148,6 +148,7 @@
 import express from "express";
 import Stripe from "stripe";
 import cors from "cors";
+import { corsOptions } from "./Utils/corsPolicy.js";
 import dotenv from "dotenv";
 import helmet from "helmet";
 import mongoose from "mongoose";
@@ -236,9 +237,19 @@ console.log(`🌐 Server will run on port: ${PORT}`);
 //   },
 // }));
 
-// Open CORS policy (temporary): allow all origins
-app.use(cors());
-app.options("*", cors());
+// Named-origin CORS. See Utils/corsPolicy.js for what is allowed and why.
+//
+// This replaced `app.use(cors())`, which emitted Access-Control-Allow-Origin: *
+// and let any page on the internet read responses from an API that serves
+// client records, resumes and Gmail contents behind a Bearer token. The wildcard
+// also made credentialed requests impossible, since the spec refuses to pair it
+// with Access-Control-Allow-Credentials.
+//
+// Set CORS_ALLOW_ALL=1 on the host to restore the old open behaviour instantly
+// if a caller nobody remembered turns out to be blocked.
+const CORS = corsOptions();
+app.use(cors(CORS));
+app.options("*", cors(CORS));
 
 app.use(helmet({
   crossOriginResourcePolicy: { policy: "cross-origin" },

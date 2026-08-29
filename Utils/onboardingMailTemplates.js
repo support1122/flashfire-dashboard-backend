@@ -1,3 +1,4 @@
+import { unsubscribeUrl, UNSUB_STREAMS } from "./unsubscribe.js";
 // Branded templates for the onboarding email sequence that fires on a client's
 // first application. FlashFire flame theme, inline CSS, table layout — same look
 // as the client milestone alerts. One template per step.
@@ -68,6 +69,9 @@ function firstName(name, email) {
  * @returns {{subject:string, html:string, text:string}|null}
  */
 export function renderOnboardingEmail({ key, clientName, clientEmail } = {}) {
+  // This is a short fixed sequence, but it is still unsolicited automated mail
+  // from the client's point of view, so it carries the same opt-out.
+  const unsubUrl = unsubscribeUrl(clientEmail, UNSUB_STREAMS.ONBOARDING);
   const step = STEPS[key];
   if (!step) return null;
   const name = firstName(clientName, clientEmail);
@@ -95,7 +99,11 @@ export function renderOnboardingEmail({ key, clientName, clientEmail } = {}) {
         </td></tr>
         <tr><td style="background:#ffffff;border-radius:0 0 14px 14px;padding:0 28px 24px;">
           <p style="margin:14px 0 0;color:${BRAND.faint};font-size:12px;line-height:1.6;border-top:1px solid ${BRAND.line};padding-top:16px;text-align:center;">
-            © 2026 FlashFire · Your job search team is on it.
+            © ${new Date().getFullYear()} FlashFire · Your job search team is on it.${
+              unsubUrl
+                ? `<br><a href="${unsubUrl}" style="color:${BRAND.faint};text-decoration:underline;">Unsubscribe</a>`
+                : ""
+            }
           </p>
         </td></tr>
       </table>

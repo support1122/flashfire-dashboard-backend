@@ -30,6 +30,9 @@
 // (email) or mmEscape (Mattermost); company and role names are scraped text
 // and get no more trust than any other user input.
 
+import { reminderItemMeta } from "./reminderItems.js";
+import { unsubscribeUrl, UNSUB_STREAMS } from "./unsubscribe.js";
+
 const BRAND = {
   slate: "#1f2937",
   ink: "#111827",
@@ -49,6 +52,11 @@ const FONT_STACK =
   "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif";
 
 const DASHBOARD_URL = "https://portal.flashfirejobs.com";
+
+// Unsubscribe lives in its own module so the link, the HMAC and the SMTP
+// headers are built from one place. Imported lazily-safe: when it cannot build
+// a link (no signing key, no public URL) it returns "" and the footer simply
+// omits it rather than rendering something dead.
 
 // Interview digest is the one client mail that lists cards; cap it so a busy
 // pipeline cannot produce a scroll of doom.
@@ -274,7 +282,7 @@ function dashboardLine(text) {
     <a href="${DASHBOARD_URL}" style="color:${BRAND.flameDeep};font-weight:600;text-decoration:underline;">your dashboard</a>.</p>`;
 }
 
-function shell({ preheader, dateText, headline, subline, blocks, footerNote }) {
+function shell({ preheader, dateText, headline, subline, blocks, footerNote, unsubUrl }) {
   const content = (blocks || []).filter(Boolean).join("\n");
   return `<!DOCTYPE html>
 <html lang="en">
@@ -311,6 +319,11 @@ function shell({ preheader, dateText, headline, subline, blocks, footerNote }) {
         <tr><td style="background:#ffffff;border-radius:0 0 12px 12px;padding:24px 28px;">
           <div style="border-top:1px solid ${BRAND.line};padding-top:14px;color:${BRAND.faint};font-size:12px;line-height:1.6;">
             ${escapeHtml(footerNote || "")}<br>
+            ${
+              unsubUrl
+                ? `<a href="${unsubUrl}" style="color:${BRAND.faint};text-decoration:underline;">Unsubscribe</a> &nbsp;&middot;&nbsp; `
+                : ""
+            }
             &copy; ${new Date().getFullYear()} FlashFire
           </div>
         </td></tr>
@@ -326,7 +339,7 @@ function shell({ preheader, dateText, headline, subline, blocks, footerNote }) {
  * plaintext part
  * ------------------------------------------------------------------ */
 
-function buildText({ headline, windowText, rows, extraLines, footerNote }) {
+function buildText({ headline, windowText, rows, extraLines, footerNote, unsubUrl }) {
   const out = ["FLASHFIRE", "", headline];
   if (windowText) out.push(windowText);
   out.push("");
@@ -337,6 +350,7 @@ function buildText({ headline, windowText, rows, extraLines, footerNote }) {
     out.push("", ...extraLines);
   }
   out.push("", `Full detail: ${DASHBOARD_URL}`, "", footerNote || "");
+  if (unsubUrl) out.push("", `Unsubscribe: ${unsubUrl}`);
   return out.join("\n").trim() + "\n";
 }
 
@@ -467,10 +481,17 @@ export function renderReminderEmail({ kind, client = {}, stats, lifetime, period
     extra: extra || {}
   });
 
+  // Internal items mail the team, not the client, so they get no unsubscribe -
+  // an operations alert is not something to opt out of, and the link would
+  // point at a client's config.
+  const meta = reminderItemMeta(key);
+  const unsubUrl =
+    meta?.internal === true ? "" : unsubscribeUrl(c.email, UNSUB_STREAMS.REMINDERS);
+
   return {
     subject: built.subject,
-    html: shell(built),
-    text: built.text
+    html: shell({ ...built, unsubUrl }),
+    text: unsubUrl ? `${built.text.trimEnd()}\n\nUnsubscribe: ${unsubUrl}\n` : built.text
   };
 }
 
