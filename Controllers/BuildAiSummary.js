@@ -1225,11 +1225,140 @@ export async function buildSummaryForEmail(email, reasonTag = "manual") {
   }
 }
 
+// A build older than this is treated as dead (process restarted mid-build),
+// so a fresh POST /build-ai-summary is allowed to start a new one.
+const BUILD_STALE_MS = 5 * 60 * 1000;
+
+// runBuildInBackground — kick off buildSummaryForEmail without holding the
+// HTTP request open. On failure we still record the error on the profile so
+// the status endpoint (and the cron sweeper) can see it; buildSummaryForEmail
+// itself writes status:"done" on success.
+async function runBuildInBackground(email, reasonTag) {
+  try {
+    const result = await buildSummaryForEmail(email, reasonTag);
+    if (!result?.success) {
+      await ProfileModel.updateOne(
+        { email: String(email).toLowerCase() },
+        {
+          $set: {
+            "aiSummaryMeta.status": "error",
+            "aiSummaryMeta.lastAttemptAt": new Date(),
+            "aiSummaryMeta.lastError": {
+              error: result?.error || "UNKNOWN",
+              message: result?.message || "",
+              step: result?.step || "",
+            },
+          },
+        },
+      ).catch(() => {});
+      console.error(
+        `[BuildAiSummary] background build failed email=${email} error=${result?.error} step=${result?.step} msg=${result?.message}`,
+      );
+    }
+  } catch (err) {
+    await ProfileModel.updateOne(
+      { email: String(email).toLowerCase() },
+      {
+        $set: {
+          "aiSummaryMeta.status": "error",
+          "aiSummaryMeta.lastAttemptAt": new Date(),
+          "aiSummaryMeta.lastError": { error: "INTERNAL", message: err?.message || String(err), step: "background" },
+        },
+      },
+    ).catch(() => {});
+    console.error(`[BuildAiSummary] background build threw email=${email}:`, err);
+  }
+}
+
+// POST /build-ai-summary  { email }
+// Returns 202 immediately and builds in the background — the full build is
+// 90-150s (resume fetch + two OpenAI passes), longer than Cloudflare's ~100s
+// origin timeout, so a synchronous response reliably 502s. The clients-tracking
+// AI Summary page polls GET /ai-summary-status until status leaves "building".
 export default async function BuildAiSummary(req, res) {
   const { email } = req.body || {};
-  const result = await buildSummaryForEmail(email);
-  const { status = result.success ? 200 : 500, ...payload } = result;
-  return res.status(status).json(payload);
+  if (!email || typeof email !== "string" || !email.includes("@")) {
+    return res.status(400).json({ success: false, error: "BAD_INPUT", message: "email is required", step: "validate" });
+  }
+  const lower = email.toLowerCase();
+  const profile = await ProfileModel.findOne({ email: lower })
+    .select({ _id: 1, aiSummaryMeta: 1 })
+    .lean();
+  if (!profile) {
+    return res.status(404).json({ success: false, error: "PROFILE_NOT_FOUND", message: `No profile in DB for ${email}`, step: "loading-profile" });
+  }
+
+  // Already building and it hasn't gone stale → report in-progress, don't
+  // start a second concurrent build (they'd race on the same profile doc).
+  const meta = profile.aiSummaryMeta || {};
+  const startedAt = meta.buildStartedAt ? new Date(meta.buildStartedAt).getTime() : 0;
+  if (meta.status === "building" && startedAt && Date.now() - startedAt < BUILD_STALE_MS) {
+    return res.status(202).json({
+      success: true,
+      status: "building",
+      alreadyRunning: true,
+      buildStartedAt: meta.buildStartedAt,
+      message: "A build is already in progress for this client.",
+    });
+  }
+
+  const now = new Date();
+  await ProfileModel.updateOne(
+    { _id: profile._id },
+    {
+      $set: {
+        "aiSummaryMeta.status": "building",
+        "aiSummaryMeta.buildStartedAt": now,
+        "aiSummaryMeta.lastError": null,
+      },
+    },
+  );
+
+  // Fire and forget — do NOT await.
+  runBuildInBackground(lower, "manual");
+
+  return res.status(202).json({
+    success: true,
+    status: "building",
+    buildStartedAt: now.toISOString(),
+    message: "Build started. Poll /ai-summary-status for completion.",
+  });
+}
+
+// GET /ai-summary-status?email=
+// Lightweight poll target for the clients-tracking AI Summary page.
+export async function AiSummaryStatus(req, res) {
+  const email = (req.query?.email || "").toString().toLowerCase();
+  if (!email || !email.includes("@")) {
+    return res.status(400).json({ success: false, error: "BAD_INPUT", message: "email query param is required" });
+  }
+  const profile = await ProfileModel.findOne({ email })
+    .select({ email: 1, aiSummary: 1, aiSummaryMeta: 1, summaryStale: 1 })
+    .lean();
+  if (!profile) {
+    return res.status(404).json({ success: false, error: "PROFILE_NOT_FOUND", message: `No profile in DB for ${email}` });
+  }
+  const meta = profile.aiSummaryMeta || {};
+  let status = meta.status || (meta.builtAt ? "done" : "idle");
+  // Treat a build that started too long ago with no result as dead so the UI
+  // stops spinning forever after a mid-build process restart.
+  const startedAt = meta.buildStartedAt ? new Date(meta.buildStartedAt).getTime() : 0;
+  if (status === "building" && startedAt && Date.now() - startedAt > BUILD_STALE_MS) {
+    status = meta.builtAt ? "done" : "error";
+  }
+  return res.status(200).json({
+    success: true,
+    status,
+    builtAt: meta.builtAt || null,
+    buildStartedAt: meta.buildStartedAt || null,
+    lastError: meta.lastError || null,
+    wordCount: meta.wordCount || 0,
+    source: meta.source || "",
+    model: meta.model || "",
+    summaryStale: !!profile.summaryStale,
+    aiSummary: profile.aiSummary || "",
+    aiSummaryMeta: meta,
+  });
 }
 
 function escapeRegex(s) {
@@ -1553,6 +1682,10 @@ async function runForProfileCore(profile, apiKey, reasonTag = "manual") {
           provenance: aiProvenance || null,
           builtInputs,
           temperature: SUMMARY_TEMPERATURE,
+          lastAttemptAt: builtAt,
+          status: "done",
+          buildStartedAt: profile?.aiSummaryMeta?.buildStartedAt || null,
+          lastError: null,
         },
         // Stay stale when the resume API failed, so the cron sweep retries and
         // upgrades this profile-only brief once the resume is reachable again.
