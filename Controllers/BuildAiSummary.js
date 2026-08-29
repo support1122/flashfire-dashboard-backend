@@ -1134,14 +1134,17 @@ async function fetchResume(email) {
 // a classification/routing task, not creative writing). Hardcoded on purpose.
 const SUMMARY_TEMPERATURE = 0;
 
-async function callOpenAI(profile, resume, existingSummary, profileDiff, apiKey, overlay = null) {
+// retryHint — when a previous round-1 attempt came back missing required
+// headers, this string is appended to the system message so the reroll is
+// explicitly told which sections to restore. Empty on the first attempt.
+async function callOpenAI(profile, resume, existingSummary, profileDiff, apiKey, overlay = null, retryHint = "") {
   const body = {
     model: OPENAI_MODEL,
     messages: [
       // Operator notes are appended to the SYSTEM message (verbatim) so the
       // model treats them as authoritative instructions, on top of the
       // detailed routing rules carried in the user message.
-      { role: "system", content: SYSTEM_PROMPT + renderSystemNotesDirective(profile) },
+      { role: "system", content: SYSTEM_PROMPT + renderSystemNotesDirective(profile) + retryHint },
       { role: "user", content: buildUserPrompt(profile, resume, existingSummary, profileDiff, overlay) },
     ],
     temperature: SUMMARY_TEMPERATURE,
@@ -1550,7 +1553,39 @@ async function runForProfileCore(profile, apiKey, reasonTag = "manual") {
   // No fallback; if OpenAI fails the build fails loudly so the operator
   // knows to fix the key / retry, instead of silently degrading.
   const overlayForPrompt = profile?.aiSummaryOverlay || null;
-  const ai = await callOpenAI(profile, resume, existingSummary, profileDiff, apiKey, overlayForPrompt);
+  // gpt-4o-mini intermittently drops one or more of the six required headers
+  // from round 1 (observed: only "# Candidate Summary" + "# Target Roles"
+  // emitted). That is a stochastic instruction-following miss, not a profile
+  // problem — a plain reroll with an explicit "you omitted X" nudge almost
+  // always produces a well-formed brief. Try up to MAX_ROUND1_ATTEMPTS times
+  // before failing with MALFORMED_SUMMARY.
+  const MAX_ROUND1_ATTEMPTS = 3;
+  let ai = null;
+  let round1Missing = [];
+  let round1Raw = "";
+  for (let attempt = 1; attempt <= MAX_ROUND1_ATTEMPTS; attempt++) {
+    const hint = round1Missing.length
+      ? `\n\nCRITICAL: your previous attempt OMITTED required section(s): ${round1Missing.join(", ")}. `
+        + `Re-emit the FULL brief now with ALL SIX headers, each on its own line, exactly as: `
+        + `"# Candidate Summary", "# Target Roles", "# Hard Constraints", "# Strong Signals", `
+        + `"# Hard Disqualifiers", "# Notes for Grader". Do not skip any header even if a section would be short.`
+      : "";
+    ai = await callOpenAI(profile, resume, existingSummary, profileDiff, apiKey, overlayForPrompt, hint);
+    if (!ai.ok) break; // network/HTTP error — handled below, no point rerolling
+    round1Raw = (ai.summary || "")
+      .replace(/^\s*<{2,}[^<>]*>{2,}\s*$/gm, "")
+      .trim();
+    round1Missing = missingSections(round1Raw);
+    if (!round1Missing.length) {
+      if (attempt > 1) {
+        console.log(`[BuildAiSummary] round-1 well-formed on attempt ${attempt} email=${profile.email}`);
+      }
+      break;
+    }
+    console.warn(
+      `[BuildAiSummary] round-1 attempt ${attempt}/${MAX_ROUND1_ATTEMPTS} malformed email=${profile.email} missing=${round1Missing.join(", ")}`,
+    );
+  }
   const usedModel = OPENAI_MODEL;
   let usedSource = `${source}+openai`;
   // Append the trigger origin so the AI Summaries dashboard / logs show whether
@@ -1571,7 +1606,7 @@ async function runForProfileCore(profile, apiKey, reasonTag = "manual") {
   // fences. applyNotesPass already does this for round 2, but it returns early
   // when there are no notes and no removal directives — so without this a
   // no-notes client could keep an echoed marker in their persisted brief.
-  let summary = (ai.summary || "")
+  let summary = (round1Raw || ai.summary || "")
     .replace(/^\s*<{2,}[^<>]*>{2,}\s*$/gm, "")
     .trim()
     .slice(0, MAX_SUMMARY_CHARS);
@@ -1596,13 +1631,14 @@ async function runForProfileCore(profile, apiKey, reasonTag = "manual") {
   const missingRound1 = missingSections(summary);
   if (missingRound1.length) {
     console.error(
-      `[BuildAiSummary] MALFORMED round-1 brief email=${profile.email} missing=${missingRound1.join(", ")}`,
+      `[BuildAiSummary] MALFORMED round-1 brief email=${profile.email} missing=${missingRound1.join(", ")} `
+      + `(after ${MAX_ROUND1_ATTEMPTS} attempts)`,
     );
     return {
       success: false,
       status: 502,
       error: "MALFORMED_SUMMARY",
-      message: `Model omitted required section(s): ${missingRound1.join(", ")}`,
+      message: `Model omitted required section(s) after ${MAX_ROUND1_ATTEMPTS} attempts: ${missingRound1.join(", ")}`,
       step: "openai",
     };
   }
