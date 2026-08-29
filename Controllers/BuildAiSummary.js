@@ -1425,6 +1425,20 @@ function missingSections(text) {
   );
 }
 
+// ensureRequiredSections — append any REQUIRED_SECTIONS header the brief is
+// missing, each with a single placeholder bullet. The model sometimes omits
+// sections it judges "empty" (sparse profile, no notes, no removal feedback)
+// despite the prompt. Rather than hard-fail the whole build, we backfill so
+// the six-header contract the grader + JR-direct extension depend on always
+// holds. Deterministic, no LLM call.
+function ensureRequiredSections(text) {
+  let out = String(text || "").trimEnd();
+  for (const header of missingSections(out)) {
+    out += `\n\n${header}\n- None specified.\n`;
+  }
+  return out;
+}
+
 // enforceRemovalDirectives — deterministic backstop for removal feedback,
 // mirroring enforceNoteDirectives: for every feedback entry that rejects a
 // COMPANY (chips "Company isn't a fit" / "No visa sponsorship", or free
@@ -1630,17 +1644,15 @@ async function runForProfileCore(profile, apiKey, reasonTag = "manual") {
   // loudly instead of persisting a brief that silently grades on nothing.
   const missingRound1 = missingSections(summary);
   if (missingRound1.length) {
-    console.error(
-      `[BuildAiSummary] MALFORMED round-1 brief email=${profile.email} missing=${missingRound1.join(", ")} `
-      + `(after ${MAX_ROUND1_ATTEMPTS} attempts)`,
+    // The retry loop above already gave the model MAX_ROUND1_ATTEMPTS tries.
+    // If headers are STILL missing, backfill them with a placeholder bullet
+    // instead of failing the build — a persisted brief with an empty section
+    // is far better than no brief at all, and the 6-header contract stays
+    // intact for the grader + extension skip matcher.
+    console.warn(
+      `[BuildAiSummary] round-1 still missing ${missingRound1.join(", ")} after ${MAX_ROUND1_ATTEMPTS} attempts email=${profile.email} — backfilling placeholders`,
     );
-    return {
-      success: false,
-      status: 502,
-      error: "MALFORMED_SUMMARY",
-      message: `Model omitted required section(s) after ${MAX_ROUND1_ATTEMPTS} attempts: ${missingRound1.join(", ")}`,
-      step: "openai",
-    };
+    summary = ensureRequiredSections(summary).slice(0, MAX_SUMMARY_CHARS);
   }
   // Round 2 (LLM): re-apply the operator notes AND the pre-resolved removal
   // directives so every directive is reflected with correct polarity. The
@@ -1660,10 +1672,14 @@ async function runForProfileCore(profile, apiKey, reasonTag = "manual") {
   const missingAfterNotes = missingSections(summary);
   if (missingAfterNotes.length) {
     console.warn(
-      `[BuildAiSummary] notes pass dropped section(s) ${missingAfterNotes.join(", ")} email=${profile.email} — keeping round-1 brief`,
+      `[BuildAiSummary] notes pass dropped section(s) ${missingAfterNotes.join(", ")} email=${profile.email} — reverting to round-1 brief`,
     );
     summary = beforeNotesPass;
   }
+  // round-1 itself may have been backfilled with placeholders above; if the
+  // revert still leaves anything missing, backfill again so we can't ship a
+  // brief with fewer than six headers.
+  summary = ensureRequiredSections(summary).slice(0, MAX_SUMMARY_CHARS);
   // Apply operator's saved format overlay: if enabled, re-inject any bullets
   // the operator added on top of the previous build + replace any
   // locked-section bodies verbatim. Pure AI output if no overlay or overlay
@@ -1708,8 +1724,9 @@ async function runForProfileCore(profile, apiKey, reasonTag = "manual") {
   const missingFinal = missingSections(summary);
   if (missingFinal.length) {
     console.warn(
-      `[BuildAiSummary] FINAL brief missing section(s) ${missingFinal.join(", ")} email=${profile.email} — persisting anyway, downstream skip matching will be degraded`,
+      `[BuildAiSummary] FINAL brief missing section(s) ${missingFinal.join(", ")} email=${profile.email} — backfilling placeholders before persist`,
     );
+    summary = ensureRequiredSections(summary).slice(0, MAX_SUMMARY_CHARS);
   }
   // Now that the text is final, derive the positional provenance the UI reads.
   const aiProvenance = provenanceForText(summary, provIndex);
