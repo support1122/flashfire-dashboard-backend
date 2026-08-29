@@ -1,3 +1,4 @@
+import { unsubscribeUrl, UNSUB_STREAMS } from "./unsubscribe.js";
 // Branded HTML email templates for client milestone alerts.
 //
 // Design (2026-08-24 redesign, modeled on Mattermost's notification mail):
@@ -116,6 +117,9 @@ export function renderClientMilestoneEmail({ client = {}, digest = {}, dashboard
   const action = (digest.actionRequired || "").trim();
   const received = formatReceived(digest.date);
   const cta = safeUrl(dashboardUrl) || "https://portal.flashfirejobs.com";
+  // Opting out of these stops the inbox alerts only. A client who wants the
+  // interview mail but not the daily count should not lose both.
+  const unsubUrl = unsubscribeUrl(client?.email, UNSUB_STREAMS.INBOX_ALERTS);
 
   // ── Subject line of OUR email ──
   const subject = `${meta.headline} - ${subjectLine}`.slice(0, 180);
@@ -180,8 +184,12 @@ export function renderClientMilestoneEmail({ client = {}, digest = {}, dashboard
       <!-- Footer -->
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;width:100%;">
         <tr><td align="center" style="padding:18px 20px 0;color:${BRAND.faint};font-size:12px;line-height:1.7;">
-          © 2026 Flashfire · You're receiving this because your job-search inbox is connected to Flashfire.<br>
-          <a href="https://portal.flashfirejobs.com" target="_blank" style="color:${BRAND.faint};text-decoration:underline;">portal.flashfirejobs.com</a>
+          © ${new Date().getFullYear()} Flashfire · You're receiving this because your job-search inbox is connected to Flashfire.<br>
+          <a href="https://portal.flashfirejobs.com" target="_blank" style="color:${BRAND.faint};text-decoration:underline;">portal.flashfirejobs.com</a>${
+            unsubUrl
+              ? ` &nbsp;·&nbsp; <a href="${unsubUrl}" target="_blank" style="color:${BRAND.faint};text-decoration:underline;">Unsubscribe</a>`
+              : ""
+          }
         </td></tr>
       </table>
 
@@ -205,6 +213,7 @@ export function renderClientMilestoneEmail({ client = {}, digest = {}, dashboard
   if (action) textLines.push("", `Next step: ${action}`);
   textLines.push("", `Open your dashboard: ${cta}`);
   textLines.push("", "- Flashfire, flagged from your connected inbox.");
+  if (unsubUrl) textLines.push("", `Unsubscribe: ${unsubUrl}`);
   const text = textLines.join("\n");
 
   return { subject, html, text, category: digest.category };

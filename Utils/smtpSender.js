@@ -124,9 +124,10 @@ export async function verifySmtp() {
  * @param {string} [a.replyTo]
  * @param {Object} [a.attachment] - { filename, mimetype, content (Buffer) }
  * @param {string} [a.category] - one of MAIL_CATEGORY; blocked if paused
+ * @param {Object} [a.headers] - extra SMTP headers, e.g. List-Unsubscribe
  * @returns {Promise<{ok: boolean, messageId?: string, from?: string, error?: string}>}
  */
-export async function sendViaSmtp({ to, subject, html, text, replyTo, attachment, category }) {
+export async function sendViaSmtp({ to, subject, html, text, replyTo, attachment, category, headers }) {
   // Hard stop for a paused stream. Unlabelled sends are allowed through.
   if (isMailCategoryPaused(category)) {
     console.warn(
@@ -143,7 +144,18 @@ export async function sendViaSmtp({ to, subject, html, text, replyTo, attachment
   const fromName = process.env.SMTP_FROM_NAME || "FlashFire";
   const from = fromName ? `"${fromName}" <${fromEmail}>` : fromEmail;
 
-  const mail = { from, to, subject, html, text, ...(replyTo ? { replyTo } : {}) };
+  // `headers` carries List-Unsubscribe / List-Unsubscribe-Post. Spread as a
+  // plain object so nodemailer emits them verbatim - Gmail and Yahoo read those
+  // exact header names and nothing else.
+  const mail = {
+    from,
+    to,
+    subject,
+    html,
+    text,
+    ...(replyTo ? { replyTo } : {}),
+    ...(headers && typeof headers === "object" && Object.keys(headers).length ? { headers } : {})
+  };
   if (attachment) {
     mail.attachments = [
       { filename: attachment.filename, content: attachment.content, contentType: attachment.mimetype }

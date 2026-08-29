@@ -67,6 +67,7 @@ import { renderReminderEmail, renderReminderMattermost } from "../../Utils/remin
 import { sendViaSmtp, isSmtpConfigured } from "../../Utils/smtpSender.js";
 import { sendToMattermost, isValidWebhookUrl, normalizeWebhookUrl } from "../../Utils/mattermostSender.js";
 import { resolvePaymentEmail } from "../../Schema_Models/ClientPaymentLookup.js";
+import { unsubscribeHeaders, UNSUB_STREAMS } from "../../Utils/unsubscribe.js";
 
 const LOG = "[client-reminders]";
 
@@ -734,11 +735,20 @@ export async function deliverReminder({
         // Utils/smtpSender.js. Tagging them with a category that later gets
         // paused would have this whole feature silently deliver nothing while
         // the history rows cheerfully logged "emails_paused".
+        // List-Unsubscribe turns the provider's own Unsubscribe button into a
+        // one-click opt-out. Gmail and Yahoo have required it on bulk mail
+        // since Feb 2024, and its absence costs deliverability for everyone
+        // sending from this account. Internal items get no header - the team
+        // does not unsubscribe from its own alerts.
         const res = await sendViaSmtp({
           to: dest.to,
           subject: rendered.subject,
           html: rendered.html,
-          text: rendered.text
+          text: rendered.text,
+          headers:
+            meta.internal === true
+              ? undefined
+              : unsubscribeHeaders(clientEmail, UNSUB_STREAMS.REMINDERS)
         });
         out.email = {
           attempted: true,

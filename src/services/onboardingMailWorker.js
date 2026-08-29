@@ -27,6 +27,7 @@ import { ClientPaymentLookup } from "../../Schema_Models/ClientPaymentLookup.js"
 import { OnboardingMailState, ONBOARDING_BACKFILL_MARKER } from "../../Schema_Models/OnboardingMailState.js";
 import { sendViaSmtp, isSmtpConfigured, isMailCategoryPaused, MAIL_CATEGORY } from "../../Utils/smtpSender.js";
 import { renderOnboardingEmail } from "../../Utils/onboardingMailTemplates.js";
+import { unsubscribeHeaders, UNSUB_STREAMS } from "../../Utils/unsubscribe.js";
 
 // ── Fixed config (hard-coded; no env sprawl) ──
 const CRON_EXPR = "*/15 * * * *"; // every 15 min
@@ -218,7 +219,8 @@ export async function sendDue() {
       subject: rendered.subject,
       html: rendered.html,
       text: rendered.text,
-      category: MAIL_CATEGORY.ONBOARDING
+      category: MAIL_CATEGORY.ONBOARDING,
+      headers: unsubscribeHeaders(doc.clientEmail || doc.paymentEmail, UNSUB_STREAMS.ONBOARDING)
     });
     step.attempts = (step.attempts || 0) + 1;
     if (result.ok) {

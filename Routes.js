@@ -11,6 +11,7 @@ import { getDashboardManagers, getDashboardManagerByName, syncDashboardManagers 
 import Add_Update_Profile from "./Controllers/Add_Update_Profile.js";
 import AddJob from "./Controllers/AddJob.js";
 import GetAllJobs from "./Controllers/GetAllJobs.js";
+import Unsubscribe from "./Controllers/Unsubscribe.js";
 import Get24HourJobs from "./Controllers/Get24HourJobs.js";
 import StoreJobAndUserDetails, { saveToDashboard } from "./Controllers/StoreJobAndUserDetails.js";
 import UpdateChanges from "./Controllers/UpdateChanges.js";
@@ -570,6 +571,13 @@ app.post('/operations/auto-optimize-saved', queueAutoOptimizeSavedJobs);
 //
 // Every route is gated by requireOpsKey (header `x-ops-key`), because they can
 // email a paying client and post into their Mattermost channel.
+// Unsubscribe. NO AUTH on purpose: the link has to work from an email client
+// with no session, and the HMAC in it is the authorisation. GET serves a page
+// for a human; POST is the one-click action Gmail and Yahoo perform on the
+// user's behalf (RFC 8058). See Utils/unsubscribe.js.
+app.get('/unsubscribe', Unsubscribe);
+app.post('/unsubscribe', Unsubscribe);
+
 app.post('/operations/reminders/get', requireOpsKey, getClientReminderConfig);
 app.put('/operations/reminders', requireOpsKey, updateClientReminderConfig);
 app.post('/operations/reminders/payment-email', requireOpsKey, setClientReminderPaymentEmail);

@@ -28,6 +28,7 @@ import {
 } from "../../Utils/clientMailTemplates.js";
 import { ClientReminderConfig } from "../../Schema_Models/ClientReminderConfig.js";
 import { sendToMattermost, isValidWebhookUrl, normalizeWebhookUrl } from "../../Utils/mattermostSender.js";
+import { unsubscribeHeaders, UNSUB_STREAMS } from "../../Utils/unsubscribe.js";
 
 // ─── Fixed config (hard-coded; the only runtime input is SMTP_USER/SMTP_PASS) ──
 const ENABLED = true; // gated upstream by the poll's master switch
@@ -257,7 +258,14 @@ export async function notifyClientForDigest({ digestDoc, client, mailbox }) {
 
   const result =
     CHANNEL === "smtp"
-      ? await sendViaSmtp({ to, subject, html, text, category: MAIL_CATEGORY.CLIENT_MILESTONE })
+      ? await sendViaSmtp({
+          to,
+          subject,
+          html,
+          text,
+          category: MAIL_CATEGORY.CLIENT_MILESTONE,
+          headers: unsubscribeHeaders(client?.email || to, UNSUB_STREAMS.INBOX_ALERTS)
+        })
       : await sendEmail({
           to,
           subject,

@@ -1,5 +1,13 @@
 import { AutopilotCreds } from "../Schema_Models/AutopilotCreds.js";
 
+// Every client is capped at 30 pushes per run: the default when nothing is
+// saved, and the highest value an operator may set.
+// Standard JobRight password for client accounts; a stored per-client
+// password always wins over it.
+const DEFAULT_JR_PASSWORD = "Jobhunt@2026";
+const DEFAULT_JOB_CAP = 30;
+const MAX_JOB_CAP = 30;
+
 // Autopilot credential store - see Schema_Models/AutopilotCreds.js for what
 // lives here and why it is plaintext. Every route below is mounted behind
 // requireOpsKey (x-ops-key header); the list route still never returns secrets.
@@ -31,10 +39,12 @@ export const getAutopilotCreds = async (req, res) => {
       data: {
         clientEmail: doc.clientEmail,
         jrEmail: doc.jrEmail || "",
-        jrPassword: doc.jrPassword || "",
+        jrPassword: doc.jrPassword || DEFAULT_JR_PASSWORD,
         extEmail: doc.extEmail || "",
         extPassword: doc.extPassword || "",
-        extCode: doc.extCode || ""
+        extCode: doc.extCode || "",
+        // A stored 0 predates the cap; report the effective value instead.
+        maxJobs: Number.isFinite(doc.maxJobs) && doc.maxJobs > 0 ? Math.min(doc.maxJobs, MAX_JOB_CAP) : DEFAULT_JOB_CAP
       }
     });
   } catch (error) {
@@ -52,6 +62,15 @@ export const putAutopilotCreds = async (req, res) => {
     const set = {};
     for (const k of allowed) {
       if (typeof req.body?.[k] === "string") set[k] = req.body[k].trim();
+    }
+    // maxJobs is numeric, so it cannot ride the string loop above - and an
+    // empty string must leave the stored value alone rather than reset it.
+    if (req.body?.maxJobs !== undefined && req.body.maxJobs !== "") {
+      const n = Number.parseInt(req.body.maxJobs, 10);
+      if (!Number.isInteger(n) || n < 1 || n > MAX_JOB_CAP) {
+        return res.status(400).json({ success: false, message: `maxJobs must be an integer between 1 and ${MAX_JOB_CAP}` });
+      }
+      set.maxJobs = n;
     }
     if (!Object.keys(set).length) {
       return res.status(400).json({ success: false, message: "no credential fields in body" });
