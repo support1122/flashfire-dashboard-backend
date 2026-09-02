@@ -241,6 +241,8 @@ const scheduleDebouncedRebuild = (userEmail) => {
       const result = await buildSummaryForEmail(userEmail, "job-removal");
       if (result?.success) {
         console.log(`[summary-rebuild:job-removal] ok email=${userEmail} words=${result.wordCount} source=${result.source}`);
+      } else if (result?.skipped) {
+        console.log(`[summary-rebuild:job-removal] skipped email=${userEmail} — a build is already running, profile left stale for the sweep`);
       } else {
         console.warn(`[summary-rebuild:job-removal] fail email=${userEmail} err=${result?.error} msg=${result?.message}`);
       }

@@ -33,12 +33,45 @@ const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
 // is this value, so give it real headroom. Override with OPENAI_TIMEOUT_MS.
 const OPENAI_TIMEOUT_MS = Number(process.env.OPENAI_TIMEOUT_MS) || 180_000;
 
+// Wall-clock ceiling for ONE whole build (resume fetch + every OpenAI call).
+// Without it the pieces multiply: 3 round-1 attempts x (180s + a 180s network
+// retry) + a 180s notes pass is ~24 min, far past the window the status
+// endpoint and the clients-tracking poller are willing to wait. Every OpenAI
+// call is clamped to the time left in this budget, and the round-1 reroll loop
+// stops once there isn't room for another full attempt.
+const BUILD_BUDGET_MS = Number(process.env.SUMMARY_BUILD_BUDGET_MS) || 8 * 60 * 1000;
+// Don't start an OpenAI call with less than this left — it would only abort.
+const MIN_CALL_MS = 15_000;
+// A build still flagged "building" this long after it started is treated as
+// dead (process restarted mid-build) so a fresh trigger can claim it. MUST
+// stay above BUILD_BUDGET_MS: while a build is legitimately running, the
+// status endpoint would otherwise report a stale "done"/"error" and the
+// clients-tracking poller would show the PREVIOUS build's word count as if it
+// were the new one.
+const BUILD_STALE_MS = BUILD_BUDGET_MS + 90_000;
+
+// msLeft — milliseconds remaining before `deadlineAt` (epoch ms). Returns
+// Infinity when no deadline was threaded through (direct/legacy callers).
+function msLeft(deadlineAt) {
+  if (!deadlineAt) return Infinity;
+  return deadlineAt - Date.now();
+}
+
 // postOpenAI — axios POST to chat.completions with one retry on a timeout /
 // transient network abort (ECONNABORTED / ECONNRESET / no response). A real
 // HTTP error (4xx/5xx with a body) is NOT retried — it re-throws immediately.
-async function postOpenAI(body, apiKey) {
+// `deadlineAt` clamps both the per-call timeout and whether the retry is even
+// attempted, so a build can never outrun BUILD_BUDGET_MS.
+async function postOpenAI(body, apiKey, deadlineAt = 0) {
+  const budget = () => Math.min(OPENAI_TIMEOUT_MS, msLeft(deadlineAt));
+  const first = budget();
+  if (first < MIN_CALL_MS) {
+    const err = new Error(`build budget exhausted (${Math.round(first / 1000)}s left)`);
+    err.code = "EBUDGET";
+    throw err;
+  }
   const cfg = {
-    timeout: OPENAI_TIMEOUT_MS,
+    timeout: first,
     headers: {
       "content-type": "application/json",
       authorization: `Bearer ${apiKey || OPENAI_API_KEY}`,
@@ -50,9 +83,29 @@ async function postOpenAI(body, apiKey) {
     const transient = !err.response
       && (err.code === "ECONNABORTED" || err.code === "ECONNRESET" || err.code === "ETIMEDOUT");
     if (!transient) throw err;
-    console.warn(`[BuildAiSummary] OpenAI call ${err.code} — retrying once`);
-    return await axios.post("https://api.openai.com/v1/chat/completions", body, cfg);
+    const retryTimeout = budget();
+    if (retryTimeout < MIN_CALL_MS) {
+      console.warn(`[BuildAiSummary] OpenAI call ${err.code} — no budget left to retry`);
+      throw err;
+    }
+    console.warn(`[BuildAiSummary] OpenAI call ${err.code} — retrying once (${Math.round(retryTimeout / 1000)}s budget)`);
+    return await axios.post("https://api.openai.com/v1/chat/completions", body, { ...cfg, timeout: retryTimeout });
   }
+}
+
+// resolveProfileByEmail — the lookup ladder every summary consumer uses:
+// exact lowercase first, then a case-insensitive match for legacy mixed-case
+// profile rows. GetProfile.resolveProfile documents why this matters — the
+// profiles the auto-rebuild triggers WRITE to are exactly the ones an
+// exact-match-only lookup 404s on.
+async function resolveProfileByEmail(email, projection = null) {
+  const lower = String(email).toLowerCase();
+  const q = (filter) => (projection
+    ? ProfileModel.findOne(filter).select(projection).lean()
+    : ProfileModel.findOne(filter).lean());
+  const hit = await q({ email: lower });
+  if (hit) return hit;
+  return q({ email: { $regex: new RegExp(`^${escapeRegex(email)}$`, "i") } });
 }
 const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4o-mini";
 // Summary builds use gpt-4o-mini exclusively. Gemini path removed after it
@@ -1137,7 +1190,7 @@ const SUMMARY_TEMPERATURE = 0;
 // retryHint — when a previous round-1 attempt came back missing required
 // headers, this string is appended to the system message so the reroll is
 // explicitly told which sections to restore. Empty on the first attempt.
-async function callOpenAI(profile, resume, existingSummary, profileDiff, apiKey, overlay = null, retryHint = "") {
+async function callOpenAI(profile, resume, existingSummary, profileDiff, apiKey, overlay = null, retryHint = "", deadlineAt = 0) {
   const body = {
     model: OPENAI_MODEL,
     messages: [
@@ -1150,7 +1203,7 @@ async function callOpenAI(profile, resume, existingSummary, profileDiff, apiKey,
     temperature: SUMMARY_TEMPERATURE,
   };
   try {
-    const res = await postOpenAI(body, apiKey);
+    const res = await postOpenAI(body, apiKey, deadlineAt);
     recordAiUsage({
       source: AI_USAGE_SOURCES.AI_SUMMARY,
       model: res.data?.model || OPENAI_MODEL,
@@ -1177,7 +1230,7 @@ async function callOpenAI(profile, resume, existingSummary, profileDiff, apiKey,
 // reflected with correct polarity. Runs only when notes exist (+1 call/build).
 // Fail-open: returns the input brief unchanged on any error/empty — the
 // deterministic enforceNoteDirectives still runs afterwards as the guarantee.
-async function applyNotesPass(brief, notesText, apiKey, removalDirectivesText = "") {
+async function applyNotesPass(brief, notesText, apiKey, removalDirectivesText = "", deadlineAt = 0) {
   if (!notesText && !removalDirectivesText) return brief;
   const sys = `You revise a candidate brief so it FULLY reflects the operator's notes and the client's removal-feedback directives. Output ONLY the corrected brief — same section headers, same order, keep all existing content, change nothing the inputs don't require.
 Rules:
@@ -1196,7 +1249,7 @@ Rules:
       model: OPENAI_MODEL,
       messages: [{ role: "system", content: sys }, { role: "user", content: user }],
       temperature: 0,
-    }, apiKey);
+    }, apiKey, deadlineAt);
     recordAiUsage({
       source: AI_USAGE_SOURCES.AI_SUMMARY,
       model: res.data?.model || OPENAI_MODEL,
@@ -1234,37 +1287,79 @@ export async function buildSummaryForEmail(email, reasonTag = "manual") {
     if (!email || typeof email !== "string" || !email.includes("@")) {
       return { success: false, status: 400, error: "BAD_INPUT", message: "email is required", step: "validate" };
     }
-    const lower = String(email).toLowerCase();
-    let profile = await ProfileModel.findOne({ email: lower }).lean();
-    if (!profile) {
-      profile = await ProfileModel.findOne({
-        email: { $regex: new RegExp(`^${escapeRegex(email)}$`, "i") },
-      }).lean();
-    }
+    const profile = await resolveProfileByEmail(email);
     if (!profile) {
       return { success: false, status: 404, error: "PROFILE_NOT_FOUND", message: `No profile in DB for ${email}`, step: "loading-profile" };
     }
-    return await runForProfileCore(profile, effectiveKey, reasonTag);
-  } catch (err) {
-    console.error("buildSummaryForEmail fatal:", err);
-    return { success: false, status: 500, error: "INTERNAL", message: err.message, step: "internal" };
-  }
-}
 
-// A build older than this is treated as dead (process restarted mid-build),
-// so a fresh POST /build-ai-summary is allowed to start a new one.
-const BUILD_STALE_MS = 5 * 60 * 1000;
+    // Claim the build atomically. Every trigger routes through here — the
+    // Build button, job-removal feedback, resume attach, profile create/update
+    // and the 30-min cron sweep — so this is the single place that can stop
+    // two builds racing on the same profile document. Two overlapping builds
+    // both write the full aiSummaryMeta and aiSummaryPrevious, so the loser's
+    // text wins at random and the operator sees a summary that ignores the
+    // change they just made.
+    const startedAt = new Date();
+    const staleCutoff = new Date(startedAt.getTime() - BUILD_STALE_MS);
+    const claimed = await ProfileModel.findOneAndUpdate(
+      {
+        _id: profile._id,
+        $or: [
+          { "aiSummaryMeta.status": { $ne: "building" } },
+          { "aiSummaryMeta.buildStartedAt": null },
+          { "aiSummaryMeta.buildStartedAt": { $exists: false } },
+          { "aiSummaryMeta.buildStartedAt": { $lt: staleCutoff } },
+        ],
+      },
+      {
+        $set: {
+          "aiSummaryMeta.status": "building",
+          "aiSummaryMeta.buildStartedAt": startedAt,
+          "aiSummaryMeta.lastError": null,
+        },
+      },
+      { new: false, lean: true },
+    );
+    if (!claimed) {
+      // Record that a rebuild was wanted DURING the running build. Without
+      // this the in-flight build (which started before this change existed)
+      // clears summaryStale on success and the change — a removal reason, a
+      // freshly attached resume — never reaches the brief.
+      const running = await ProfileModel.findOneAndUpdate(
+        { _id: profile._id },
+        { $set: { summaryStale: true, summaryRebuildRequestedAt: startedAt } },
+        { new: true, lean: true },
+      ).select({ "aiSummaryMeta.buildStartedAt": 1 });
+      console.log(`[BuildAiSummary] build already in progress email=${email} reason=${reasonTag} — skipping duplicate`);
+      return {
+        success: false,
+        skipped: true,
+        status: 202,
+        error: "BUILD_IN_PROGRESS",
+        message: "A build is already running for this client.",
+        step: "claim",
+        buildStartedAt: running?.aiSummaryMeta?.buildStartedAt || null,
+      };
+    }
 
-// runBuildInBackground — kick off buildSummaryForEmail without holding the
-// HTTP request open. On failure we still record the error on the profile so
-// the status endpoint (and the cron sweeper) can see it; buildSummaryForEmail
-// itself writes status:"done" on success.
-async function runBuildInBackground(email, reasonTag) {
-  try {
-    const result = await buildSummaryForEmail(email, reasonTag);
+    // runForProfileCore persists the whole aiSummaryMeta object, so hand it
+    // the claim we just wrote — otherwise it would restore the PREVIOUS
+    // buildStartedAt and the staleness maths would be wrong on the next run.
+    profile.aiSummaryMeta = { ...(profile.aiSummaryMeta || {}), status: "building", buildStartedAt: startedAt };
+
+    let result;
+    try {
+      result = await runForProfileCore(profile, effectiveKey, reasonTag, startedAt.getTime() + BUILD_BUDGET_MS);
+    } catch (err) {
+      result = { success: false, status: 500, error: "INTERNAL", message: err?.message || String(err), step: "internal" };
+    }
+    // runForProfileCore writes status:"done" itself on success. Every failure
+    // path returns early without touching the document, so release the claim
+    // here — otherwise the profile stays "building" until BUILD_STALE_MS and
+    // the UI spins on a build that is already dead.
     if (!result?.success) {
       await ProfileModel.updateOne(
-        { email: String(email).toLowerCase() },
+        { _id: profile._id },
         {
           $set: {
             "aiSummaryMeta.status": "error",
@@ -1278,20 +1373,31 @@ async function runBuildInBackground(email, reasonTag) {
         },
       ).catch(() => {});
       console.error(
-        `[BuildAiSummary] background build failed email=${email} error=${result?.error} step=${result?.step} msg=${result?.message}`,
+        `[BuildAiSummary] build failed email=${email} reason=${reasonTag} error=${result?.error} step=${result?.step} msg=${result?.message}`,
       );
     }
+    return result;
   } catch (err) {
-    await ProfileModel.updateOne(
-      { email: String(email).toLowerCase() },
-      {
-        $set: {
-          "aiSummaryMeta.status": "error",
-          "aiSummaryMeta.lastAttemptAt": new Date(),
-          "aiSummaryMeta.lastError": { error: "INTERNAL", message: err?.message || String(err), step: "background" },
-        },
-      },
-    ).catch(() => {});
+    console.error("buildSummaryForEmail fatal:", err);
+    return { success: false, status: 500, error: "INTERNAL", message: err.message, step: "internal" };
+  }
+}
+
+// runBuildInBackground — kick off buildSummaryForEmail without holding the
+// HTTP request open. buildSummaryForEmail owns the whole build lifecycle
+// (claim → status:"done" on success, status:"error" + lastError on failure),
+// so there is nothing to write here; this only logs the outcome.
+async function runBuildInBackground(email, reasonTag) {
+  try {
+    const result = await buildSummaryForEmail(email, reasonTag);
+    if (result?.success) {
+      console.log(`[BuildAiSummary] background build ok email=${email} words=${result.wordCount} source=${result.source}`);
+    } else if (result?.skipped) {
+      console.log(`[BuildAiSummary] background build skipped email=${email} — ${result.error}`);
+    }
+  } catch (err) {
+    // buildSummaryForEmail already catches everything; this is belt-and-braces
+    // so an unhandled rejection can never take the process down.
     console.error(`[BuildAiSummary] background build threw email=${email}:`, err);
   }
 }
@@ -1300,84 +1406,94 @@ async function runBuildInBackground(email, reasonTag) {
 // Returns 202 immediately and builds in the background — the full build is
 // 90-150s (resume fetch + two OpenAI passes), longer than Cloudflare's ~100s
 // origin timeout, so a synchronous response reliably 502s. The clients-tracking
-// AI Summary page polls GET /ai-summary-status until status leaves "building".
+// AI Summary page polls GET /ai-summary-status until status leaves "building"
+// AND builtAt catches up to the `buildStartedAt` returned here.
 export default async function BuildAiSummary(req, res) {
   const { email } = req.body || {};
   if (!email || typeof email !== "string" || !email.includes("@")) {
     return res.status(400).json({ success: false, error: "BAD_INPUT", message: "email is required", step: "validate" });
   }
-  const lower = email.toLowerCase();
-  const profile = await ProfileModel.findOne({ email: lower })
-    .select({ _id: 1, aiSummaryMeta: 1 })
-    .lean();
+  // Case-insensitive, same as every other summary consumer — an exact-match
+  // lookup 404s on legacy mixed-case profile rows that build fine everywhere
+  // else.
+  const profile = await resolveProfileByEmail(email, { _id: 1, email: 1, aiSummaryMeta: 1 });
   if (!profile) {
     return res.status(404).json({ success: false, error: "PROFILE_NOT_FOUND", message: `No profile in DB for ${email}`, step: "loading-profile" });
   }
 
-  // Already building and it hasn't gone stale → report in-progress, don't
-  // start a second concurrent build (they'd race on the same profile doc).
+  // Informational only — the real guard is the atomic claim inside
+  // buildSummaryForEmail, which also covers builds started by the auto
+  // triggers (job removal, resume attach, profile save, cron sweep).
   const meta = profile.aiSummaryMeta || {};
   const startedAt = meta.buildStartedAt ? new Date(meta.buildStartedAt).getTime() : 0;
-  if (meta.status === "building" && startedAt && Date.now() - startedAt < BUILD_STALE_MS) {
-    return res.status(202).json({
-      success: true,
-      status: "building",
-      alreadyRunning: true,
-      buildStartedAt: meta.buildStartedAt,
-      message: "A build is already in progress for this client.",
-    });
-  }
+  const alreadyRunning = meta.status === "building" && startedAt > 0 && Date.now() - startedAt < BUILD_STALE_MS;
 
-  const now = new Date();
-  await ProfileModel.updateOne(
-    { _id: profile._id },
-    {
-      $set: {
-        "aiSummaryMeta.status": "building",
-        "aiSummaryMeta.buildStartedAt": now,
-        "aiSummaryMeta.lastError": null,
-      },
-    },
-  );
+  // Timestamp handed back to the poller. Taken BEFORE the build is fired, so
+  // it can never be later than the claim's buildStartedAt — the poller uses it
+  // to reject a "done" left over from an earlier build.
+  const requestedAt = new Date();
 
   // Fire and forget — do NOT await.
-  runBuildInBackground(lower, "manual");
+  runBuildInBackground(profile.email || String(email).toLowerCase(), "manual");
 
   return res.status(202).json({
     success: true,
     status: "building",
-    buildStartedAt: now.toISOString(),
-    message: "Build started. Poll /ai-summary-status for completion.",
+    alreadyRunning,
+    buildStartedAt: (alreadyRunning ? new Date(startedAt) : requestedAt).toISOString(),
+    requestedAt: requestedAt.toISOString(),
+    message: alreadyRunning
+      ? "A build is already in progress for this client."
+      : "Build started. Poll /ai-summary-status for completion.",
   });
 }
 
 // GET /ai-summary-status?email=
 // Lightweight poll target for the clients-tracking AI Summary page.
 export async function AiSummaryStatus(req, res) {
-  const email = (req.query?.email || "").toString().toLowerCase();
+  const email = (req.query?.email || "").toString();
   if (!email || !email.includes("@")) {
     return res.status(400).json({ success: false, error: "BAD_INPUT", message: "email query param is required" });
   }
-  const profile = await ProfileModel.findOne({ email })
-    .select({ email: 1, aiSummary: 1, aiSummaryMeta: 1, summaryStale: 1 })
-    .lean();
+  const profile = await resolveProfileByEmail(email, {
+    email: 1, aiSummary: 1, aiSummaryMeta: 1, summaryStale: 1,
+  });
   if (!profile) {
     return res.status(404).json({ success: false, error: "PROFILE_NOT_FOUND", message: `No profile in DB for ${email}` });
   }
   const meta = profile.aiSummaryMeta || {};
   let status = meta.status || (meta.builtAt ? "done" : "idle");
   // Treat a build that started too long ago with no result as dead so the UI
-  // stops spinning forever after a mid-build process restart.
+  // stops spinning forever after a mid-build process restart. BUILD_STALE_MS
+  // sits above BUILD_BUDGET_MS, so a build that is still legitimately running
+  // never trips this.
   const startedAt = meta.buildStartedAt ? new Date(meta.buildStartedAt).getTime() : 0;
   if (status === "building" && startedAt && Date.now() - startedAt > BUILD_STALE_MS) {
-    status = meta.builtAt ? "done" : "error";
+    status = "error";
+    // Persist it — otherwise the document stays "building" forever and every
+    // other reader of aiSummaryMeta.status keeps showing a build that died.
+    ProfileModel.updateOne(
+      { email: profile.email },
+      {
+        $set: {
+          "aiSummaryMeta.status": "error",
+          "aiSummaryMeta.lastError": {
+            error: "BUILD_ABANDONED",
+            message: "Build did not finish — the server most likely restarted mid-build.",
+            step: "background",
+          },
+        },
+      },
+    ).catch(() => {});
   }
   return res.status(200).json({
     success: true,
     status,
     builtAt: meta.builtAt || null,
     buildStartedAt: meta.buildStartedAt || null,
-    lastError: meta.lastError || null,
+    lastError: status === "error" && !meta.lastError
+      ? { error: "BUILD_ABANDONED", message: "Build did not finish — the server most likely restarted mid-build.", step: "background" }
+      : meta.lastError || null,
     wordCount: meta.wordCount || 0,
     source: meta.source || "",
     model: meta.model || "",
@@ -1415,7 +1531,7 @@ const REQUIRED_SECTIONS = [
 // missingSections — which required headers a brief does NOT contain. Prefix
 // match, so the parenthetical suffixes ("# Strong Signals (auto-PICK if
 // matched)") still count as present.
-function missingSections(text) {
+export function missingSections(text) {
   const heads = String(text || "")
     .split("\n")
     .filter((l) => /^\s*#\s/.test(l))
@@ -1431,12 +1547,48 @@ function missingSections(text) {
 // despite the prompt. Rather than hard-fail the whole build, we backfill so
 // the six-header contract the grader + JR-direct extension depend on always
 // holds. Deterministic, no LLM call.
-function ensureRequiredSections(text) {
-  let out = String(text || "").trimEnd();
-  for (const header of missingSections(out)) {
-    out += `\n\n${header}\n- None specified.\n`;
+export function ensureRequiredSections(text) {
+  const missing = missingSections(text);
+  if (!missing.length) return String(text || "").trimEnd();
+  const missingSet = new Set(missing);
+  // Split the brief into "everything before the first # header" + one block
+  // per header, then rebuild in REQUIRED_SECTIONS order with the placeholders
+  // slotted into place. Appending them at the end instead would render
+  // e.g. "# Hard Constraints" below "# Notes for Grader" in clients-tracking.
+  const lines = String(text || "").split("\n");
+  const preamble = [];
+  const blocks = []; // { key, lines }
+  let current = null;
+  for (const line of lines) {
+    if (/^\s*#\s/.test(line)) {
+      current = { key: line.trim().toLowerCase(), lines: [line] };
+      blocks.push(current);
+      continue;
+    }
+    (current ? current.lines : preamble).push(line);
   }
-  return out;
+  const placeholder = (header) => [header, "- None specified."];
+  const ordered = [];
+  const used = new Set();
+  for (const want of REQUIRED_SECTIONS) {
+    if (missingSet.has(want)) {
+      ordered.push(placeholder(want));
+      continue;
+    }
+    const idx = blocks.findIndex((b, i) => !used.has(i) && b.key.startsWith(want.toLowerCase()));
+    if (idx !== -1) {
+      used.add(idx);
+      ordered.push(blocks[idx].lines);
+    }
+  }
+  // Anything the model added on top of the six required headers keeps its
+  // content and lands after them rather than being dropped.
+  blocks.forEach((b, i) => { if (!used.has(i)) ordered.push(b.lines); });
+  const body = ordered
+    .map((blk) => blk.join("\n").replace(/\s+$/, ""))
+    .join("\n\n");
+  const head = preamble.join("\n").trim();
+  return (head ? `${head}\n\n${body}` : body).trimEnd();
 }
 
 // enforceRemovalDirectives — deterministic backstop for removal feedback,
@@ -1526,8 +1678,13 @@ function ensureBulletInSection(summary, headerPrefix, needle, bullet, norm) {
   return lines.join("\n");
 }
 
-async function runForProfileCore(profile, apiKey, reasonTag = "manual") {
+async function runForProfileCore(profile, apiKey, reasonTag = "manual", deadlineAt = 0) {
   const email = profile.email;
+  // When this build claimed the profile — used at persist time to tell whether
+  // another trigger asked for a rebuild while this one was running.
+  const buildStartedMs = profile?.aiSummaryMeta?.buildStartedAt
+    ? new Date(profile.aiSummaryMeta.buildStartedAt).getTime()
+    : 0;
   const resumeRes = await fetchResume(email);
   const resume = resumeRes.ok ? resumeRes.resume : null;
   const source = resume ? "profile+resume" : "profile-only";
@@ -1578,13 +1735,22 @@ async function runForProfileCore(profile, apiKey, reasonTag = "manual") {
   let round1Missing = [];
   let round1Raw = "";
   for (let attempt = 1; attempt <= MAX_ROUND1_ATTEMPTS; attempt++) {
+    // Only reroll while there is room for a full attempt AND the notes pass
+    // that follows it. Without this the retries can eat the entire build
+    // budget and the brief never gets persisted at all.
+    if (attempt > 1 && msLeft(deadlineAt) < 2 * OPENAI_TIMEOUT_MS) {
+      console.warn(
+        `[BuildAiSummary] round-1 reroll skipped (budget ${Math.round(msLeft(deadlineAt) / 1000)}s left) email=${profile.email}`,
+      );
+      break;
+    }
     const hint = round1Missing.length
       ? `\n\nCRITICAL: your previous attempt OMITTED required section(s): ${round1Missing.join(", ")}. `
         + `Re-emit the FULL brief now with ALL SIX headers, each on its own line, exactly as: `
         + `"# Candidate Summary", "# Target Roles", "# Hard Constraints", "# Strong Signals", `
         + `"# Hard Disqualifiers", "# Notes for Grader". Do not skip any header even if a section would be short.`
       : "";
-    ai = await callOpenAI(profile, resume, existingSummary, profileDiff, apiKey, overlayForPrompt, hint);
+    ai = await callOpenAI(profile, resume, existingSummary, profileDiff, apiKey, overlayForPrompt, hint, deadlineAt);
     if (!ai.ok) break; // network/HTTP error — handled below, no point rerolling
     round1Raw = (ai.summary || "")
       .replace(/^\s*<{2,}[^<>]*>{2,}\s*$/gm, "")
@@ -1652,7 +1818,7 @@ async function runForProfileCore(profile, apiKey, reasonTag = "manual") {
     console.warn(
       `[BuildAiSummary] round-1 still missing ${missingRound1.join(", ")} after ${MAX_ROUND1_ATTEMPTS} attempts email=${profile.email} — backfilling placeholders`,
     );
-    summary = ensureRequiredSections(summary).slice(0, MAX_SUMMARY_CHARS);
+    summary = ensureRequiredSections(summary.slice(0, MAX_SUMMARY_CHARS));
   }
   // Round 2 (LLM): re-apply the operator notes AND the pre-resolved removal
   // directives so every directive is reflected with correct polarity. The
@@ -1664,7 +1830,7 @@ async function runForProfileCore(profile, apiKey, reasonTag = "manual") {
     })
     .join("\n");
   const beforeNotesPass = summary;
-  summary = (await applyNotesPass(summary, (profile?.aiNotes?.text || "").trim(), apiKey, removalDirectivesText)).slice(0, MAX_SUMMARY_CHARS);
+  summary = (await applyNotesPass(summary, (profile?.aiNotes?.text || "").trim(), apiKey, removalDirectivesText, deadlineAt)).slice(0, MAX_SUMMARY_CHARS);
   // The notes pass rewrites the WHOLE brief. If its rewrite dropped a required
   // section, keep round 1 — a brief that lost # Hard Disqualifiers grades with
   // no auto-skips at all, which is worse than one missing a note directive
@@ -1679,7 +1845,7 @@ async function runForProfileCore(profile, apiKey, reasonTag = "manual") {
   // round-1 itself may have been backfilled with placeholders above; if the
   // revert still leaves anything missing, backfill again so we can't ship a
   // brief with fewer than six headers.
-  summary = ensureRequiredSections(summary).slice(0, MAX_SUMMARY_CHARS);
+  summary = ensureRequiredSections(summary.slice(0, MAX_SUMMARY_CHARS));
   // Apply operator's saved format overlay: if enabled, re-inject any bullets
   // the operator added on top of the previous build + replace any
   // locked-section bodies verbatim. Pure AI output if no overlay or overlay
@@ -1726,7 +1892,7 @@ async function runForProfileCore(profile, apiKey, reasonTag = "manual") {
     console.warn(
       `[BuildAiSummary] FINAL brief missing section(s) ${missingFinal.join(", ")} email=${profile.email} — backfilling placeholders before persist`,
     );
-    summary = ensureRequiredSections(summary).slice(0, MAX_SUMMARY_CHARS);
+    summary = ensureRequiredSections(summary.slice(0, MAX_SUMMARY_CHARS));
   }
   // Now that the text is final, derive the positional provenance the UI reads.
   const aiProvenance = provenanceForText(summary, provIndex);
@@ -1770,6 +1936,21 @@ async function runForProfileCore(profile, apiKey, reasonTag = "manual") {
     },
     { new: true, lean: true },
   );
+
+  // A trigger that fired while this build was running was skipped as a
+  // duplicate, so this brief does not reflect whatever changed. Keep the
+  // profile stale and let the 30-min sweep rebuild it.
+  const requestedDuringBuild = updated?.summaryRebuildRequestedAt
+    && buildStartedMs
+    && new Date(updated.summaryRebuildRequestedAt).getTime() > buildStartedMs;
+  if (requestedDuringBuild && !resumeFetchFailed) {
+    console.log(`[BuildAiSummary] rebuild was requested mid-build email=${profile.email} — leaving summaryStale=true for the sweep`);
+    await ProfileModel.updateOne({ _id: profile._id }, { $set: { summaryStale: true } }).catch(() => {});
+  } else if (updated?.summaryRebuildRequestedAt) {
+    // This build started after the request, so it already reflects it. Clear
+    // the flag or the sweeper's cooldown exemption would fire forever.
+    await ProfileModel.updateOne({ _id: profile._id }, { $set: { summaryRebuildRequestedAt: null } }).catch(() => {});
+  }
 
   return {
     success: true,
