@@ -561,6 +561,18 @@ export const profileSchema = new mongoose.Schema({
     required: false,
     default: true,
   },
+  // When a rebuild trigger fires while a build is ALREADY running, that
+  // trigger is skipped (two concurrent builds race on the same document) and
+  // its timestamp is recorded here instead. The running build compares this
+  // against its own start time on persist: newer means it never saw the change
+  // that fired the skipped trigger, so it leaves summaryStale=true and the
+  // 30-min sweep rebuilds. Lives OUTSIDE aiSummaryMeta on purpose — the build
+  // rewrites that whole object and would clobber the flag.
+  summaryRebuildRequestedAt: {
+    type: Date,
+    required: false,
+    default: null,
+  },
   // Operator-saved "format overlay". When enabled, every future
   // BuildAiSummary rebuild re-injects the bullets the operator added on top
   // of the AI's output (per # section). Set via POST /save-summary-overlay
