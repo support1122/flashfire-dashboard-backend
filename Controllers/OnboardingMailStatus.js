@@ -18,7 +18,7 @@
 import { JobModel } from "../Schema_Models/JobModel.js";
 import { ClientPaymentLookup } from "../Schema_Models/ClientPaymentLookup.js";
 import { OnboardingMailState } from "../Schema_Models/OnboardingMailState.js";
-import { stepsForPlan } from "../src/services/onboardingMailWorker.js";
+import { stepsForPlan, planIncludesStep } from "../src/services/onboardingMailWorker.js";
 import { renderOnboardingEmail, isOnboardingStep } from "../Utils/onboardingMailTemplates.js";
 import {
   sendViaSmtp,
@@ -118,6 +118,9 @@ export async function OnboardingMailStatus(req, res) {
       return {
         key,
         label: STEP_LABEL[key] || key,
+        // The client's plan entitles them to this email. Drives the "Not in
+        // plan" tag in clients-tracking, which also hides the send button.
+        inPlan: true,
         scheduled: !!s,
         sent,
         sentAt: s?.sentAt || null,
@@ -145,6 +148,7 @@ export async function OnboardingMailStatus(req, res) {
       .map((s) => ({
         key: s.key,
         label: STEP_LABEL[s.key] || s.key,
+        inPlan: false,
         scheduled: true,
         sent: !!s.sentAt,
         sentAt: s.sentAt || null,
@@ -152,7 +156,9 @@ export async function OnboardingMailStatus(req, res) {
         attempts: s.attempts || 0,
         error: s.error || "",
         messageId: s.messageId || "",
-        state: s.sentAt ? "sent" : "pending",
+        // Never "pending": the worker drops an unsent out-of-plan step from the
+        // sequence, so one that is still here and unsent is not going anywhere.
+        state: s.sentAt ? "sent" : "not-scheduled",
         reason: "not in the client's current plan",
       }));
 
@@ -220,6 +226,19 @@ export async function SendOnboardingMailStep(req, res) {
     if (!EMAIL_RE.test(paymentEmail)) {
       return res.status(400).json({
         error: "no payment email on file — onboarding mail is only ever sent to the payment email",
+      });
+    }
+
+    // Plan gate, same rule the worker applies at send time. Without it the
+    // "Send again" button is a hole straight through the gating: an operator
+    // could hand-send "LinkedIn optimisation done" to a Prime client, who never
+    // bought a LinkedIn optimisation. `force` is the deliberate override.
+    const planType = lc(client?.planType || state?.planType);
+    if (!planIncludesStep(planType, key) && !force) {
+      return res.status(409).json({
+        error: `'${key}' is not part of the ${planType || "client's"} plan`,
+        planType,
+        hint: "pass force:true to send it anyway",
       });
     }
 

@@ -6,9 +6,17 @@
 //   2. cover letter is ready      → check WhatsApp group   (executive/prime only)
 //   3. LinkedIn optimization done → check WhatsApp group
 //
-// Plan gating:
-//   executive → all three (only plan that gets the cover letter)
-//   prime / professional / ignite → base résumé + LinkedIn (no cover letter)
+// Plan gating — a client is only ever told about work their plan actually
+// includes. LinkedIn optimisation is sold with Professional and Executive only
+// (the same rule clients-tracking applies in src/utils/planFeatures.js), so
+// Prime and Ignite clients must never receive the LinkedIn email:
+//   executive    → base résumé + cover letter + LinkedIn (only plan with the cover letter)
+//   professional → base résumé + LinkedIn
+//   prime        → base résumé
+//   ignite       → base résumé
+// The gate is applied twice: at schedule time (stepsForPlan) and again at send
+// time, because a sequence scheduled under the old rules — or before a plan
+// change — still carries the step in its OnboardingMailState doc.
 //
 // SAFETY — the big one: many existing clients are already past 3 applied cards,
 // so on first run we BACKFILL those (marker-guarded, one time) as "skipped" and
@@ -42,11 +50,15 @@ const MAX_SENDS_PER_TICK = 25;
 // Which steps each plan receives, in order.
 const PLAN_STEPS = {
   executive: ["base_resume", "cover_letter", "linkedin"],
-  prime: ["base_resume", "linkedin"],
   professional: ["base_resume", "linkedin"],
-  ignite: ["base_resume", "linkedin"]
+  prime: ["base_resume"],
+  "free trial": ["base_resume"], // legacy alias for prime — see Utils/dailyCapGuard.js
+  ignite: ["base_resume"]
 };
-const DEFAULT_STEPS = ["base_resume", "linkedin"];
+// Unknown or missing plan: base résumé only. Claiming a LinkedIn optimisation
+// the client may not have bought is the expensive mistake here; a missing email
+// is recoverable from the Onboarding Emails panel in clients-tracking.
+const DEFAULT_STEPS = ["base_resume"];
 
 // Enable only on the real Render deploy (or forced), and only with SMTP — a
 // laptop sharing the prod DB must never fire onboarding mail to real clients.
@@ -62,6 +74,25 @@ const lc = (s) => String(s || "").toLowerCase().trim();
 
 export function stepsForPlan(planType) {
   return PLAN_STEPS[lc(planType)] || DEFAULT_STEPS;
+}
+
+// planIncludesStep — is this step part of what `planType` bought?
+export function planIncludesStep(planType, key) {
+  return stepsForPlan(planType).includes(key);
+}
+
+// livePlanType — the client's plan RIGHT NOW, not the one stamped on the
+// sequence when it was scheduled. A plan downgrade (or a rule change like
+// dropping LinkedIn from Prime) has to be able to stop a step that is already
+// queued, so the send-time gate reads the tracking record and only falls back
+// to the doc when the client can't be resolved.
+async function livePlanType(doc) {
+  const email = lc(doc.clientEmail);
+  const row = await ClientPaymentLookup.findOne({ email })
+    .select("planType")
+    .lean()
+    .catch(() => null);
+  return lc(row?.planType || doc.planType);
 }
 
 // Emails (lowercased) of every client with MORE THAN APPLIED_THRESHOLD applied
@@ -193,6 +224,24 @@ export async function sendDue() {
       continue;
     }
     const step = doc.steps[idx];
+
+    // Send-time plan gate. base_resume is in every plan, so only the gated
+    // steps pay for a lookup. A step the client's CURRENT plan doesn't include
+    // is dropped from the sequence outright — it was never sent, and leaving it
+    // queued would either mail it later or block the steps behind it. This is
+    // what stops a Prime client who was scheduled under the old rules (base
+    // résumé + LinkedIn) from still receiving the LinkedIn email.
+    if (step.key !== "base_resume") {
+      const plan = await livePlanType(doc);
+      if (!planIncludesStep(plan, step.key)) {
+        console.log(`[onboarding-mail] dropped '${step.key}' for ${doc.clientEmail} — not in plan '${plan || "(none)"}'`);
+        doc.steps.splice(idx, 1);
+        if (!doc.steps.length || doc.steps.every((s) => s.sentAt)) doc.status = "done";
+        await doc.save().catch((e) => console.error("[onboarding-mail] prune save failed:", e?.message || e));
+        continue; // the next step, if any, goes out on a later tick
+      }
+    }
+
     if (new Date(step.sendAt).getTime() > Date.now()) continue; // not due yet
     if ((step.attempts || 0) >= MAX_ATTEMPTS) continue; // give up on this step (blocks the rest by design)
 
