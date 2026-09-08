@@ -1,16 +1,16 @@
 // mailClientMonitor — the client-facing half of the mail pipeline's Discord ops.
 //
-// Two jobs, both posting to the single ONE_MAIN_DISCORD_FOR_MAIL_NOTIFICATIONS
+// One job, posting to the single ONE_MAIN_DISCORD_FOR_MAIL_NOTIFICATIONS
 // channel:
 //
-//   1. checkConnectionsAndAlert()  — runs each hour alongside the poll. For every
-//      ACTIVE + UNPAUSED client, decides whether their mail is connected and the
-//      token healthy. Fires a "please connect" / "please reconnect" nudge,
-//      throttled to once per client per MAIL_CONNECT_ALERT_THROTTLE_HOURS (24h).
+//   sendDailySummary()  — the 5 AM IST job. Posts one header message with the
+//   last-24h totals, then ONE separate message per useful mail
+//   (interview / assignment / offer): "Client (Name) got: <subject> — received <time>".
 //
-//   2. sendDailySummary()  — the 5 AM IST job. Posts one header message with the
-//      last-24h totals, then ONE separate message per useful mail
-//      (interview / assignment / offer): "Client (Name) got: <subject> — received <time>".
+// The hourly "please connect / please reconnect" nudges that used to live here
+// were removed in Sept 2026: ops wants that channel to carry nothing but real
+// interview / assignment / offer mail. Connection state is still computed
+// below so the daily header can report how many mailboxes are connected.
 //
 // A client is linked to a connected mailbox when a GmailUser's ownerEmail OR
 // email matches the client's email (or their stored gmailCredentials.email).
@@ -21,20 +21,17 @@
 import { GmailUser } from "../../Schema_Models/GmailUser.js";
 import { GmailPollState } from "../../Schema_Models/GmailPollState.js";
 import { MailDigest } from "../../Schema_Models/MailDigest.js";
-import { MailClientAlertState } from "../../Schema_Models/MailClientAlertState.js";
 import { getActiveUnpausedClients } from "../../Schema_Models/ClientPaymentLookup.js";
 import {
   mailNotifyWebhook,
-  notifyClientNotConnected,
   notifyDailySummaryHeader,
   notifyUsefulMailLine
 } from "../../Utils/discordMailNotify.js";
 
 // ─── Fixed tuning (hard-coded; no env knobs) ─────────────────────────
-const THROTTLE_MS = 24 * 3600 * 1000; // "connect / reconnect" nudge at most once per client per day
 const SUMMARY_WINDOW_HOURS = 24; // daily summary looks back this far
-// Gentle spacing between Discord posts so a burst (e.g. 19 nudges) doesn't slam
-// the webhook rate limit. postToWebhook also retries on 429 as a backstop.
+// Gentle spacing between Discord posts so a burst of catch-up lines doesn't
+// slam the webhook rate limit. postToWebhook also retries on 429 as a backstop.
 const SEND_GAP_MS = 400;
 const USEFUL = new Set(["interview", "assessment", "offer"]);
 
@@ -77,88 +74,7 @@ function clientConnection(client, index) {
   return "not_connected";
 }
 
-// ─── 1. Hourly connection check ─────────────────────────────────────
-
-export async function checkConnectionsAndAlert() {
-  if (!mailNotifyWebhook()) {
-    return { skipped: "no_webhook" };
-  }
-
-  const [clients, index] = await Promise.all([getActiveUnpausedClients(), buildMailboxIndex()]);
-  if (!clients.length) return { clients: 0 };
-
-  let connected = 0;
-  let alertedNotConnected = 0;
-  let alertedTokenDead = 0;
-  let throttled = 0;
-  const now = Date.now();
-
-  for (const client of clients) {
-    const state = clientConnection(client, index);
-    if (state === "connected") {
-      connected++;
-      continue;
-    }
-
-    const kind = state === "token_dead" ? "token_dead" : "not_connected";
-    const field = kind === "token_dead" ? "lastTokenDeadAlertAt" : "lastNotConnectedAlertAt";
-
-    // Throttle atomically: only send when the last alert of this kind is older
-    // than the window. findOneAndUpdate with the time guard is the gate, so two
-    // overlapping runs can't double-send.
-    const cutoff = new Date(now - THROTTLE_MS);
-    const doc = await MailClientAlertState.findOneAndUpdate(
-      {
-        clientEmail: client.email,
-        $or: [{ [field]: { $lt: cutoff } }, { [field]: null }, { [field]: { $exists: false } }]
-      },
-      { $set: { [field]: new Date() }, $setOnInsert: { clientEmail: client.email } },
-      { new: true, upsert: false }
-    ).catch(() => null);
-
-    let mayAlert = !!doc;
-    if (!doc) {
-      // No throttle doc yet → create one and alert. If a concurrent run already
-      // created it, the duplicate-key error means someone else owns this send.
-      try {
-        await MailClientAlertState.create({ clientEmail: client.email, [field]: new Date() });
-        mayAlert = true;
-      } catch (e) {
-        mayAlert = false; // 11000 = already created+alerted this window
-      }
-    }
-
-    if (!mayAlert) {
-      throttled++;
-      continue;
-    }
-
-    const res = await notifyClientNotConnected({
-      client: { name: client.name, email: client.email },
-      kind
-    });
-    if (res.ok) {
-      if (kind === "token_dead") alertedTokenDead++;
-      else alertedNotConnected++;
-    }
-    if (SEND_GAP_MS) await sleep(SEND_GAP_MS);
-  }
-
-  const summary = {
-    clients: clients.length,
-    connected,
-    alertedNotConnected,
-    alertedTokenDead,
-    throttled
-  };
-  console.log(
-    `[mail-monitor] connection check — active=${summary.clients} connected=${connected} ` +
-      `nudged(not-connected)=${alertedNotConnected} nudged(token-dead)=${alertedTokenDead} throttled=${throttled}`
-  );
-  return summary;
-}
-
-// ─── 2. Daily 5 AM summary ──────────────────────────────────────────
+// ─── Daily 5 AM summary ──────────────────────────────────────────
 
 export async function sendDailySummary() {
   if (!mailNotifyWebhook()) {

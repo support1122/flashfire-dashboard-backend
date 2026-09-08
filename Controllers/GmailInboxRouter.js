@@ -12,7 +12,7 @@ import { pollOnce } from "../src/services/mailPollWorker.js";
 import { sendEmail, isSendgridConfigured } from "../Utils/sendgridClient.js";
 import { sendViaSmtp, isSmtpConfigured, verifySmtp } from "../Utils/smtpSender.js";
 import { renderClientMilestoneEmail, NOTIFIABLE_CATEGORIES } from "../Utils/clientMailTemplates.js";
-import { checkConnectionsAndAlert, sendDailySummary } from "../src/services/mailClientMonitor.js";
+import { sendDailySummary } from "../src/services/mailClientMonitor.js";
 import { mailNotifyWebhook, verifyWebhook, isGmailAuthError, errorText } from "../Utils/discordMailNotify.js";
 import { isMailPollEnabled } from "../src/services/mailPollWorker.js";
 import { getActiveUnpausedClients } from "../Schema_Models/ClientPaymentLookup.js";
@@ -979,16 +979,6 @@ router.post("/daily-summary-now", async (_req, res) => {
     res.json({ ok: !result?.skipped, ...result });
   } catch (err) {
     res.status(500).json({ error: err?.message || "summary_failed" });
-  }
-});
-
-// Manually run the "connect your mail" connection check now (throttled per client).
-router.post("/connection-check-now", async (_req, res) => {
-  try {
-    const result = await checkConnectionsAndAlert();
-    res.json({ ok: !result?.skipped, ...result });
-  } catch (err) {
-    res.status(500).json({ error: err?.message || "connection_check_failed" });
   }
 });
 

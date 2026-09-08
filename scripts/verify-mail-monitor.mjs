@@ -1,4 +1,4 @@
-// Verification for the client-connection nudges + daily-summary Discord messages.
+// Verification for the daily-summary Discord messages (header + per-mail lines).
 //
 //   npm run verify:mail-monitor
 //
@@ -28,24 +28,7 @@ const flat = () => JSON.stringify(lastEmbed());
 console.log("\n[1] webhook override points at the stub (no real channel)");
 ok("mailNotifyWebhook is the stub", d.mailNotifyWebhook().includes("127.0.0.1"), d.mailNotifyWebhook());
 
-console.log("\n[2] 'please connect' nudge");
-{
-  const r = await d.notifyClientNotConnected({ client: { name: "Priya Sharma", email: "priya@c.com" }, kind: "not_connected" });
-  ok("posted ok", r.ok === true, r.error);
-  ok("title says connect", /connect/i.test(lastEmbed().title || ""));
-  ok("names the client", flat().includes("Priya Sharma"));
-  ok("has Inbox deep link", flat().includes("portal.flashfirejobs.com/inbox"));
-  ok("no @mentions", hits[hits.length - 1].allowed_mentions?.parse?.length === 0);
-}
-
-console.log("\n[3] 'reconnect / token dead' nudge");
-{
-  await d.notifyClientNotConnected({ client: { name: "Alex", email: "a@c.com" }, kind: "token_dead" });
-  ok("title says reconnect", /reconnect/i.test(lastEmbed().title || ""), lastEmbed().title);
-  ok("mentions token no longer valid", /token/i.test(flat()));
-}
-
-console.log("\n[4] daily summary header");
+console.log("\n[2] daily summary header");
 {
   const r = await d.notifyDailySummaryHeader({
     scannedClients: 21, connectedMailboxes: 2, notConnected: 19,
@@ -62,7 +45,7 @@ console.log("\n[4] daily summary header");
   ok("says no useful mails", /no useful/i.test(flat()));
 }
 
-console.log("\n[5] per-useful-mail line");
+console.log("\n[3] per-useful-mail line");
 {
   const r = await d.notifyUsefulMailLine({
     clientName: "Priya Sharma", clientEmail: "priya@c.com",

@@ -36,7 +36,6 @@ import { MailDigest } from "../../Schema_Models/MailDigest.js";
 import { UserModel } from "../../Schema_Models/UserModel.js";
 import { ProfileModel } from "../../Schema_Models/ProfileModel.js";
 import { resolvePaymentEmail, getActiveUnpausedClients } from "../../Schema_Models/ClientPaymentLookup.js";
-import { checkConnectionsAndAlert } from "./mailClientMonitor.js";
 import {
   gmailClientForUser,
   decodeBase64Url,
@@ -51,7 +50,7 @@ import { classifyMailByRules } from "../../Utils/mailRulesClassifier.js";
 import { verifyMilestoneMail, milestoneGate } from "./mailMilestoneVerifier.js";
 import { shouldSuppressSender, recordVerdict } from "./mailVerifierLearning.js";
 import { applyLearnedExclusions, proposeAndStoreExclusion } from "./mailRegexLearner.js";
-import { notifyUsefulMailLine, notifyGmailAuthError, isGmailAuthError, errorText } from "../../Utils/discordMailNotify.js";
+import { notifyUsefulMailLine, isGmailAuthError, errorText } from "../../Utils/discordMailNotify.js";
 import {
   deriveEligibility,
   notifyClientForDigestAllChannels,
@@ -689,17 +688,13 @@ async function handleMailboxError({ err, state, client, mailbox, partialPosted =
 
   await GmailPollState.updateOne({ _id: state._id }, update).catch(() => {});
 
-  if (shouldAlert) {
-    console.error(`[mail-poll] ${mailbox}: AUTH ERROR — alerting Discord: ${message}`);
-    await notifyGmailAuthError({
-      client,
-      mailbox,
-      error: message,
-      since: state.authErrorAt || new Date()
-    }).catch((e) => console.error(`[mail-poll] auth alert post failed: ${e.message}`));
-  } else {
-    console.error(`[mail-poll] ${mailbox}: AUTH ERROR (alert throttled): ${message}`);
-  }
+  // Logged, never posted. The Discord mail channel carries only interview /
+  // assignment / offer lines (ops request, Sept 2026); a dead token shows up in
+  // the daily 5 AM header's connected-mailbox count and on the Inbox tab.
+  // lastAuthAlertAt still throttles so the log line lands once a day, not hourly.
+  console.error(
+    `[mail-poll] ${mailbox}: AUTH ERROR${shouldAlert ? "" : " (repeat, throttled)"} — reconnect via Dashboard → Inbox: ${message}`
+  );
 
   return { mailbox, checked: 0, posted: partialPosted, authError: message };
 }
@@ -751,16 +746,9 @@ export async function pollOnce({ trigger = "cron" } = {}) {
       }
     }
 
-    // The hourly connection check runs regardless of how many mailboxes there are
-    // (its job is to nudge the active clients who have NO mailbox). Fire-and-record.
-    const connectionCheck = await checkConnectionsAndAlert().catch((e) => {
-      console.warn(`[mail-poll] connection check failed: ${e.message}`);
-      return null;
-    });
-
     if (!mailboxes.length) {
       console.log("[mail-poll] no active-client mailboxes to scan");
-      return { mailboxes: 0, posted: 0, skippedInactive, connectionCheck, tookMs: Date.now() - startedAt };
+      return { mailboxes: 0, posted: 0, skippedInactive, tookMs: Date.now() - startedAt };
     }
 
     const clientCache = new Map();
@@ -782,7 +770,6 @@ export async function pollOnce({ trigger = "cron" } = {}) {
     return {
       mailboxes: mailboxes.length,
       skippedInactive,
-      connectionCheck,
       checked,
       posted,
       authErrors,
