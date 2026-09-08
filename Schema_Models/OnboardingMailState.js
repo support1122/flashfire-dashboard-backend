@@ -18,7 +18,12 @@ const StepSchema = new mongoose.Schema(
     sentAt: { type: Date, default: null }, // set once delivered (dedupe guard)
     attempts: { type: Number, default: 0 },
     error: { type: String, default: "" },
-    messageId: { type: String, default: "" } // SMTP receipt
+    messageId: { type: String, default: "" }, // SMTP receipt
+    // Mattermost mirror of this step, posted to the client's channel right
+    // after the email is accepted. Its own stamp, independent of sentAt: a
+    // missing webhook or a 5xx must never make the email look unsent.
+    mattermostAt: { type: Date, default: null },
+    mattermostError: { type: String, default: "" }
   },
   { _id: false }
 );
