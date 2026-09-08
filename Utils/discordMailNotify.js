@@ -1,27 +1,26 @@
 // Discord delivery for the hourly Gmail → AI → Discord pipeline.
 //
-// Two entry points:
-//   • notifyMailDigest()   — one rich embed per new mail: client info, the
-//     gpt-4o-mini summary, extracted links, and the .txt attachment uploaded
-//     as a real Discord file.
-//   • notifyGmailAuthError() — loud red alert when a client's Gmail refresh
-//     token stops working (invalid_grant / revoked), telling ops to reconnect.
+// Entry points:
+//   • notifyUsefulMailLine()     — one short embed per interview / assignment /
+//     offer, posted by the poll the moment it classifies the mail.
+//   • notifyDailySummaryHeader() — the 5 AM IST totals line.
+//   • notifyMailDigest()         — one rich embed per mail with the AI summary
+//     and the .txt attachment; kept for the verify script and manual use.
 //
-// Both swallow their own errors and return a result object. A Discord outage
+// All swallow their own errors and return a result object. A Discord outage
 // must never break the poll worker; undelivered digests are retried next tick
 // because MailDigest.discordPostedAt stays null.
 //
-// ONE channel handles everything mail-related: per-mail digests, milestone
-// reminders, "please connect your mail" nudges, dead-token alerts, and the
-// daily 5am summary. Hard-coded here (per request) so it works with no env;
+// ONE channel, and it carries ONLY the mails that matter to the team: one
+// line per interview / assignment / offer as the poll finds it, and the daily
+// 5am summary of the same. Connection nudges ("please connect", "token dead")
+// and auth-error embeds were removed on purpose (Sept 2026): ops asked for a
+// channel with nothing but real milestones in it. Connection health is still
+// logged by the poll and counted in the daily header. Hard-coded here (per request) so it works with no env;
 // ONE_MAIN_DISCORD_FOR_MAIL_NOTIFICATIONS can override it for rotation.
 const MAIL_WEBHOOK =
   process.env.ONE_MAIN_DISCORD_FOR_MAIL_NOTIFICATIONS ||
   "https://discord.com/api/webhooks/1535172893590294579/hJQzqUbV_vmreWWdQrNoXS3Z3tMTqMIxZeZ9i9LmHVpewgGyxb858MBb0TIbgNyH7Em7";
-const ERROR_WEBHOOK = MAIL_WEBHOOK;
-
-// Deep link shown in connect / reconnect alerts.
-const RECONNECT_URL = "https://portal.flashfirejobs.com/inbox";
 
 /** The single mail-notifications webhook. */
 export function mailNotifyWebhook() {
@@ -51,7 +50,6 @@ export async function verifyWebhook() {
   }
 }
 
-const ALERT_MENTION = ""; // no role ping
 // Discord's per-message upload ceiling for non-boosted guilds is 8 MiB; stay
 // under it with margin for the multipart envelope + payload_json.
 const MAX_UPLOAD_BYTES = 7_500_000;
@@ -405,122 +403,6 @@ export async function notifyMailDigest({ client = {}, mailbox, digest = {}, file
 
   const result = await postToWebhook(MAIL_WEBHOOK, { embeds: [embed], allowed_mentions: { parse: [] } }, uploadable);
   return { ...result, skipped };
-}
-
-// ─── Public: Gmail auth failure ─────────────────────────────────────
-
-/**
- * Red alert when a client's Gmail token can no longer authenticate.
- * Throttling is the caller's job (GmailPollState.lastAuthAlertAt) so the
- * throttle survives restarts.
- *
- * @param {Object} a
- * @param {Object} a.client  - { name, email, planType }
- * @param {string} a.mailbox - the Gmail address that failed
- * @param {string} a.error   - raw error text (e.g. "invalid_grant")
- * @param {Date}   [a.since] - when the account first started failing
- */
-export async function notifyGmailAuthError({ client = {}, mailbox, error, since } = {}) {
-  const reconnectUrl = RECONNECT_URL;
-
-  const fields = [
-    {
-      name: "👤 Client",
-      value: truncate(
-        [
-          `**Name:** ${client.name || "—"}`,
-          `**Account:** ${client.email || "—"}`,
-          `**Plan:** ${client.planType || "—"}`
-        ].join("\n"),
-        LIMIT.fieldValue
-      ),
-      inline: true
-    },
-    {
-      name: "📥 Mailbox",
-      value: truncate(mailbox || "unknown", LIMIT.fieldValue),
-      inline: true
-    },
-    {
-      name: "Error",
-      value: truncate("```" + String(error || "unknown").slice(0, 900) + "```", LIMIT.fieldValue),
-      inline: false
-    }
-  ];
-
-  if (since) {
-    fields.push({ name: "Failing since", value: discordTimestamp(since, "R"), inline: true });
-  }
-
-  fields.push({
-    name: "➡️ Action needed",
-    value: truncate(
-      "The Google refresh token for this mailbox is dead — Gmail polling and the Mails tab are **both** down for this client.\n\n" +
-        "**Fix:** Dashboard → **Inbox** → Google account → **Reconnect**, then re-grant access." +
-        (reconnectUrl ? `\n\n[Reconnect now](${reconnectUrl}?email=${encodeURIComponent(client.email || "")})` : ""),
-      LIMIT.fieldValue
-    ),
-    inline: false
-  });
-
-  const embed = {
-    title: "🔐 Gmail authorization error — please reconnect the mail",
-    color: 0xef4444,
-    description: `No mail can be read for **${client.name || mailbox || "this client"}** until the Google account is reconnected.`,
-    fields,
-    timestamp: new Date().toISOString(),
-    footer: { text: "FlashFire • Mail • connection" }
-  };
-
-  const payload = {
-    ...(ALERT_MENTION ? { content: ALERT_MENTION } : {}),
-    embeds: [embed],
-    allowed_mentions: ALERT_MENTION ? { parse: ["roles", "users"] } : { parse: [] }
-  };
-
-  return postToWebhook(ERROR_WEBHOOK, payload);
-}
-
-// ─── Public: "connect your mail" nudge ──────────────────────────────
-
-/**
- * Nudge for an active client whose mail is not connected, or whose token died.
- * Throttling (once/day/client) is the caller's job.
- *
- * @param {Object} a
- * @param {Object} a.client - { name, email }
- * @param {"not_connected"|"token_dead"} a.kind
- * @param {string} [a.reconnectUrl]
- */
-export async function notifyClientNotConnected({ client = {}, kind = "not_connected", reconnectUrl } = {}) {
-  const url = reconnectUrl || RECONNECT_URL;
-  const who = client.name || client.email || "This client";
-  const isDead = kind === "token_dead";
-
-  const embed = {
-    title: isDead ? "🔌 Mail disconnected — please reconnect" : "📭 No mail connected — please connect",
-    color: isDead ? 0xf59e0b : 0x6366f1, // amber / indigo
-    description: isDead
-      ? `**${who}** had mail connected, but the Google token is no longer valid. We can't read their inbox until it's reconnected.`
-      : `**${who}** is active but has **no mail connected**. Please connect their Gmail so we can watch for interviews, assignments, and offers.`,
-    fields: [
-      { name: "Client", value: truncate(client.name || "—", LIMIT.fieldValue), inline: true },
-      { name: "Account", value: truncate(client.email || "—", LIMIT.fieldValue), inline: true },
-      {
-        name: "➡️ Action",
-        value: truncate(
-          "Dashboard → **Inbox** → connect / reconnect the client's Google account." +
-            (url ? `\n\n[Open Inbox](${url})` : ""),
-          LIMIT.fieldValue
-        ),
-        inline: false
-      }
-    ],
-    timestamp: new Date().toISOString(),
-    footer: { text: "FlashFire • Mail • connection check" }
-  };
-
-  return postToWebhook(MAIL_WEBHOOK, { embeds: [embed], allowed_mentions: { parse: [] } });
 }
 
 // ─── Public: daily 5am summary ──────────────────────────────────────

@@ -2,7 +2,7 @@
 //
 //   npm run verify:mail
 //
-// Runs the REAL summarizeMail / notifyMailDigest / notifyGmailAuthError code
+// Runs the REAL summarizeMail / notifyMailDigest / isGmailAuthError code
 // paths against local stub servers standing in for OpenAI and Discord. Needs no
 // production credentials, no network, and no Mongo — so it is safe to run
 // anywhere, any time.
@@ -147,7 +147,7 @@ console.log("\n[3] notifyMailDigest — real multipart upload vs stub Discord");
   // The webhook is hard-coded in the module; override it to the local stub so
   // NOTHING reaches the real Discord channel. Must be set before first import.
   process.env.ONE_MAIN_DISCORD_FOR_MAIL_NOTIFICATIONS = `${url}/webhook`;
-  const { notifyMailDigest, notifyGmailAuthError, isGmailAuthError } =
+  const { notifyMailDigest, isGmailAuthError } =
     await import(`../Utils/discordMailNotify.js`);
 
   const txt = Buffer.from("job 1\njob 2\njob 3\n");
@@ -237,22 +237,6 @@ console.log("\n[3] notifyMailDigest — real multipart upload vs stub Discord");
   ok("isGmailAuthError catches invalid_grant", isGmailAuthError("invalid_grant"));
   ok("isGmailAuthError catches revoked token", isGmailAuthError("Token has been expired or revoked."));
   ok("isGmailAuthError ignores network noise", !isGmailAuthError("ECONNRESET socket hang up"));
-
-  const ra = await notifyGmailAuthError({
-    client: { name: "Priya Sharma", email: "priya@client.com", planType: "Executive" },
-    mailbox: "priya.jobs@gmail.com",
-    error: "invalid_grant",
-    since: new Date("2026-07-09T08:00:00Z"),
-  });
-  ok("auth alert delivered", ra.ok === true, ra.error);
-  const ae = JSON.parse(hits[0].raw.toString()).embeds[0];
-  const af = JSON.stringify(ae);
-  ok("auth embed says reconnect", /reconnect/i.test(af));
-  ok("auth embed is red", ae.color === 0xef4444);
-  ok("auth embed names the client", af.includes("Priya Sharma"));
-  ok("auth embed names the mailbox", af.includes("priya.jobs@gmail.com"));
-  ok("auth embed carries the raw error", af.includes("invalid_grant"));
-  ok("auth embed has reconnect deep link", af.includes("portal.flashfirejobs.com/inbox"));
 
   srv.close();
 }
