@@ -22,17 +22,20 @@ const read = (rel) => readFileSync(new URL(rel, import.meta.url), "utf8");
 test("inbox milestone alerts", async (t) => {
   await t.test("the 5 AM summary only posts milestones the poll never delivered", () => {
     const src = read("../../src/services/mailClientMonitor.js");
-    // The catch-up query must be scoped to undelivered digests. Matched on the
-    // single source line rather than a brace-spanning regex, because the query
-    // contains nested objects ({ $gte: since }, { $in: [...USEFUL] }).
+    // The catch-up query must be scoped to undelivered digests AND to the
+    // verifier's verdict (opsNotifyEligible), never to the rules category on
+    // its own - see Utils/__tests__/mailDailySummaryCatchUp.test.mjs for the
+    // behavioural version of this check.
     const findLine = src
       .split("\n")
-      .find((l) => l.includes("MailDigest.find(") && l.includes("category: { $in: [...USEFUL] }"));
-    assert.ok(findLine, "the useful-digest query must still exist");
+      .find((l) => l.includes("MailDigest.find(") && l.includes("...verifiedMilestone"));
+    assert.ok(findLine, "the verified-milestone catch-up query must still exist");
     assert.ok(
       findLine.includes("discordPostedAt: null"),
       "sendDailySummary must filter on discordPostedAt: null"
     );
+    assert.match(src, /opsNotifyEligible: true/, "the catch-up must be gated on opsNotifyEligible");
+    assert.doesNotMatch(src, /category: \{ \$in/, "the rules category must not gate the catch-up");
     // And it must stamp what it posts, or the catch-up repeats every morning.
     assert.match(
       src,

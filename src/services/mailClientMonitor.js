@@ -33,7 +33,6 @@ const SUMMARY_WINDOW_HOURS = 24; // daily summary looks back this far
 // Gentle spacing between Discord posts so a burst of catch-up lines doesn't
 // slam the webhook rate limit. postToWebhook also retries on 429 as a backstop.
 const SEND_GAP_MS = 400;
-const USEFUL = new Set(["interview", "assessment", "offer"]);
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const lc = (s) => String(s || "").toLowerCase().trim();
@@ -89,23 +88,31 @@ export async function sendDailySummary() {
   for (const c of clients) if (clientConnection(c, index) !== "not_connected") connectedCount++;
   const notConnected = clients.length - connectedCount;
 
+  // The SAME eligibility the poll uses for its per-mail line. This is what
+  // decides whether a mail is a real milestone: the rules flagged it AND the
+  // AI verifier confirmed it (or could not run). The rules category on its own
+  // is only a candidate - the verifier rejects most of them.
+  //
+  // Sept 2026 incident: this query filtered on the rules `category` alone, so
+  // every candidate the verifier had REJECTED that day (a Reddit jobs digest,
+  // a Workday account reminder, a Bloomberg "thank you for applying") sat
+  // with discordPostedAt null and was posted here at 5 AM as "Offer" or
+  // "Interview". The verifier was doing its job; this sweep bypassed it.
+  const verifiedMilestone = {
+    date: { $gte: since },
+    $or: [{ opsNotifyEligible: true }, { opsNotifyEligible: { $exists: false }, clientNotifyEligible: true }]
+  };
+
   const [totalMails, usefulInWindow, usefulDocs] = await Promise.all([
     MailDigest.countDocuments({ date: { $gte: since } }).catch(() => 0),
-    // Headline count = every milestone in the window, posted or not. usefulDocs
-    // below is only the unposted remainder, so the two must not be conflated.
-    MailDigest.countDocuments({ date: { $gte: since }, category: { $in: [...USEFUL] } }).catch(() => 0),
-    // discordPostedAt: null is THE fix for double-posting. mailPollWorker
-    // already posts one Discord line per milestone the moment it detects it,
-    // and stamps discordPostedAt. This query used to ignore that stamp, so at
-    // 5 AM every milestone from the previous 24h was posted a SECOND time -
-    // the same offer mail appearing twice in the channel, hours apart, with no
-    // indication which was the real event.
-    //
-    // Filtering on it turns this from a re-post into what it should always
-    // have been: a catch-up for the handful the hourly poll genuinely failed
-    // to deliver (webhook 5xx, a crash between post and stamp).
-    MailDigest.find({ date: { $gte: since }, category: { $in: [...USEFUL] }, discordPostedAt: null })
-      .select("gmailEmail ownerEmail subject from date category clientNotifyCategory messageId")
+    // Headline count = every verified milestone in the window, posted or not.
+    // usefulDocs below is only the unposted remainder; do not conflate them.
+    MailDigest.countDocuments(verifiedMilestone).catch(() => 0),
+    // discordPostedAt: null keeps this a catch-up, not a re-post: the poll
+    // stamps every line it delivers, so only the handful it failed to deliver
+    // (webhook 5xx, a crash between post and stamp) are left for 5 AM.
+    MailDigest.find({ ...verifiedMilestone, discordPostedAt: null })
+      .select("gmailEmail ownerEmail subject from date category clientNotifyCategory verifyError messageId")
       .sort({ date: 1 })
       .lean()
       .catch(() => [])
@@ -138,7 +145,10 @@ export async function sendDailySummary() {
     const res = await notifyUsefulMailLine({
       clientName: clientNameFor(d),
       clientEmail: lc(d.gmailEmail),
-      category: d.category,
+      // Verified category first; an unverifiable one is labelled so, exactly
+      // as the poll's own line does it.
+      category:
+        d.clientNotifyCategory || (d.verifyError ? `${d.category} (unverified — check manually)` : d.category),
       subject: d.subject,
       from: d.from,
       receivedAt: d.date

@@ -41,7 +41,9 @@ It is NOT a genuine milestone if it is any of:
 - Marketing or promotional content, product updates, newsletters, webinar/course/bootcamp/career-coaching promotions.
 - Job-board alerts or digests (LinkedIn, Indeed, ZipRecruiter, Glassdoor, etc.), "jobs for you" blasts.
 - Mass recruiter outreach not tied to an application the candidate made ("came across your profile...").
-- Automated application acknowledgements ("thank you for applying", "we received your application", "your application is under review") with no interview, assessment, or offer in them.
+- Automated application acknowledgements ("thank you for applying", "we received your application", "your application is under review") with no interview, assessment, or offer in them. Boilerplate like "the next step in the process" or "if selected we will contact you" inside such a mail is NOT a hiring step.
+- ATS / careers-portal housekeeping: candidate account creation or activation, profile completion reminders, password or login mail from Workday, Greenhouse, Lever, iCIMS, Taleo, SuccessFactors and similar.
+- Community and content digests (Reddit, Medium, Substack, forums) and listicles such as "13 high-paying remote jobs", even when they contain the words "job offer".
 - Rejections, account/security mail, payment or billing mail.
 
 Return ONLY a JSON object:
