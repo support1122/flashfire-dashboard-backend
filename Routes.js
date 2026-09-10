@@ -18,6 +18,14 @@ import {
   finishAutopilotRequest,
   cancelAutopilotRequest
 } from './Controllers/AutopilotRuns.js';
+import {
+  listAutopilotWorkers,
+  createAutopilotWorker,
+  deleteAutopilotWorker,
+  listAutopilotAssignments,
+  setAutopilotAssignments,
+  autopilotWorkerHeartbeat
+} from './Controllers/AutopilotWorkers.js';
 import { getDashboardManagers, getDashboardManagerByName, syncDashboardManagers } from './Controllers/DashboardManagerController.js';
 import Add_Update_Profile from "./Controllers/Add_Update_Profile.js";
 import AddJob from "./Controllers/AddJob.js";
@@ -168,6 +176,16 @@ app.get("/autopilot/queue", listAutopilotQueue);
 app.post("/autopilot/queue/claim", requireOpsKey, claimAutopilotRequests);
 app.post("/autopilot/queue/:id/finish", requireOpsKey, finishAutopilotRequest);
 app.post("/autopilot/queue/:id/cancel", cancelAutopilotRequest);
+
+// Worker ("Profile") registry, client assignment and cross-machine heartbeat.
+// See Controllers/AutopilotWorkers.js. Only the autopilot app calls these and
+// it holds the ops key already, so all of them are gated.
+app.get("/autopilot/workers", requireOpsKey, listAutopilotWorkers);
+app.post("/autopilot/workers", requireOpsKey, createAutopilotWorker);
+app.post("/autopilot/workers/:slug/heartbeat", requireOpsKey, autopilotWorkerHeartbeat);
+app.delete("/autopilot/workers/:slug", requireOpsKey, deleteAutopilotWorker);
+app.get("/autopilot/assignments", requireOpsKey, listAutopilotAssignments);
+app.put("/autopilot/assignments", requireOpsKey, setAutopilotAssignments);
 app.get("/api/dashboard-managers", getDashboardManagers);
 app.get("/sync/managers", syncDashboardManagers);
 app.post("/refresh-token", RefreshToken);
