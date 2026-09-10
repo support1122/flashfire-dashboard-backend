@@ -150,11 +150,24 @@ app.post("/autopilot/runs", requireOpsKey, recordAutopilotRun);
 app.get("/autopilot/runs/summary", getAutopilotRunsSummary);
 app.get("/autopilot/runs/client/:email", getAutopilotRunsForClient);
 app.get("/autopilot/runs", listAutopilotRuns);
-app.post("/autopilot/queue", requireOpsKey, queueAutopilotRun);
+// queue + cancel are called by the Client Tracking portal, so they are NOT
+// ops-key gated. Vite inlines env vars at build time, so requiring the key
+// here would publish OPS_SECRET_KEY inside the browser bundle - and that same
+// key guards /operations/reminders/*, which can email clients and post to
+// their Mattermost channels. Handing that key to every visitor to protect a
+// scrape button is a bad trade.
+// The exposure left is bounded: an unknown client is refused by the autopilot,
+// the partial unique index allows one live request per client, and the 30-job
+// cap still applies. It matches the posture of the other portal-facing
+// dashboard routes (/summaries-overview, /push-history), which return client
+// data unauthenticated today.
+// claim and finish stay gated: only the autopilot calls those, it holds the
+// key already, and they mutate run state.
+app.post("/autopilot/queue", queueAutopilotRun);
 app.get("/autopilot/queue", listAutopilotQueue);
 app.post("/autopilot/queue/claim", requireOpsKey, claimAutopilotRequests);
 app.post("/autopilot/queue/:id/finish", requireOpsKey, finishAutopilotRequest);
-app.post("/autopilot/queue/:id/cancel", requireOpsKey, cancelAutopilotRequest);
+app.post("/autopilot/queue/:id/cancel", cancelAutopilotRequest);
 app.get("/api/dashboard-managers", getDashboardManagers);
 app.get("/sync/managers", syncDashboardManagers);
 app.post("/refresh-token", RefreshToken);
