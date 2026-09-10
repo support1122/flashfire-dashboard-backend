@@ -7,6 +7,17 @@ import GoogleOAuth from "./Controllers/GoogleOAuth.js";
 import { getAllClients } from './Controllers/ClientController.js';
 import { getClientTrackingStatus } from './Controllers/ClientTrackingStatus.js';
 import { listAutopilotCreds, getAutopilotCreds, putAutopilotCreds } from './Controllers/AutopilotCreds.js';
+import {
+  recordAutopilotRun,
+  listAutopilotRuns,
+  getAutopilotRunsSummary,
+  getAutopilotRunsForClient,
+  queueAutopilotRun,
+  listAutopilotQueue,
+  claimAutopilotRequests,
+  finishAutopilotRequest,
+  cancelAutopilotRequest
+} from './Controllers/AutopilotRuns.js';
 import { getDashboardManagers, getDashboardManagerByName, syncDashboardManagers } from './Controllers/DashboardManagerController.js';
 import Add_Update_Profile from "./Controllers/Add_Update_Profile.js";
 import AddJob from "./Controllers/AddJob.js";
@@ -128,6 +139,22 @@ app.get("/api/clients/tracking-status", getClientTrackingStatus);
 app.get("/autopilot/creds", requireOpsKey, listAutopilotCreds);
 app.get("/autopilot/creds/:email", requireOpsKey, getAutopilotCreds);
 app.put("/autopilot/creds/:email", requireOpsKey, putAutopilotCreds);
+
+// Autopilot run history + the scrape request queue.
+// See Controllers/AutopilotRuns.js. Anything the autopilot WRITES is ops-key
+// gated; the read routes the Client Tracking portal renders are open, matching
+// the other dashboard endpoints that portal already calls. Route order matters:
+// /runs/summary and /runs/client/:email are declared before any bare /runs/:x
+// could shadow them.
+app.post("/autopilot/runs", requireOpsKey, recordAutopilotRun);
+app.get("/autopilot/runs/summary", getAutopilotRunsSummary);
+app.get("/autopilot/runs/client/:email", getAutopilotRunsForClient);
+app.get("/autopilot/runs", listAutopilotRuns);
+app.post("/autopilot/queue", requireOpsKey, queueAutopilotRun);
+app.get("/autopilot/queue", listAutopilotQueue);
+app.post("/autopilot/queue/claim", requireOpsKey, claimAutopilotRequests);
+app.post("/autopilot/queue/:id/finish", requireOpsKey, finishAutopilotRequest);
+app.post("/autopilot/queue/:id/cancel", requireOpsKey, cancelAutopilotRequest);
 app.get("/api/dashboard-managers", getDashboardManagers);
 app.get("/sync/managers", syncDashboardManagers);
 app.post("/refresh-token", RefreshToken);
