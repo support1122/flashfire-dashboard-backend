@@ -10,6 +10,21 @@
 // Rejection language is therefore checked FIRST and hard-overrides the positive
 // categories.
 //
+// Second property (Sept 2026, after a Reddit jobs digest reached Discord as an
+// "Offer" and a Bloomberg "thank you for applying" as an "Interview"): two kinds
+// of mail are decided BEFORE the positive keywords get a look.
+//   • Mass-mail senders (job boards, Reddit, Medium, Substack...) are never a
+//     milestone, whatever their body says. Real invites do not come from them.
+//   • ATS housekeeping ("candidate account creation", "complete your profile")
+//     in the SUBJECT is "job-application" unless that subject also carries a
+//     milestone phrase. Application acknowledgements ("thank you for applying")
+//     are "job-application" too, but only once no strong milestone phrase was
+//     found; their "next step" / "move forward" boilerplate is weak (below).
+// On top of that the positive lists are split into STRONG and WEAK phrases. A
+// weak phrase ("next step", "your offer", "assignment") counts only in the
+// subject, or when a strong phrase is also present; alone in the body it is
+// too common in promos and auto-acks to mean anything.
+//
 // Output shape mirrors mailAiSummarizer.summarizeMail() so the poll worker and
 // MailDigest are agnostic to which classifier produced the result:
 //   { aiModel:"rules", aiSucceeded:false, matched, category, priority,
@@ -45,6 +60,8 @@ const REJECTION = [
 ];
 
 // ── Positive milestone categories (client-notifiable) ──
+// STRONG: the phrase only appears when the mail really is about this step.
+// WEAK: real invites use it too, but so do promos and auto-acks. See header.
 const OFFER = [
   /\boffer letter\b/i,
   /\bletter of (?:offer|employment)\b/i,
@@ -52,36 +69,66 @@ const OFFER = [
   /\b(?:job|employment|formal|verbal|written|final) offer\b/i,
   /\b(?:pleased|excited|delighted|happy) to (?:offer|extend)\b/i,
   /\b(?:extend|extending|present)(?:ing)? (?:you )?an offer\b/i,
-  /\bwe(?:'| a)re (?:pleased|excited|delighted|thrilled) to\b.*\boffer\b/i,
-  /\byour offer\b/i,
-  /\boffer (?:details|package)\b/i,
-  /\bwelcome to the team\b/i,
-  /\bwelcome aboard\b/i
+  /\bwe(?:'| a)re (?:pleased|excited|delighted|thrilled) to\b.*\boffer\b/i
 ];
+const OFFER_WEAK = [/\byour offer\b/i, /\boffer (?:details|package)\b/i, /\bwelcome to the team\b/i, /\bwelcome aboard\b/i];
 
 const INTERVIEW = [
   /\binterview (?:invit|request|invitation|schedule|scheduling)\w*/i,
   /\binvit\w+ (?:you )?(?:to|for) (?:an? )?interview\b/i,
-  /\b(?:schedule|set up|book|arrange) (?:an? |a )?(?:interview|call|time|meeting)\b/i,
+  /\b(?:schedule|set up|book|arrange) (?:an? |your |the )?(?:interview|call|time|meeting)\b/i,
   /\bwould like to (?:interview|schedule|set up|invite|speak|chat|connect)\b/i,
   /\b(?:phone|technical|onsite|on-site|video|final|first|second|initial) (?:screen|interview|round)\b/i,
   /\binterview (?:with|for|process)\b/i,
   /\bavailab\w+ (?:for|to) (?:a |an )?(?:call|interview|chat|meeting)\b/i,
+  /\b(?:calendly|book a time|pick a (?:time|slot))\b/i
+];
+// The bare word in a SUBJECT is a strong signal on its own ("Re: Interview",
+// "Interview confirmed"); in a body it is not (every rejection has it).
+const INTERVIEW_SUBJECT = [/\binterviews?\b/i];
+const INTERVIEW_WEAK = [
   /\bnext (?:round|step|stage)\b/i,
   /\bmove(?:d)? (?:you )?(?:forward|to the next)\b/i,
-  /\b(?:calendly|book a time|pick a (?:time|slot))\b/i,
   /\breschedul\w+/i,
   /\b(?:another|a different|a new) time\b/i
 ];
 
 const ASSESSMENT = [
   /\b(?:coding|technical|online|skills?|take[- ]?home) (?:assessment|challenge|test|exercise|task|assignment)\b/i,
-  /\btake[- ]?home\b/i,
-  /\bassignment\b/i,
   /\b(?:hackerrank|codility|coderpad|codesignal|leetcode|hackerearth|testgorilla|karat)\b/i,
   /\bonline assessment\b/i,
   /\bcomplete (?:the|this|a|your) (?:assessment|challenge|test|assignment|exercise)\b/i,
   /\bskills? (?:test|challenge)\b/i
+];
+const ASSESSMENT_SUBJECT = [/\bassessments?\b/i];
+const ASSESSMENT_WEAK = [/\btake[- ]?home\b/i, /\bassignment\b/i];
+
+// ── Application acknowledgements ──
+// "Thank you for applying" and friends. Their bodies routinely say "next step"
+// or "move forward" about a process that has not started, which is why those
+// phrases are WEAK above. A strong phrase in the body ("we would like to
+// schedule an interview") still wins over an ack subject: some employers send
+// the invite under the same "Update on your application" subject line.
+const APPLICATION_ACK = [
+  /\bthank(?:s| you) for (?:your )?(?:application|applying|submitting|interest)\b/i,
+  /\bapplication (?:has been |was |is )?(?:received|submitted|complete|confirmed|under review|in review)\b/i,
+  /\b(?:we(?:'ve| have) )?received your application\b/i,
+  /\bapplication (?:confirmation|receipt|status|update)\b/i,
+  /\byour application (?:to|for|with|has been|is|was)\b/i,
+  /\b(?:update|status|news) on your application\b/i
+];
+
+// ── ATS housekeeping, decided BEFORE the positive lists ──
+// Candidate-account creation, profile completion, portal passwords. A subject
+// like "REMINDER: KBR Candidate Account Home Creation" is never an offer, no
+// matter what boilerplate the body carries ("welcome aboard", "your offer of
+// employment, if extended, will appear here").
+const ATS_HOUSEKEEPING = [
+  /\bcandidate (?:account|home|profile|portal)\b/i,
+  /\b(?:create|set ?up|activate|complete|verify) your (?:candidate |applicant |career )?(?:account|profile)\b/i,
+  /\baccount (?:creation|activation|created|setup)\b/i,
+  /\bprofile (?:creation|created|setup|completion)\b/i,
+  /\b(?:careers?|candidate|applicant) portal (?:password|login|access)\b/i
 ];
 
 // ── Non-notifiable categories (classified for Discord + accuracy, never emailed) ──
@@ -112,7 +159,13 @@ const SECURITY = [
 ];
 
 const NEWSLETTER_SENDERS = /(newsletter|digest|noreply|no-reply|updates?|notifications?|mailer|marketing)@/i;
-const JOB_BOARD_SENDERS = /@(?:linkedin|indeed|ziprecruiter|glassdoor|monster|dice|wellfound|angellist|naukri|hired)\./i;
+// Job boards and aggregators: their mail is alerts and digests, never a step
+// in an application the client made. Checked before the positive lists.
+const JOB_BOARD_SENDERS =
+  /@(?:[\w.-]+\.)?(?:linkedin|indeed|ziprecruiter|glassdoor|monster|dice|wellfound|angellist|naukri|hired|jobright|simplyhired|careerbuilder|lensa|talent|joblist|remotive|weworkremotely|himalayas|wfh)\.[a-z.]+/i;
+// Content platforms: community digests and newsletters. A Reddit jobs thread
+// mentioning "job offer" is not an offer. Checked before the positive lists.
+const CONTENT_PLATFORM_SENDERS = /@(?:[\w.-]+\.)?(?:reddit|redditmail|medium|substack|quora|beehiiv|mailchimp|convertkit)\.[a-z.]+/i;
 
 const anyMatch = (patterns, text) => patterns.some((re) => re.test(text));
 
@@ -146,43 +199,55 @@ export function classifyMailByRules({ subject = "", from = "", bodyText = "", sn
   let priority = "low";
   let matched = false;
 
-  const classifyPositive = (name, patterns) => {
-    const inSubject = anyMatch(patterns, subj);
-    const inBody = anyMatch(patterns, body);
-    if (!inSubject && !inBody) return false;
+  const set = (name, prio) => {
     category = name;
-    priority = inSubject ? "high" : "medium";
+    priority = prio;
     matched = true;
     return true;
   };
 
+  // Strong phrase in the subject or body, or a weak phrase in the SUBJECT,
+  // makes the category. A weak phrase alone in the body does not.
+  const classifyPositive = (name, strong, weak, subjectOnly = []) => {
+    const inSubject = anyMatch(strong, subj) || anyMatch(weak, subj) || anyMatch(subjectOnly, subj);
+    if (inSubject) return set(name, "high");
+    if (anyMatch(strong, body)) return set(name, "medium");
+    return false;
+  };
+
+  // Decided before any positive phrase gets a look. See file header.
+  const subjectHousekeeping = anyMatch(ATS_HOUSEKEEPING, subj);
+  const subjectPositive = [
+    OFFER, OFFER_WEAK,
+    INTERVIEW, INTERVIEW_WEAK, INTERVIEW_SUBJECT,
+    ASSESSMENT, ASSESSMENT_WEAK, ASSESSMENT_SUBJECT
+  ].some((list) => anyMatch(list, subj));
+
   if (isRejection) {
     // Hard override — never a positive milestone, regardless of other keywords.
-    category = "rejection";
-    priority = "low";
-    matched = true;
+    set("rejection", "low");
+  } else if (JOB_BOARD_SENDERS.test(fromLc)) {
+    set("job-alert", "low");
+  } else if (CONTENT_PLATFORM_SENDERS.test(fromLc)) {
+    set("newsletter", "low");
+  } else if (subjectHousekeeping && !subjectPositive) {
+    set("job-application", "low");
   } else if (
-    classifyPositive("offer", OFFER) ||
-    classifyPositive("interview", INTERVIEW) ||
-    classifyPositive("assessment", ASSESSMENT)
+    classifyPositive("offer", OFFER, OFFER_WEAK) ||
+    classifyPositive("interview", INTERVIEW, INTERVIEW_WEAK, INTERVIEW_SUBJECT) ||
+    classifyPositive("assessment", ASSESSMENT, ASSESSMENT_WEAK, ASSESSMENT_SUBJECT)
   ) {
-    // matched set inside
+    // set inside
+  } else if (anyMatch(APPLICATION_ACK, hay) || anyMatch(ATS_HOUSEKEEPING, hay)) {
+    set("job-application", "low");
   } else if (anyMatch(RECRUITER, hay)) {
-    category = "recruiter-outreach";
-    priority = "low";
-    matched = true;
-  } else if (anyMatch(JOB_ALERT, hay) || JOB_BOARD_SENDERS.test(fromLc)) {
-    category = "job-alert";
-    priority = "low";
-    matched = true;
+    set("recruiter-outreach", "low");
+  } else if (anyMatch(JOB_ALERT, hay)) {
+    set("job-alert", "low");
   } else if (anyMatch(SECURITY, hay)) {
-    category = "account-security";
-    priority = "low";
-    matched = true;
+    set("account-security", "low");
   } else if (NEWSLETTER_SENDERS.test(fromLc)) {
-    category = "newsletter";
-    priority = "low";
-    matched = true;
+    set("newsletter", "low");
   }
 
   const urls = extractUrls(body, subj);
@@ -203,4 +268,21 @@ export function classifyMailByRules({ subject = "", from = "", bodyText = "", sn
 }
 
 // Exported for the verification script.
-export const __patterns = { REJECTION, OFFER, INTERVIEW, ASSESSMENT, RECRUITER, JOB_ALERT, SECURITY };
+export const __patterns = {
+  REJECTION,
+  OFFER,
+  OFFER_WEAK,
+  INTERVIEW,
+  INTERVIEW_WEAK,
+  INTERVIEW_SUBJECT,
+  ASSESSMENT,
+  ASSESSMENT_WEAK,
+  ASSESSMENT_SUBJECT,
+  APPLICATION_ACK,
+  ATS_HOUSEKEEPING,
+  RECRUITER,
+  JOB_ALERT,
+  SECURITY,
+  JOB_BOARD_SENDERS,
+  CONTENT_PLATFORM_SENDERS
+};

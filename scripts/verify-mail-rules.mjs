@@ -106,5 +106,30 @@ console.log("\n[4] Output shape is digest-compatible + deterministic summary");
   ok("reschedule stays interview (no false rejection)", resched.category === "interview", resched.category);
 }
 
+// ─────────────────────────────────────────────────────────────
+console.log("\n[5] 2026-09-10 incident: digests, ATS housekeeping and auto-acks are not milestones");
+{
+  const reddit = classify("13 High-Paying Remote Jobs Open to Beginners ($83,000+) | WFH.team",
+    "Some companies even extend a job offer after a short call.", "noreply@redditmail.com");
+  ok("reddit digest → newsletter", reddit.category === "newsletter", reddit.category);
+  ok("reddit digest not eligible", eligible(reddit) === false);
+
+  const workday = classify("REMINDER: KBR Candidate Account Home Creation",
+    "Welcome aboard! Please create your Candidate Home account. This is the next step in your application process.", "kbr@myworkday.com");
+  ok("workday account reminder → job-application", workday.category === "job-application", workday.category);
+  ok("workday account reminder not eligible", eligible(workday) === false);
+
+  const bloomberg = classify("Bloomberg- Thank you for your Application (Senior Data Management Professional - 10052626)",
+    "We have received your application. If you are selected to move forward, we will contact you about the next step.", "blprecruiting@recruiting.bloomberg.com");
+  ok("bloomberg auto-ack → job-application", bloomberg.category === "job-application", bloomberg.category);
+  ok("bloomberg auto-ack not eligible", eligible(bloomberg) === false);
+
+  const ackWithInvite = classify("Thank you for your application - schedule your interview", "Pick a slot for your phone screen.");
+  ok("ack subject with an invite in it stays interview", ackWithInvite.category === "interview", ackWithInvite.category);
+
+  const weakBody = classify("Update on your application", "We will be in touch about the next step.");
+  ok("body-only 'next step' is not an interview", weakBody.category !== "interview", weakBody.category);
+}
+
 console.log(`\n${fail === 0 ? "ALL PASS" : "FAILURES"} — ${pass} passed, ${fail} failed\n`);
 process.exit(fail === 0 ? 0 : 1);
