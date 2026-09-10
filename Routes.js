@@ -7,6 +7,25 @@ import GoogleOAuth from "./Controllers/GoogleOAuth.js";
 import { getAllClients } from './Controllers/ClientController.js';
 import { getClientTrackingStatus } from './Controllers/ClientTrackingStatus.js';
 import { listAutopilotCreds, getAutopilotCreds, putAutopilotCreds } from './Controllers/AutopilotCreds.js';
+import {
+  recordAutopilotRun,
+  listAutopilotRuns,
+  getAutopilotRunsSummary,
+  getAutopilotRunsForClient,
+  queueAutopilotRun,
+  listAutopilotQueue,
+  claimAutopilotRequests,
+  finishAutopilotRequest,
+  cancelAutopilotRequest
+} from './Controllers/AutopilotRuns.js';
+import {
+  listAutopilotWorkers,
+  createAutopilotWorker,
+  deleteAutopilotWorker,
+  listAutopilotAssignments,
+  setAutopilotAssignments,
+  autopilotWorkerHeartbeat
+} from './Controllers/AutopilotWorkers.js';
 import { getDashboardManagers, getDashboardManagerByName, syncDashboardManagers } from './Controllers/DashboardManagerController.js';
 import Add_Update_Profile from "./Controllers/Add_Update_Profile.js";
 import AddJob from "./Controllers/AddJob.js";
@@ -128,6 +147,45 @@ app.get("/api/clients/tracking-status", getClientTrackingStatus);
 app.get("/autopilot/creds", requireOpsKey, listAutopilotCreds);
 app.get("/autopilot/creds/:email", requireOpsKey, getAutopilotCreds);
 app.put("/autopilot/creds/:email", requireOpsKey, putAutopilotCreds);
+
+// Autopilot run history + the scrape request queue.
+// See Controllers/AutopilotRuns.js. Anything the autopilot WRITES is ops-key
+// gated; the read routes the Client Tracking portal renders are open, matching
+// the other dashboard endpoints that portal already calls. Route order matters:
+// /runs/summary and /runs/client/:email are declared before any bare /runs/:x
+// could shadow them.
+app.post("/autopilot/runs", requireOpsKey, recordAutopilotRun);
+app.get("/autopilot/runs/summary", getAutopilotRunsSummary);
+app.get("/autopilot/runs/client/:email", getAutopilotRunsForClient);
+app.get("/autopilot/runs", listAutopilotRuns);
+// queue + cancel are called by the Client Tracking portal, so they are NOT
+// ops-key gated. Vite inlines env vars at build time, so requiring the key
+// here would publish OPS_SECRET_KEY inside the browser bundle - and that same
+// key guards /operations/reminders/*, which can email clients and post to
+// their Mattermost channels. Handing that key to every visitor to protect a
+// scrape button is a bad trade.
+// The exposure left is bounded: an unknown client is refused by the autopilot,
+// the partial unique index allows one live request per client, and the 30-job
+// cap still applies. It matches the posture of the other portal-facing
+// dashboard routes (/summaries-overview, /push-history), which return client
+// data unauthenticated today.
+// claim and finish stay gated: only the autopilot calls those, it holds the
+// key already, and they mutate run state.
+app.post("/autopilot/queue", queueAutopilotRun);
+app.get("/autopilot/queue", listAutopilotQueue);
+app.post("/autopilot/queue/claim", requireOpsKey, claimAutopilotRequests);
+app.post("/autopilot/queue/:id/finish", requireOpsKey, finishAutopilotRequest);
+app.post("/autopilot/queue/:id/cancel", cancelAutopilotRequest);
+
+// Worker ("Profile") registry, client assignment and cross-machine heartbeat.
+// See Controllers/AutopilotWorkers.js. Only the autopilot app calls these and
+// it holds the ops key already, so all of them are gated.
+app.get("/autopilot/workers", requireOpsKey, listAutopilotWorkers);
+app.post("/autopilot/workers", requireOpsKey, createAutopilotWorker);
+app.post("/autopilot/workers/:slug/heartbeat", requireOpsKey, autopilotWorkerHeartbeat);
+app.delete("/autopilot/workers/:slug", requireOpsKey, deleteAutopilotWorker);
+app.get("/autopilot/assignments", requireOpsKey, listAutopilotAssignments);
+app.put("/autopilot/assignments", requireOpsKey, setAutopilotAssignments);
 app.get("/api/dashboard-managers", getDashboardManagers);
 app.get("/sync/managers", syncDashboardManagers);
 app.post("/refresh-token", RefreshToken);

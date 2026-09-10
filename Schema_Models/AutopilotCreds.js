@@ -10,12 +10,17 @@ import mongoose from "mongoose";
 //   extEmail / extPassword - the client's FlashFire dashboard login (what the
 //                            extension panel's sign-in form takes)
 //   extCode                - the 5-digit operator code the panel asks for
-//   maxJobs                - per-run push cap. The autopilot stops a run once
-//                            this many jobs have been pushed for the client.
-//                            Defaults to 30 and may not be set above 30; a 0
-//                            left by an older record is read as 30, never as
-//                            "unlimited". The dashboard's own lifetime
-//                            targetJobCount still applies on top of this.
+//   maxJobs                - LEGACY, no longer read or written. It used to be
+//                            a second cap living beside the real one, so the
+//                            autopilot could show "cap 30" while /addjob was
+//                            really allowing 23 - a run would open a browser,
+//                            log in and be refused on its third push. The one
+//                            cap that counts is ProfileModel.targetJobCount:
+//                            per day, shared by manual operator pushes and the
+//                            autopilot, resetting at 22:00 IST. Controllers/
+//                            AutopilotCreds.js reads and writes that instead.
+//                            Left on the schema so existing documents still
+//                            load; delete once no old build is in service.
 //
 // Storage is PLAINTEXT, deliberately matching the existing precedent in the
 // scraper service (scraper_client_settings.jrPassword, operator direction
@@ -30,7 +35,7 @@ const AutopilotCredsSchema = new mongoose.Schema(
     extEmail: { type: String, default: "" },
     extPassword: { type: String, default: "" },
     extCode: { type: String, default: "" },
-    maxJobs: { type: Number, default: 30, min: 1, max: 30 },
+    maxJobs: { type: Number, default: 30, min: 1, max: 30 }, // legacy, unread
     updatedBy: { type: String, default: "" }
   },
   { timestamps: true, collection: "autopilotcreds" }
