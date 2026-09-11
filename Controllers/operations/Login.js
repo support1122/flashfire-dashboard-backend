@@ -1,6 +1,7 @@
 import Operations from "../../Schema_Models/Operations.js";
 import bcrypt from "bcrypt";
 import { logActivity } from "../../Utils/activityLogger.js";
+import { filterVisibleManagedUsers } from "../../Utils/clientVisibility.js";
 
 const normalizeEmail = (email) => String(email || "").trim().toLowerCase();
 
@@ -40,6 +41,14 @@ export async function OperationsLogin(req, res) {
                summary: `${opUser.name || opUser.email} (operator) logged in`,
           });
 
+          // Inactive and paused clients are dropped from the picker the operator
+          // lands on. The assignment itself is untouched, so reactivating a client
+          // brings them back on the next sign-in without anyone re-assigning.
+          const visibleClients = await filterVisibleManagedUsers(
+               opUser.managedUsers,
+               opUser.email
+          );
+
           res.json({
                message: "Login successful",
                user: {
@@ -47,7 +56,7 @@ export async function OperationsLogin(req, res) {
                     name: opUser.name,
                     email: opUser.email,
                     role: opUser.role,
-                    managedUsers: opUser.managedUsers
+                    managedUsers: visibleClients
                },
           });
      } catch (err) {
