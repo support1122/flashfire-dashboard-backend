@@ -67,6 +67,7 @@ import OperationsHandeling from "./Middlewares/OperationsHandeling.js";
 import GetUserDetails from "./Controllers/operations/GetUserDetails.js";
 import GetUserResumes from "./Controllers/operations/GetUserResumes.js";
 import GetAllJobsOPS from "./Controllers/operations/GetAllJobs.js";
+import GetSavedJobCounts from "./Controllers/operations/GetSavedJobCounts.js";
 import { getClientOperations, updateClientOperations, checkLockPeriod } from "./Controllers/operations/ClientOperations.js";
 import { reconcileExclusionJobsHandler } from "./Controllers/operations/reconcileExclusionJobs.js";
 import { queueAutoOptimizeSavedJobs } from "./Controllers/operations/QueueAutoOptimizeSavedJobs.js";
@@ -603,6 +604,7 @@ app.post("/operations/verify-session-key", verifySessionKey);
 app.post("/operations/getUserDetails", OperationsHandeling, GetUserDetails); // login does this for normal users
 app.post("/operations/user-resumes", GetUserResumes);
 app.post('/operations/alljobs', GetAllJobsOPS);
+app.post('/operations/saved-job-counts', GetSavedJobCounts);
 
 app.post("/operations/getalljobs", GetAllJobs);
 app.post('/operations/jobs', AddJob);
