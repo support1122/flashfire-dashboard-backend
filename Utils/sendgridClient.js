@@ -39,13 +39,18 @@ export function isSendgridConfigured() {
  * @param {string} [a.fromName]
  * @param {string} [a.replyTo]
  * @param {Object} [a.categories]  - SendGrid categories for analytics
+ * @param {Object} [a.headers]     - extra headers, e.g. List-Unsubscribe
  * @returns {Promise<{ok: boolean, status?: number, error?: string}>}  never throws
  */
-export async function sendEmail({ to, subject, html, text, fromEmail, fromName, replyTo, categories }) {
+export async function sendEmail({ to, subject, html, text, fromEmail, fromName, replyTo, categories, headers }) {
   if (!ensureConfigured()) {
     return { ok: false, error: "sendgrid_not_configured" };
   }
-  if (!to || !subject || !html) {
+  // A body in EITHER form is enough. Requiring html meant every text-only
+  // caller - the referral notifications in Utils/referralCredit.js are the
+  // live example - got 'missing_required_fields' back and sent nothing, in a
+  // fail-soft path that only warns. A plain-text mail is a valid mail.
+  if (!to || !subject || (!html && !text)) {
     return { ok: false, error: "missing_required_fields" };
   }
 
@@ -53,10 +58,13 @@ export async function sendEmail({ to, subject, html, text, fromEmail, fromName, 
     to,
     from: { email: fromEmail || DEFAULT_FROM_EMAIL, name: fromName || DEFAULT_FROM_NAME },
     subject,
-    html,
+    ...(html ? { html } : {}),
     ...(text ? { text } : {}),
     ...(replyTo ? { replyTo } : {}),
-    ...(Array.isArray(categories) && categories.length ? { categories } : {})
+    ...(Array.isArray(categories) && categories.length ? { categories } : {}),
+    // List-Unsubscribe / List-Unsubscribe-Post. SendGrid passes these through
+    // verbatim, which is what makes the provider's own Unsubscribe button work.
+    ...(headers && Object.keys(headers).length ? { headers } : {})
   };
 
   try {

@@ -108,6 +108,8 @@ const SENDING = OPT.mattermost || OPT.email;
 // Reasons decideDelivery() can return that --force is allowed to override.
 // Mirrors FORCEABLE_REASONS in the worker; kept here only so the read-only
 // report can tell an operator whether --force would change the outcome.
+// 'nothing_added' is absent on purpose: a 0-roles daily summary is never sent,
+// forced or not. See FORCEABLE_REASONS in src/services/clientReminderWorker.js.
 const FORCEABLE = new Set(["no_activity", "client_is_active", "no_milestone", "milestone_already_sent"]);
 
 const PREVIEW_DIR = path.resolve(process.cwd(), "tmp-reminder-preview");
@@ -460,6 +462,9 @@ function printVerdict(ev, { destination, webhook }) {
   info(`subject:     ${rendered ? `"${rendered.subject}"` : "(template returned null)"}`);
   if (meta.cadence !== "event" && !decision.shouldSend && decision.reason === "no_activity") {
     info("            (nothing would actually be sent — the hard rule: silence beats an empty digest)");
+  }
+  if (!decision.shouldSend && decision.reason === "nothing_added") {
+    info("            (nothing would be sent — zero roles added, and --force cannot override this one)");
   }
 }
 

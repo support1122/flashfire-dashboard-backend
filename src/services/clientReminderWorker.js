@@ -95,6 +95,12 @@ export const FORCEABLE_REASONS = new Set([
   "client_is_active",
 ]);
 
+// 'nothing_added' is deliberately NOT in that set. A daily summary whose only
+// number is zero is not a template an operator needs to prove on a quiet day -
+// it is the exact mail the client should never receive ("Daily update: 0 new
+// roles added"), so there is no button that sends it. Preview renders it
+// without delivering, which is what a template check actually wants.
+
 // Enable only on the real Render deploy (or when forced). A developer laptop
 // pointed at the production database must not email or ping real clients, and
 // "I forgot the worker was running locally" is not a mistake you get to make
@@ -427,8 +433,15 @@ export function decideDelivery({ meta, item, stats, lifetime, inactivityDays, da
     return { shouldSend: true, reason: "ok" };
   }
 
-  if (meta.activityGated && st.isEmpty === true) {
-    return { shouldSend: false, reason: "no_activity" };
+  if (meta.activityGated) {
+    // Gate on the number the report actually prints. See `gateOn` in
+    // Utils/reminderItems.js for why "any" is not good enough for an item
+    // whose subject line carries a single figure.
+    if (meta.gateOn === "added") {
+      if ((Number(st.addedCount) || 0) <= 0) return { shouldSend: false, reason: "nothing_added" };
+    } else if (st.isEmpty === true) {
+      return { shouldSend: false, reason: "no_activity" };
+    }
   }
 
   return { shouldSend: true, reason: "ok" };

@@ -21,6 +21,7 @@ import { OnboardingMailState } from "../Schema_Models/OnboardingMailState.js";
 import { stepsForPlan, planIncludesStep } from "../src/services/onboardingMailWorker.js";
 import { renderOnboardingEmail, isOnboardingStep } from "../Utils/onboardingMailTemplates.js";
 import { mirrorOnboardingStep, recordMirrorOnStep } from "../src/services/onboardingMattermost.js";
+import { unsubscribeHeaders, UNSUB_STREAMS } from "../Utils/unsubscribe.js";
 import {
   sendViaSmtp,
   isSmtpConfigured,
@@ -276,6 +277,10 @@ export async function SendOnboardingMailStep(req, res) {
       html: rendered.html,
       text: rendered.text,
       category: MAIL_CATEGORY.ONBOARDING,
+      // A hand-sent mail is the same mail. It carried the unsubscribe link in
+      // its body already (the template adds it); without these headers it was
+      // the one onboarding mail missing the provider's one-click button.
+      headers: unsubscribeHeaders(email || paymentEmail, UNSUB_STREAMS.ONBOARDING),
     });
 
     if (!result.ok) {

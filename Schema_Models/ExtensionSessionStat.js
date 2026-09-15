@@ -46,6 +46,10 @@ const extensionSessionStatSchema = new mongoose.Schema({
         authMismatch:        { type: Number, default: 0 },
         threshold:           { type: Number, default: 0 },
         companyBlocked:      { type: Number, default: 0 },
+        // Dropped by the extension's card score floor BEFORE any OpenAI call,
+        // so these cost nothing. Separate from `threshold` (which the model
+        // itself returns) precisely so the saving is measurable.
+        cardScore:           { type: Number, default: 0 },
         other:               { type: Number, default: 0 },
     },
     // Judge-model split — how many AI-judge batches this session ran on

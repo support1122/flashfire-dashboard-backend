@@ -75,9 +75,18 @@ test("unsubscribe", async (t) => {
       assert.equal(u.unsubscribeUrl("c@e.com", "all"), "");
       assert.deepEqual(u.unsubscribeHeaders("c@e.com", "all"), {});
     });
+    // A missing PUBLIC_API_URL is NOT one of those cases any more. It used to
+    // be, and the result was every client mail shipping with no opt-out at all
+    // because nobody had set the var on the Render service (seen 14 Sept 2026).
+    // The base now falls back to the deployed API, so the link survives a
+    // forgotten env var.
     await withEnv({ ...LIVE, PUBLIC_API_URL: null, BACKEND_PUBLIC_URL: null }, () => {
-      assert.equal(u.unsubscribeUrl("c@e.com", "all"), "", "no public URL means no link");
-      assert.deepEqual(u.unsubscribeHeaders("c@e.com", "all"), {});
+      const url = u.unsubscribeUrl("c@e.com", "all");
+      assert.match(url, /^https:\/\/\S+\/unsubscribe\?/, "a forgotten env var still yields a link");
+      assert.ok(u.unsubscribeHeaders("c@e.com", "all")["List-Unsubscribe"], "and the RFC 8058 headers");
+      // The signed token is what makes the link safe, and it is unchanged by
+      // which host serves it.
+      assert.equal(u.verifyUnsubscribeToken("c@e.com", "all", new URL(url).searchParams.get("t")), true);
     });
     await withEnv(LIVE, () => {
       assert.equal(u.unsubscribeUrl("", "all"), "", "no address means no link");
@@ -156,6 +165,65 @@ test("unsubscribe", async (t) => {
       // able to have exactly that.
       assert.match(daily.html, /s=reminders/, "daily opts out of reminders");
       assert.match(milestone.html, /s=inbox-alerts/, "milestone opts out of inbox alerts");
+    });
+  });
+
+  await t.test("a link minted by clients-tracking verifies here, and old links keep working", async () => {
+    // /unsubscribe lives in THIS service, but clients-tracking mails clients
+    // too. The two do not share a JWT secret, so links are signed with
+    // CRYPTO_AES_SECRET_SECRET_KEY - the AES key both already hold over the
+    // same stored credentials. Verification accepts any configured key, which
+    // is also what keeps links already sitting in inboxes alive.
+    const SHARED = "the-key-both-services-hold";
+    const LEGACY = "the-old-jwt-secret";
+
+    const legacyToken = await withEnv(
+      { JWT_SECRET: LEGACY, CRYPTO_AES_SECRET_SECRET_KEY: null, UNSUBSCRIBE_SECRET: null },
+      () => u.unsubscribeToken("c@e.com", "reminders")
+    );
+
+    await withEnv({ JWT_SECRET: LEGACY, CRYPTO_AES_SECRET_SECRET_KEY: SHARED, UNSUBSCRIBE_SECRET: null }, () => {
+      // New links now carry the shared signature...
+      const fresh = u.unsubscribeToken("c@e.com", "reminders");
+      assert.notEqual(fresh, legacyToken, "the preferred key changed");
+      assert.equal(u.verifyUnsubscribeToken("c@e.com", "reminders", fresh), true);
+      // ...and the ones already delivered still open.
+      assert.equal(u.verifyUnsubscribeToken("c@e.com", "reminders", legacyToken), true, "legacy link still valid");
+      // Nothing else got easier to forge.
+      assert.equal(u.verifyUnsubscribeToken("c@e.com", "reminders", "z".repeat(fresh.length)), false);
+      assert.equal(u.verifyUnsubscribeToken("someone@else.com", "reminders", fresh), false);
+      assert.equal(u.verifyUnsubscribeToken("c@e.com", "all", fresh), false, "stream is part of the signature");
+    });
+
+    // A key nobody configured cannot be used to mint links.
+    await withEnv(
+      { JWT_SECRET: null, JWT_SECRET_KEY: null, CRYPTO_AES_SECRET_SECRET_KEY: null, UNSUBSCRIBE_SECRET: null },
+      () => {
+        assert.equal(u.isUnsubscribeConfigured(), false);
+        assert.equal(u.unsubscribeUrl("c@e.com", "all"), "");
+      }
+    );
+  });
+
+  await t.test("the daily summary still carries the link with no PUBLIC_API_URL set", async () => {
+    // Production condition on 14 Sept 2026: the var was never set on the Render
+    // service, so the footer rendered "Reply to this email to change what we
+    // send" and nothing else. The fallback base is what closes that hole.
+    await withEnv({ JWT_SECRET: "test-signing-secret", PUBLIC_API_URL: null, BACKEND_PUBLIC_URL: null }, async () => {
+      const { renderReminderEmail } = await import(`../reminderTemplates.js?n=${Date.now()}`);
+      const daily = renderReminderEmail({
+        kind: "daily_summary",
+        client: { email: "c@e.com" },
+        stats: {
+          addedCount: 3, appliedCount: 0, byDay: [], topCompanies: [],
+          addedJobs: [], appliedJobs: [], interviewJobs: [], offerJobs: []
+        },
+        lifetime: {},
+        period: { label: "Mon, 14 Sept 2026" }
+      });
+      assert.match(daily.html, /<a href="https:\/\/[^"]+\/unsubscribe\?[^"]*s=reminders[^"]*"/, "an https opt-out link");
+      assert.match(daily.html, />Unsubscribe<\/a>/, "labelled Unsubscribe");
+      assert.match(daily.text, /^Unsubscribe: https:\/\//m, "and in the plaintext part");
     });
   });
 });

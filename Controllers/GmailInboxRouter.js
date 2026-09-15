@@ -13,6 +13,7 @@ import { sendEmail, isSendgridConfigured } from "../Utils/sendgridClient.js";
 import { sendViaSmtp, isSmtpConfigured, verifySmtp } from "../Utils/smtpSender.js";
 import { renderClientMilestoneEmail, NOTIFIABLE_CATEGORIES } from "../Utils/clientMailTemplates.js";
 import { sendDailySummary } from "../src/services/mailClientMonitor.js";
+import { unsubscribeHeaders, UNSUB_STREAMS } from "../Utils/unsubscribe.js";
 import { mailNotifyWebhook, verifyWebhook, isGmailAuthError, errorText } from "../Utils/discordMailNotify.js";
 import { isMailPollEnabled } from "../src/services/mailPollWorker.js";
 import { getActiveUnpausedClients } from "../Schema_Models/ClientPaymentLookup.js";
@@ -952,9 +953,12 @@ router.post("/client-alert/test", async (req, res) => {
       dashboardUrl: process.env.CLIENT_DASHBOARD_URL || process.env.FRONTEND_URL || ""
     });
 
+    // A test send is a real mail to a real inbox, so it carries the same
+    // opt-out headers as the live one.
+    const unsubHeaders = unsubscribeHeaders(to, UNSUB_STREAMS.INBOX_ALERTS);
     const result =
       useChannel === "smtp"
-        ? await sendViaSmtp({ to, subject, html, text })
+        ? await sendViaSmtp({ to, subject, html, text, headers: unsubHeaders })
         : await sendEmail({
             to,
             subject,
@@ -962,7 +966,8 @@ router.post("/client-alert/test", async (req, res) => {
             text,
             fromEmail: process.env.CLIENT_MAIL_FROM_EMAIL || undefined,
             fromName: process.env.CLIENT_MAIL_FROM_NAME || "FlashFire",
-            categories: ["client-milestone-test"]
+            categories: ["client-milestone-test"],
+            headers: unsubHeaders
           });
     if (!result.ok) return res.status(502).json({ ok: false, channel: useChannel, error: result.error });
     // messageId (SMTP) is the Sent-folder receipt.
