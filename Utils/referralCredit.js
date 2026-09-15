@@ -1,6 +1,7 @@
 import { UserModel } from "../Schema_Models/UserModel.js";
 import { ProfileModel } from "../Schema_Models/ProfileModel.js";
 import { isSendgridConfigured, sendEmail } from "./sendgridClient.js";
+import { unsubscribeUrl, unsubscribeHeaders, UNSUB_STREAMS } from "./unsubscribe.js";
 
 /**
  * Grants a referrer their bonus applications when someone they referred joins
@@ -72,6 +73,11 @@ async function notifyReferrer(referrer, referredName, plan, bonus) {
   // Off unless explicitly enabled, so "credit silently" is a config change.
   if (String(process.env.REFERRAL_NOTIFY_REFERRER).toLowerCase() !== "true") return;
   if (!referrer?.email || !isSendgridConfigured()) return;
+  // This is unsolicited mail from the recipient's point of view - they get it
+  // because somebody else named them - so it carries the same opt-out as every
+  // other client mail. `all` rather than a single stream: a person who does not
+  // want referral mail is not asking to keep the daily count.
+  const unsubUrl = unsubscribeUrl(referrer.email, UNSUB_STREAMS.ALL);
   try {
     await sendEmail({
       to: referrer.email,
@@ -80,7 +86,9 @@ async function notifyReferrer(referrer, referredName, plan, bonus) {
         `Hi ${norm(referrer.name) || "there"},\n\n` +
         `${referredName} joined Flashfire on the ${plan} plan and named you as their referrer.\n` +
         `${bonus} bonus applications have been added to your plan — there is nothing to claim.\n\n` +
-        `You can see your running total on the Refer n Earn page.\n`,
+        `You can see your running total on the Refer n Earn page.\n` +
+        (unsubUrl ? `\nUnsubscribe: ${unsubUrl}\n` : ""),
+      headers: unsubscribeHeaders(referrer.email, UNSUB_STREAMS.ALL),
     });
   } catch (e) {
     console.warn("[referralCredit] referrer email failed:", e?.message || e);

@@ -60,21 +60,24 @@ console.log("\n[2] renderClientMilestoneEmail — branded, safe, complete");
     dashboardUrl: "https://dash.flashfire.io"
   };
 
+  // The template was redesigned (one card, no key-point list, no per-client
+  // greeting): the mail now states the category, the sender and the subject,
+  // and sends the client to the dashboard for the rest. These assertions track
+  // that design; the escaping checks below are the ones that must never bend.
   const r = renderClientMilestoneEmail(base);
-  ok("subject leads with headline", /You've got an interview/.test(r.subject), r.subject);
+  ok("subject leads with headline", /You have an interview invite/.test(r.subject), r.subject);
   ok("subject includes source subject", r.subject.includes("Backend Engineer"));
-  ok("greets by first name", r.html.includes("Priya") && !r.html.includes("Priya Sharma,"), "should use first name");
   ok("renders the source subject verbatim", r.html.includes("Interview invite — Backend Engineer"), "full subject should appear");
+  ok("renders the sender", r.html.includes("Acme Talent"));
   ok("renders the summary", r.html.includes("45-min technical interview"));
-  ok("renders key points", r.html.includes("Thu/Fri PM"));
-  ok("renders next-step block", r.html.includes("Confirm a slot today"));
-  ok("flame gradient present", r.html.includes("#f97316") && r.html.includes("#ef4444"));
+  ok("labels the category", r.html.includes("Interview invite"));
+  ok("brand accent present", r.html.includes("#ea580c") || r.html.includes("#f97316"), "accent colour");
   ok("CTA points at dashboard", r.html.includes('href="https://dash.flashfire.io"'));
   ok("plaintext fallback present", r.text.includes("Interview invite") && r.text.length > 40);
 
   // Category art direction differs
   const off = renderClientMilestoneEmail({ ...base, digest: { ...base.digest, category: "offer" } });
-  ok("offer uses its own headline", /You've got an offer/.test(off.subject));
+  ok("offer uses its own headline", /You have an offer/.test(off.subject));
   const asg = renderClientMilestoneEmail({ ...base, digest: { ...base.digest, category: "assessment" } });
   ok("assessment surfaced as Assignment", asg.html.includes("Assignment") && /assignment/i.test(asg.subject));
 
@@ -89,16 +92,21 @@ console.log("\n[2] renderClientMilestoneEmail — branded, safe, complete");
     },
     dashboardUrl: ""
   });
-  ok("script tag in name escaped", !evil.html.includes("<script>alert(1)</script>") && evil.html.includes("&lt;script&gt;"));
+  // The client's own name is no longer printed anywhere in this template, so
+  // the guarantee is stronger than escaping: it must not reach the HTML at all.
+  ok("script tag in name never rendered", !evil.html.includes("<script>") && !evil.html.includes("alert(1)</script>"));
   ok("img onerror in subject escaped", !evil.html.includes("<img src=x onerror") && evil.html.includes("&lt;img"));
   ok("ampersand/tags in summary escaped", evil.html.includes("&amp;") && evil.html.includes("&lt;them&gt;"));
   ok("javascript: URL rejected from CTA", !evil.html.includes("javascript:alert(1)"));
-  ok("falls back to safe https url for CTA", evil.html.includes("https://safe.example.com/j"));
+  // With an unusable dashboardUrl the CTA falls back to the portal constant,
+  // never to a link harvested from the mail we are reporting on.
+  ok("CTA falls back to the portal, not to a mail URL", evil.html.includes('href="https://portal.flashfirejobs.com"'));
+  ok("no URL from the source mail is made clickable", !evil.html.includes("https://safe.example.com/j"));
 
   // No-summary mail still renders
   const bare = renderClientMilestoneEmail({ client: { email: "a@b.com" }, digest: { category: "offer", subject: "You got it" } });
   ok("bare mail renders without crashing", bare.html.includes("You got it") && bare.subject.length > 0);
-  ok("greets 'there' when no name", bare.html.includes("there") || bare.html.includes("a</h1>") || bare.html.includes(">a<"), "name fallback");
+  ok("a nameless client still gets a complete mail", bare.html.includes("You have an offer") && bare.text.includes("You got it"));
 }
 
 // ─────────────────────────────────────────────────────────────

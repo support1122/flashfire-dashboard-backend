@@ -58,23 +58,66 @@ export function isUnsubStream(stream) {
 }
 
 /**
- * The signing key. Reuses the app's existing JWT secret rather than adding
- * another env var to forget in one environment. Returns "" when unset, and
- * every caller then degrades to "no unsubscribe link" rather than emitting an
- * unsigned link that anyone could forge.
+ * Signing keys, most-preferred first.
+ *
+ * WHY A LIST AND NOT ONE KEY
+ *
+ * Two services mail our clients: this dashboard and clients-tracking. Both
+ * must be able to mint a link that THIS service can verify, because /unsubscribe
+ * lives here and nowhere else. They do not share a JWT secret (checked: the two
+ * values differ), so signing with JWT_SECRET alone means every link from
+ * clients-tracking lands on "this link is not valid".
+ *
+ * CRYPTO_AES_SECRET_SECRET_KEY is already the same value in both services - it
+ * is the AES key they use to encrypt and decrypt the SAME stored credentials,
+ * so it cannot drift without breaking logins. Preferring it makes cross-service
+ * links verify with no new environment variable for anyone to forget.
+ * UNSUBSCRIBE_SECRET is offered first so the two concerns can be separated
+ * later without a code change.
+ *
+ * Verification accepts ANY key in this list, which is what keeps links already
+ * sitting in inboxes - signed with JWT_SECRET before this change - working.
  */
+function signingKeys() {
+  const candidates = [
+    process.env.UNSUBSCRIBE_SECRET,
+    process.env.CRYPTO_AES_SECRET_SECRET_KEY,
+    process.env.JWT_SECRET,
+    process.env.JWT_SECRET_KEY
+  ].map((v) => String(v || "").trim());
+  return [...new Set(candidates.filter(Boolean))];
+}
+
+/** The key new links are signed with. "" when nothing is configured. */
 function signingKey() {
-  return String(process.env.JWT_SECRET || process.env.JWT_SECRET_KEY || "").trim();
+  return signingKeys()[0] || "";
 }
 
 export function isUnsubscribeConfigured() {
   return signingKey().length > 0;
 }
 
-/** Public base URL of the dashboard API, used to build the link. */
+// The deployed API, used when neither env var is set.
+//
+// This constant exists because the degradation was silent: with no
+// PUBLIC_API_URL on the Render service, unsubscribeUrl() returned "" and every
+// client mail went out with no opt-out link at all, which is the outcome this
+// whole module was written to prevent. An env var nobody set is not a reason
+// to ship mail without an unsubscribe.
+//
+// This is the live production API - verified serving GET /unsubscribe - and is
+// the host clients-tracking points its links at too. If the service ever moves,
+// change it here and set PUBLIC_API_URL on the deployment in the meantime.
+const FALLBACK_API_URL = "https://flashfire-dashboard-backend.onrender.com";
+
+/**
+ * Public base URL of the dashboard API, used to build the link.
+ * Env first (so staging and local point at themselves), production constant
+ * after. Never empty, so the link never silently disappears.
+ */
 export function unsubscribeBaseUrl() {
   const raw = String(process.env.PUBLIC_API_URL || process.env.BACKEND_PUBLIC_URL || "").trim();
-  return raw.replace(/\/+$/, "");
+  return (raw || FALLBACK_API_URL).replace(/\/+$/, "");
 }
 
 function normalise(email, stream) {
@@ -82,14 +125,17 @@ function normalise(email, stream) {
 }
 
 /** HMAC-SHA256, url-safe base64, truncated to 32 chars - 128 bits of tag. */
-export function unsubscribeToken(email, stream = UNSUB_STREAMS.ALL) {
-  const key = signingKey();
+function signWith(key, email, stream) {
   if (!key) return "";
   return crypto
     .createHmac("sha256", key)
     .update(normalise(email, stream))
     .digest("base64url")
     .slice(0, 32);
+}
+
+export function unsubscribeToken(email, stream = UNSUB_STREAMS.ALL) {
+  return signWith(signingKey(), email, stream);
 }
 
 /**
@@ -99,14 +145,21 @@ export function unsubscribeToken(email, stream = UNSUB_STREAMS.ALL) {
  * short token cannot throw instead of returning false.
  */
 export function verifyUnsubscribeToken(email, stream, token) {
-  const expected = unsubscribeToken(email, stream);
   const given = String(token || "");
-  if (!expected || expected.length !== given.length) return false;
-  try {
-    return crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(given));
-  } catch {
-    return false;
+  if (!given) return false;
+  // Every configured key is tried, without short-circuiting on the first match,
+  // so the work is the same whichever key signed the link.
+  let ok = false;
+  for (const key of signingKeys()) {
+    const expected = signWith(key, email, stream);
+    if (expected.length !== given.length) continue;
+    try {
+      if (crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(given))) ok = true;
+    } catch {
+      // Length already matched; a throw here is not a match.
+    }
   }
+  return ok;
 }
 
 /**

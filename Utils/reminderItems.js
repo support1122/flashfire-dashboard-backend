@@ -22,6 +22,17 @@
  *   "Nothing was added and nothing was applied" means the client hears
  *   nothing at all - an empty digest is worse than silence.
  *
+ * gateOn: WHICH number decides "empty" for an activityGated item.
+ *   "any" (the default) - skip only when nothing was added AND nothing applied.
+ *   "added"             - skip whenever addedCount is 0, regardless of what
+ *                         else happened that day.
+ *   A report must be gated on the number it actually prints. The daily summary
+ *   prints one figure, "New roles added", so a day with zero added but some
+ *   applications used to slip past the "any" rule and mail the client
+ *   "Daily update: 0 new roles added" (seen 14 Sept 2026). Gating it on the
+ *   number in the subject line is the fix, and the worker refuses to force
+ *   past this one - see NON_FORCEABLE handling in decideDelivery().
+ *
  * scheduleFields: which schedule controls the UI must render for this item.
  */
 export const REMINDER_ITEMS = [
@@ -32,6 +43,8 @@ export const REMINDER_ITEMS = [
       "Jobs added and applications submitted for the client today, with the companies and roles.",
     cadence: "daily",
     activityGated: true,
+    // Zero roles added = no mail, ever. Not even a forced send-now.
+    gateOn: "added",
     scheduleFields: ["sendAtIST", "autoOnThreshold"],
     defaults: {
       enabled: true,
