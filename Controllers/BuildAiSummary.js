@@ -1737,16 +1737,35 @@ function enforceWhitelistDirective(summary, notesText, lockedSections = [], pref
   const hdIdx0 = lines0.findIndex((l) => l.trim().toLowerCase().startsWith("# hard disqualifiers"));
   if (hdIdx0 === -1) return out;
   if (!roles.length) {
-    // No genuine role whitelist in the notes — the model has NOTHING to
-    // ground a "Skip all roles other than X." bullet in. If it wrote one
-    // anyway (observed: R0 misapplied to a company/sponsorship/work-model
-    // "only scrap X" note, e.g. "Skip all roles other than companies that
-    // sponsor H-1B visas"), that is a fabrication with no basis in the
-    // client's actual role preferences — strip it, mirroring how the
-    // extension discards a fabricated "excluded" skip with no real basis.
+    // No genuine role whitelist phrase in the NOTES — but the whitelist can
+    // also come from preferredRoles alone: a client whose profile lists a
+    // small, closed set of exact role titles (e.g. "Senior QA Analyst, QA
+    // Lead, QA Manager") with no note reinforcing it at all. If the model
+    // already wrote a "Skip all roles other than X." bullet, only strip it
+    // when X does NOT genuinely correspond to preferredRoles — that is the
+    // observed fabrication (R0 misapplied to a company/sponsorship/
+    // work-model "only scrap X" note, e.g. "Skip all roles other than
+    // companies that sponsor H-1B visas"). When X DOES correspond to
+    // preferredRoles, the bullet is grounded in the profile itself, not
+    // fabricated — keep it, and don't let this pass regress a plain,
+    // note-free whitelist. Rescoring/keeping is decided per catch-all line
+    // found, not globally, in case more than one landed in the section.
     let end = lines0.length;
     for (let i = hdIdx0 + 1; i < lines0.length; i++) { if (/^#\s/.test(lines0[i])) { end = i; break; } }
-    const kept = lines0.slice(hdIdx0 + 1, end).filter((l) => !norm(l).includes("all roles other than"));
+    const knownRoleWords = new Set();
+    for (const r of (Array.isArray(preferredRoles) ? preferredRoles : [])) {
+      for (const w of String(r || "").toLowerCase().split(/[^a-z0-9]+/)) { if (w.length > 2) knownRoleWords.add(w); }
+    }
+    const kept = lines0.slice(hdIdx0 + 1, end).filter((l) => {
+      const low = norm(l);
+      if (!low.includes("all roles other than")) return true; // not a catch-all line — keep
+      if (!knownRoleWords.size) return false; // no profile roles to ground it in — fabricated, drop
+      // Words in the bullet's "X" list, after the catch-all phrase itself.
+      const afterPhrase = low.split("all roles other than")[1] || "";
+      const bulletWords = afterPhrase.split(/\s+/).filter((w) => w.length > 2);
+      const groundedInProfile = bulletWords.some((w) => knownRoleWords.has(w));
+      return groundedInProfile; // keep only if it genuinely echoes preferredRoles
+    });
     if (kept.length !== end - (hdIdx0 + 1)) {
       lines0.splice(hdIdx0 + 1, end - (hdIdx0 + 1), ...kept);
       out = lines0.join("\n");
