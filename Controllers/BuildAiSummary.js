@@ -749,10 +749,17 @@ CHIP LEXICON (exact phrases → mechanical routing):
   preferred role, do NOT skip the family — add one # Notes for Grader
   sentence to down-rank near-identical postings instead.
 - "Wrong seniority level" → read the title's seniority marker (Junior,
-  Senior, Staff, Lead, II/III, L4…) and compare with the candidate's level
-  → # Hard Disqualifiers: "Skip <that seniority band> roles." (e.g. a
-  junior candidate removing "Staff Engineer" → "Skip Staff/Principal-level
-  roles.").
+  Senior, Staff, Lead, II/III, L4…) and compare with the candidate's level.
+  Count the BANDS between them (intern < entry < mid < senior < lead <
+  principal < director < exec).
+    · ONE band apart (e.g. a mid candidate removing a "Senior" posting) →
+      do NOT add a Hard Disqualifier. Adjacent bands stay in range; a single
+      removal is not a rule. Add one # Notes for Grader sentence to
+      down-rank that band instead.
+    · TWO OR MORE bands apart (e.g. a junior candidate removing "Staff
+      Engineer") → # Hard Disqualifiers: "Skip <that seniority band> roles."
+  NEVER write a bare "Skip Senior roles." for a one-band gap — it bans an
+  entire adjacent band and is the top cause of over-rejection.
 - "Location doesn't work for me" → if the title/company pins a location,
   # Notes for Grader: down-rank that location; NEVER contradict the
   profile's preferredLocations.
@@ -1019,6 +1026,16 @@ Accepted employment types: ${employmentTypes.join(", ")}
 Rejected employment types: ${excludedEmp.length ? excludedEmp.join(", ") : "(none — accepts all)"}
 Rules:
 - Use ONLY the Preferred list on the "Preferred roles (verbatim from profile)" line.
+- The Preferred list is a set of role FAMILIES, not an exhaustive list of
+  acceptable titles, and matching ANY ONE of them is enough. Under
+  "# Notes for Grader" state this plainly for THIS candidate: name the
+  adjacent titles that belong to each preferred family (e.g. "Project
+  Manager" also covers Programme / Delivery / Agile-delivery / Scrum / PMO
+  roles; "Customer Experience" also covers Customer Success / Client
+  Services / Account Management). Never imply the candidate must match every
+  listed role, and never turn a skill the JD mentions but the profile omits
+  into a disqualifier — an unlisted skill lowers the score, it does not
+  reject the job.
 - If the Excluded list is "(none)": OMIT the "Excluded roles" line entirely AND emit ZERO role-level bullets under Hard Disqualifiers. Do not generate any "<Role> — candidate explicitly opted out" bullet. Do not infer exclusions from seniority, role family, or anything else.
 - If the Excluded list has entries: render them on the "Excluded roles (verbatim from profile, do NOT pick these)" line and add ONE matching disqualifier bullet per entry, using the candidate's exact wording.
 - NEVER include any role from the Preferred list under Hard Disqualifiers, Strong Signals exclusions, or any negative section. Preferred = wanted; emitting a Preferred role as a disqualifier directly contradicts the candidate.
