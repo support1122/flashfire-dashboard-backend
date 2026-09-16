@@ -690,10 +690,19 @@ function resolveEntryDirectives(entry) {
         out.push(`REQUIRED: add "Skip ${company} jobs." under # Hard Disqualifiers.`);
     }
     if (/not\s+my\s+target\s+role/i.test(reason)) {
-        out.push(`Read the role family off the TITLE ("${title}"). If that family is NOT among the profile's preferredRoles → add "Skip <role family> roles." under # Hard Disqualifiers. If it overlaps a preferred role → do NOT skip it; add a # Notes for Grader sentence to down-rank near-identical postings.`);
+        // Same reasoning as seniority: the judge no longer skips on role
+        // family, so turning one rejection into a blanket "Skip <family>
+        // roles." bullet would out-live the operator's intent and ban a whole
+        // discipline. Only an explicit client opt-out belongs in Hard
+        // Disqualifiers.
+        out.push(`Add a # Notes for Grader sentence down-ranking postings like "${title}". Do NOT add a Hard Disqualifier for the role family unless the client has explicitly opted out of it.`);
     }
     if (/wrong\s+seniority\s+level/i.test(reason)) {
-        out.push(`Read the seniority marker off the TITLE ("${title}") and add "Skip <that seniority band> roles." under # Hard Disqualifiers.`);
+        // Seniority stopped being a skip reason on 2026-09-16. A "Skip <band>
+        // roles." bullet here lands in # Hard Disqualifiers, becomes an
+        // operator-note exclusion token, and re-introduces the band ban the
+        // judge no longer applies. Down-rank only.
+        out.push(`Add a # Notes for Grader sentence down-ranking postings at the seniority level of "${title}". Do NOT add any Hard Disqualifier for seniority.`);
     }
     if (/location\s+doesn'?t\s+work/i.test(reason)) {
         out.push(`Add a # Notes for Grader sentence down-ranking this job's location; never contradict preferredLocations.`);
@@ -748,18 +757,14 @@ CHIP LEXICON (exact phrases → mechanical routing):
   # Hard Disqualifiers: "Skip <role family> roles." If it OVERLAPS a
   preferred role, do NOT skip the family — add one # Notes for Grader
   sentence to down-rank near-identical postings instead.
-- "Wrong seniority level" → read the title's seniority marker (Junior,
-  Senior, Staff, Lead, II/III, L4…) and compare with the candidate's level.
-  Count the BANDS between them (intern < entry < mid < senior < lead <
-  principal < director < exec).
-    · ONE band apart (e.g. a mid candidate removing a "Senior" posting) →
-      do NOT add a Hard Disqualifier. Adjacent bands stay in range; a single
-      removal is not a rule. Add one # Notes for Grader sentence to
-      down-rank that band instead.
-    · TWO OR MORE bands apart (e.g. a junior candidate removing "Staff
-      Engineer") → # Hard Disqualifiers: "Skip <that seniority band> roles."
-  NEVER write a bare "Skip Senior roles." for a one-band gap — it bans an
-  entire adjacent band and is the top cause of over-rejection.
+- "Wrong seniority level" → NEVER produce a Hard Disqualifier for this.
+  Seniority is no longer a skip reason anywhere in the pipeline (changed
+  2026-09-16): Junior, Senior, Staff, Lead, Principal and Director postings
+  are all acceptable regardless of the candidate's own level. Add at most
+  one # Notes for Grader sentence asking the grader to DOWN-RANK that band,
+  and nothing else. A bullet of the form "Skip <anything> roles." for a
+  seniority band is forbidden — it becomes an enforced exclusion downstream
+  and was the top cause of over-rejection.
 - "Location doesn't work for me" → if the title/company pins a location,
   # Notes for Grader: down-rank that location; NEVER contradict the
   profile's preferredLocations.
