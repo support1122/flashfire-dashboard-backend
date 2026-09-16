@@ -1730,35 +1730,53 @@ function extractWhitelistRoles(notesText, preferredRoles) {
 }
 function enforceWhitelistDirective(summary, notesText, lockedSections = [], preferredRoles = []) {
   const roles = extractWhitelistRoles(notesText, preferredRoles);
-  if (!roles.length) return summary;
   const norm = (s) => String(s).toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
   let out = summary;
-  // 1) Guarantee the catch-all bullet exists.
-  if (!isLockedHeader("# Hard Disqualifiers", lockedSections)) {
-    const catchAll = `Skip all roles other than ${roles.join(", ")}.`;
-    out = ensureBulletInSection(out, "# Hard Disqualifiers", "all roles other than", `- ${catchAll}`, norm);
-    // 2) Strip any flipped-polarity bullet that lists a WHITELISTED role
-    // itself as an exclusion — the CRITICAL FAILURE the R0 worked example
-    // warns about. Only touches lines that name a whitelisted role AND read
-    // as a disqualifier for it specifically (not the catch-all line just
-    // ensured above).
-    const lines = out.split("\n");
-    const hdIdx = lines.findIndex((l) => l.trim().toLowerCase().startsWith("# hard disqualifiers"));
-    if (hdIdx !== -1) {
-      let end = lines.length;
-      for (let i = hdIdx + 1; i < lines.length; i++) { if (/^#\s/.test(lines[i])) { end = i; break; } }
-      const kept = [];
-      for (let i = hdIdx + 1; i < end; i++) {
-        const line = lines[i];
-        const low = norm(line);
-        const isCatchAll = low.includes("all roles other than");
-        const flipsAWhitelistedRole = !isCatchAll && roles.some((r) => norm(r) && low.includes(norm(r)));
-        if (flipsAWhitelistedRole) continue; // drop it — candidate WANTS this role
-        kept.push(line);
-      }
-      lines.splice(hdIdx + 1, end - (hdIdx + 1), ...kept);
-      out = lines.join("\n");
+  if (isLockedHeader("# Hard Disqualifiers", lockedSections)) return out;
+  const lines0 = out.split("\n");
+  const hdIdx0 = lines0.findIndex((l) => l.trim().toLowerCase().startsWith("# hard disqualifiers"));
+  if (hdIdx0 === -1) return out;
+  if (!roles.length) {
+    // No genuine role whitelist in the notes — the model has NOTHING to
+    // ground a "Skip all roles other than X." bullet in. If it wrote one
+    // anyway (observed: R0 misapplied to a company/sponsorship/work-model
+    // "only scrap X" note, e.g. "Skip all roles other than companies that
+    // sponsor H-1B visas"), that is a fabrication with no basis in the
+    // client's actual role preferences — strip it, mirroring how the
+    // extension discards a fabricated "excluded" skip with no real basis.
+    let end = lines0.length;
+    for (let i = hdIdx0 + 1; i < lines0.length; i++) { if (/^#\s/.test(lines0[i])) { end = i; break; } }
+    const kept = lines0.slice(hdIdx0 + 1, end).filter((l) => !norm(l).includes("all roles other than"));
+    if (kept.length !== end - (hdIdx0 + 1)) {
+      lines0.splice(hdIdx0 + 1, end - (hdIdx0 + 1), ...kept);
+      out = lines0.join("\n");
     }
+    return out;
+  }
+  // 1) Guarantee the catch-all bullet exists.
+  const catchAll = `Skip all roles other than ${roles.join(", ")}.`;
+  out = ensureBulletInSection(out, "# Hard Disqualifiers", "all roles other than", `- ${catchAll}`, norm);
+  // 2) Strip any flipped-polarity bullet that lists a WHITELISTED role
+  // itself as an exclusion — the CRITICAL FAILURE the R0 worked example
+  // warns about. Only touches lines that name a whitelisted role AND read
+  // as a disqualifier for it specifically (not the catch-all line just
+  // ensured above).
+  const lines = out.split("\n");
+  const hdIdx = lines.findIndex((l) => l.trim().toLowerCase().startsWith("# hard disqualifiers"));
+  if (hdIdx !== -1) {
+    let end = lines.length;
+    for (let i = hdIdx + 1; i < lines.length; i++) { if (/^#\s/.test(lines[i])) { end = i; break; } }
+    const kept = [];
+    for (let i = hdIdx + 1; i < end; i++) {
+      const line = lines[i];
+      const low = norm(line);
+      const isCatchAll = low.includes("all roles other than");
+      const flipsAWhitelistedRole = !isCatchAll && roles.some((r) => norm(r) && low.includes(norm(r)));
+      if (flipsAWhitelistedRole) continue; // drop it — candidate WANTS this role
+      kept.push(line);
+    }
+    lines.splice(hdIdx + 1, end - (hdIdx + 1), ...kept);
+    out = lines.join("\n");
   }
   return out;
 }
