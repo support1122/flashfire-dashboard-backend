@@ -1662,6 +1662,74 @@ function enforceNoteDirectives(summary, notesText, lockedSections = []) {
   return out;
 }
 
+// enforceWhitelistDirective — deterministic "round 4": R0 in the system
+// prompt tells the model that "scrap only X" / "only scrap X" phrasing is a
+// WHITELIST, and mandates a "Skip all roles other than X." catch-all bullet
+// in Hard Disqualifiers, with X itself NEVER appearing there. That rule has
+// no code-level guarantee behind it (unlike the note/removal directives
+// above) — the model can drop the catch-all bullet, or worse, flip polarity
+// and list a wanted role as excluded, which is exactly the "restored
+// automatically" style bug already hit downstream in the job-scraper
+// extension when a whitelist skip isn't honoured. This backstops both
+// failure modes in code, using the same operator-notes text as R0 reads.
+const WHITELIST_NOTE_RE = /\b(?:scrap|scrape)\s+only\b|\bonly\s+(?:scrap|scrape)\b|\bstrictly\s+(?:scrap|scrape)\s+only\b|\b(?:scrap|scrape)\s+.+?\s+only\b|\b(?:scrap|scrape)\s+.+?\s+exclusively\b/i;
+function extractWhitelistRoles(notesText) {
+  if (!notesText) return [];
+  for (const raw of String(notesText).split(/[\n.;]+/)) {
+    const line = raw.trim();
+    if (!line || !WHITELIST_NOTE_RE.test(line)) continue;
+    // Strip the whitelist marker words and any leading verb, leaving the
+    // role-title list itself (mirrors the R0 worked examples — a comma/
+    // "or"/"and"-separated list of role titles).
+    const stripped = line
+      .replace(/\b(?:strictly\s+)?(?:scrap|scrape)\b/gi, " ")
+      .replace(/\bonly\b|\bexclusively\b/gi, " ")
+      .replace(/^[\s,]+|[\s,]+$/g, "")
+      .trim();
+    if (!stripped) continue;
+    const roles = stripped
+      .split(/\s*(?:,|\bor\b|\band\b|\/)\s*/i)
+      .map((s) => s.trim())
+      .filter(Boolean);
+    if (roles.length) return roles;
+  }
+  return [];
+}
+function enforceWhitelistDirective(summary, notesText, lockedSections = []) {
+  const roles = extractWhitelistRoles(notesText);
+  if (!roles.length) return summary;
+  const norm = (s) => String(s).toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  let out = summary;
+  // 1) Guarantee the catch-all bullet exists.
+  if (!isLockedHeader("# Hard Disqualifiers", lockedSections)) {
+    const catchAll = `Skip all roles other than ${roles.join(", ")}.`;
+    out = ensureBulletInSection(out, "# Hard Disqualifiers", "all roles other than", `- ${catchAll}`, norm);
+    // 2) Strip any flipped-polarity bullet that lists a WHITELISTED role
+    // itself as an exclusion — the CRITICAL FAILURE the R0 worked example
+    // warns about. Only touches lines that name a whitelisted role AND read
+    // as a disqualifier for it specifically (not the catch-all line just
+    // ensured above).
+    const lines = out.split("\n");
+    const hdIdx = lines.findIndex((l) => l.trim().toLowerCase().startsWith("# hard disqualifiers"));
+    if (hdIdx !== -1) {
+      let end = lines.length;
+      for (let i = hdIdx + 1; i < lines.length; i++) { if (/^#\s/.test(lines[i])) { end = i; break; } }
+      const kept = [];
+      for (let i = hdIdx + 1; i < end; i++) {
+        const line = lines[i];
+        const low = norm(line);
+        const isCatchAll = low.includes("all roles other than");
+        const flipsAWhitelistedRole = !isCatchAll && roles.some((r) => norm(r) && low.includes(norm(r)));
+        if (flipsAWhitelistedRole) continue; // drop it — candidate WANTS this role
+        kept.push(line);
+      }
+      lines.splice(hdIdx + 1, end - (hdIdx + 1), ...kept);
+      out = lines.join("\n");
+    }
+  }
+  return out;
+}
+
 // ensureBulletInSection — append `bullet` under the given header iff the
 // section doesn't already mention `needle` (normalised substring). Never
 // fabricates a section; never rewrites existing lines.
@@ -1885,6 +1953,10 @@ async function runForProfileCore(profile, apiKey, reasonTag = "manual", deadline
   // Round 3 (deterministic): guarantee every company-rejecting removal
   // feedback entry produced its "Skip <Company> jobs." disqualifier.
   summary = enforceRemovalDirectives(summary, profile, activeLocks).slice(0, MAX_SUMMARY_CHARS);
+  // Round 4 (deterministic): guarantee an R0 "scrap only X" whitelist note
+  // produced its "Skip all roles other than X." catch-all, and strip any
+  // flipped-polarity bullet that wrongly excludes a whitelisted role.
+  summary = enforceWhitelistDirective(summary, (profile?.aiNotes?.text || "").trim(), activeLocks).slice(0, MAX_SUMMARY_CHARS);
   // Final structural check — the overlay merge can drop a section too (a saved
   // overlay from an older prompt version, a lock whose body was emptied).
   const missingFinal = missingSections(summary);
