@@ -49,28 +49,63 @@ export default async function AddJob(req, res) {
             });
         }
 
-        // Job-board / aggregator links are not allowed — the dashboard needs
-        // the ORIGINAL employer apply URL. Previous scraper versions dropped
-        // these before push (src/adapters/jobright.js → isLinkedInApplyUrl);
-        // the new JR-Direct extension flow lost that filter, so re-enforce it
-        // here (the single choke point every push goes through). Mirrors the
-        // old BLOCKED_HOST_RX (valid URLs) + BLOCKED_SUBSTRING_RX (fallback).
+        // Two different reasons a link is refused, kept apart because they
+        // need different answers from the operator.
+        //
+        // 1. AGGREGATOR / UNRESOLVED — a job board, or a jobright.ai
+        //    /jobs/info/<id> link, which means the employer apply URL never
+        //    resolved. The operator CAN fix these by getting the real URL.
+        // 2. EXCLUDED EMPLOYER — the employer's own careers site, on the
+        //    do-not-apply list by operator policy. Nothing is wrong with the
+        //    link and there is no better one to fetch, so the refusal says so
+        //    instead of telling the operator to find a URL that does not
+        //    exist.
+        //
+        // Both lists come from the environment. Adding or removing a portal is
+        // a config change and a restart, never a code edit:
+        //
+        //   BLOCKED_APPLY_HOSTS=linkedin.com,dice.com,indeed.com,jobright.ai
+        //   EXCLUDED_EMPLOYER_HOSTS=jobs.apple.com,lifeattiktok.com
+        //
+        // A hostname matches itself and its subdomains, so "dice.com" covers
+        // "www.dice.com". Matching is exact on the label boundary, so
+        // "notdice.com" is not blocked.
         const joblinkRaw = String(jobDetails?.joblink || '');
-        // jobright.ai included: a /jobs/info/<id> link means the employer apply
-        // URL never resolved — reject it (the dashboard needs the real URL).
-        const BLOCKED_HOST_RX = /(^|\.)(jobright\.ai|linkedin\.com|dice\.com|indeed\.com|lifeattiktok\.com|dataannotation\.tech|jobs\.apple\.com|humana\.wd5\.myworkdayjobs\.com)$/i;
-        const BLOCKED_SUBSTRING_RX = /(jobright\.ai|linkedin\.com|dice\.com|indeed\.com|lifeattiktok\.com|dataannotation\.tech|dickssportinggoods)/i;
-        let blockedSource = false;
-        try {
-            blockedSource = BLOCKED_HOST_RX.test(new URL(joblinkRaw).hostname);
-        } catch {
-            blockedSource = BLOCKED_SUBSTRING_RX.test(joblinkRaw);
-        }
-        if (blockedSource) {
+        const hostList = (raw, fallback) =>
+            String(raw ?? fallback)
+                .split(',')
+                .map((h) => h.trim().toLowerCase())
+                .filter(Boolean);
+        const AGGREGATOR_HOSTS = hostList(
+            process.env.BLOCKED_APPLY_HOSTS,
+            'jobright.ai,linkedin.com,dice.com,indeed.com',
+        );
+        const EXCLUDED_EMPLOYER_HOSTS = hostList(
+            process.env.EXCLUDED_EMPLOYER_HOSTS,
+            'lifeattiktok.com,dataannotation.tech,jobs.apple.com,humana.wd5.myworkdayjobs.com,dickssportinggoods.com',
+        );
+        const matchesHost = (host, list) =>
+            !!host && list.some((h) => host === h || host.endsWith(`.${h}`));
+
+        let host = '';
+        try { host = new URL(joblinkRaw).hostname.toLowerCase(); } catch { host = ''; }
+        // Unparseable URL: fall back to a substring check so a malformed link
+        // cannot smuggle a blocked host through.
+        const loose = (list) => list.some((h) => joblinkRaw.toLowerCase().includes(h));
+        const hit = (list) => (host ? matchesHost(host, list) : loose(list));
+
+        if (hit(AGGREGATOR_HOSTS)) {
             return res.status(403).json({
                 success: false,
                 error: 'BLOCKED_SOURCE',
-                message: 'Job board/aggregator links (LinkedIn, Dice, Indeed, etc.) are not allowed — provide the original employer apply URL.'
+                message: `Job board/aggregator link (${host || 'unparseable URL'}) — provide the original employer apply URL.`,
+            });
+        }
+        if (hit(EXCLUDED_EMPLOYER_HOSTS)) {
+            return res.status(403).json({
+                success: false,
+                error: 'EXCLUDED_EMPLOYER',
+                message: `This employer is on the do-not-apply list (${host || 'link'}) — the link is fine, the job is skipped by policy.`,
             });
         }
 
