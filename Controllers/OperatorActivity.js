@@ -57,7 +57,11 @@ export default async function OperatorActivity(req, res) {
                     authMismatch:      { $sum: { $ifNull: ["$skipsRollup.authMismatch", 0] } },
                     threshold:         { $sum: { $ifNull: ["$skipsRollup.threshold", 0] } },
                     companyBlocked:    { $sum: { $ifNull: ["$skipsRollup.companyBlocked", 0] } },
-                    otherSkip:         { $sum: { $ifNull: ["$skipsRollup.other", 0] } },
+                    // "other" here means "no column of its own in this view".
+                    // cardScore, intern and disciplineMismatch have none, and the
+                    // extension already subtracts them from its own `other`, so they
+                    // are added back here - otherwise these totals silently lose them.
+                    otherSkip: { $sum: { $add: [{ $ifNull: ["$skipsRollup.other", 0] }, { $ifNull: ["$skipsRollup.cardScore", 0] }, { $ifNull: ["$skipsRollup.intern", 0] }, { $ifNull: ["$skipsRollup.disciplineMismatch", 0] } ] } },
                     sessions:          { $sum: 1 },
                     lastSessionAt:     { $max: "$endedAt" },
                     // Distinct clients this code worked that day — drives the

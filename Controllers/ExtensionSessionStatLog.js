@@ -59,6 +59,7 @@ export default async function ExtensionSessionStatLog(req, res) {
                 companyBlocked:    num(sr.companyBlocked),
                 cardScore:         num(sr.cardScore),
                 intern:            num(sr.intern),
+                disciplineMismatch: num(sr.disciplineMismatch),
                 other:             num(sr.other),
             },
             modelStats: {
