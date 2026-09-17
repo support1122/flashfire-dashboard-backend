@@ -229,6 +229,11 @@ export async function checkPlanCap(rawEmail) {
 // UTC instant of the most recent 22:00 IST boundary — i.e. the start of the
 // cap window currently in effect.
 export const CAP_RESET_HOUR_IST = 22; // 10 PM IST
+// One string for every endpoint that tells an operator when the cap lifts.
+// PushHistory said "00:00 Asia/Kolkata" while AutopilotCreds said "22:00" and
+// the gate itself enforced 22:00, so the extension's cap banner sent operators
+// away for two hours longer than they had to wait.
+export const CAP_WINDOW_LABEL = `${String(CAP_RESET_HOUR_IST).padStart(2, "0")}:00 Asia/Kolkata`;
 
 export function startOfTodayIST() {
     const offsetMs = 5.5 * 60 * 60 * 1000;
