@@ -50,7 +50,7 @@ export async function findHiddenClientEmails(emails) {
      const rows = await mongoose.connection
           .collection(TRACKING_COLLECTION)
           .find(
-               { email: { $in: list }, $or: [{ status: /^inactive$/i }, { isPaused: true }] },
+               { email: { $in: list }, status: /^inactive$/i },
                { projection: { email: 1 } }
           )
           .toArray();

@@ -1684,6 +1684,144 @@ function enforceNoteDirectives(summary, notesText, lockedSections = []) {
   return out;
 }
 
+// enforceWhitelistDirective — deterministic "round 4": R0 in the system
+// prompt tells the model that "scrap only X" / "only scrap X" phrasing is a
+// WHITELIST, and mandates a "Skip all roles other than X." catch-all bullet
+// in Hard Disqualifiers, with X itself NEVER appearing there. That rule has
+// no code-level guarantee behind it (unlike the note/removal directives
+// above) — the model can drop the catch-all bullet, or worse, flip polarity
+// and list a wanted role as excluded, which is exactly the "restored
+// automatically" style bug already hit downstream in the job-scraper
+// extension when a whitelist skip isn't honoured. This backstops both
+// failure modes in code, using the same operator-notes text as R0 reads.
+const WHITELIST_NOTE_RE = /\b(?:scrap|scrape)\s+only\b|\bonly\s+(?:scrap|scrape)\b|\bstrictly\s+(?:scrap|scrape)\s+only\b|\b(?:scrap|scrape)\s+.+?\s+only\b|\b(?:scrap|scrape)\s+.+?\s+exclusively\b/i;
+// "only scrap X" is ALSO the phrasing operators use for company lists,
+// remote/work-model filters, experience-level filters, and tech-stack
+// conditions ("Only scrap remote jobs", "Only scrape jobs from Adobe,
+// Airbnb...", "Scrap only those companies that sponsor H1B", "Only scrap
+// jobs where the tech stack matches the CV"). None of those are a ROLE
+// whitelist, so blindly treating the noun phrase after "only" as a role
+// list produces garbage ("Skip all roles other than: remote jobs."). Only
+// words that are generic job-title nouns (mirrors the extension's
+// ROLE_FUZZY_STOPWORDS) or clearly non-role phrasing disqualify a match.
+const NON_ROLE_WHITELIST_RE = /\b(?:remote|hybrid|onsite|on-site|companies?|company|employers?|sponsors?|sponsorship|h[- ]?1b|experience|years?|entry[- ]?level|tech\s*stack|technolog(?:y|ies)|skills?|cv|resume|profile|location|state|city|region)\b/i;
+function extractWhitelistRoles(notesText, preferredRoles) {
+  if (!notesText) return [];
+  // Ground truth: the client's own preferredRoles field. A genuine R0 role
+  // whitelist note lists roles that are (a subset of, or equal to) this
+  // list — that overlap is what separates a real role whitelist from any
+  // other "only scrap X" note.
+  const knownRoleWords = new Set();
+  for (const r of (Array.isArray(preferredRoles) ? preferredRoles : [])) {
+    for (const w of String(r || "").toLowerCase().split(/[^a-z0-9]+/)) {
+      if (w.length > 2) knownRoleWords.add(w);
+    }
+  }
+  for (const raw of String(notesText).split(/[\n.;]+/)) {
+    const line = raw.trim();
+    if (!line || !WHITELIST_NOTE_RE.test(line)) continue;
+    // Strip the whitelist marker words, any leading verb, and any lead-in
+    // phrase up to a colon ("...matching the client's preferred roles:" ->
+    // just the list after the colon), leaving the role-title list itself
+    // (mirrors the R0 worked examples — a comma/"or"/"and"-separated list).
+    const afterColon = line.includes(":") ? line.slice(line.lastIndexOf(":") + 1) : line;
+    const stripped = afterColon
+      .replace(/\b(?:strictly\s+)?(?:scrap|scrape)\b/gi, " ")
+      .replace(/\bonly\b|\bexclusively\b/gi, " ")
+      .replace(/^[\s,]+|[\s,.]+$/g, "")
+      .trim();
+    if (!stripped) continue;
+    if (NON_ROLE_WHITELIST_RE.test(stripped)) continue; // company/work-model/skill filter, not a role list
+    const roles = stripped
+      .split(/\s*(?:,|\bor\b|\band\b|\/)\s*/i)
+      .map((s) => s.trim().replace(/\s+roles?$/i, "").trim())
+      .filter(Boolean);
+    if (!roles.length) continue;
+    // Require EACH candidate to individually overlap with the client's own
+    // preferredRoles words — filters out any stray lead-in fragment that
+    // survived the colon split, not just "at least one role in the list
+    // looks real" (which would still let junk entries through alongside
+    // genuine ones).
+    const filtered = knownRoleWords.size
+      ? roles.filter((r) => String(r).toLowerCase().split(/[^a-z0-9]+/).some((w) => w.length > 2 && knownRoleWords.has(w)))
+      : roles;
+    if (!filtered.length) continue;
+    return filtered;
+  }
+  return [];
+}
+function enforceWhitelistDirective(summary, notesText, lockedSections = [], preferredRoles = []) {
+  const roles = extractWhitelistRoles(notesText, preferredRoles);
+  const norm = (s) => String(s).toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  let out = summary;
+  if (isLockedHeader("# Hard Disqualifiers", lockedSections)) return out;
+  const lines0 = out.split("\n");
+  const hdIdx0 = lines0.findIndex((l) => l.trim().toLowerCase().startsWith("# hard disqualifiers"));
+  if (hdIdx0 === -1) return out;
+  if (!roles.length) {
+    // No genuine role whitelist phrase in the NOTES — but the whitelist can
+    // also come from preferredRoles alone: a client whose profile lists a
+    // small, closed set of exact role titles (e.g. "Senior QA Analyst, QA
+    // Lead, QA Manager") with no note reinforcing it at all. If the model
+    // already wrote a "Skip all roles other than X." bullet, only strip it
+    // when X does NOT genuinely correspond to preferredRoles — that is the
+    // observed fabrication (R0 misapplied to a company/sponsorship/
+    // work-model "only scrap X" note, e.g. "Skip all roles other than
+    // companies that sponsor H-1B visas"). When X DOES correspond to
+    // preferredRoles, the bullet is grounded in the profile itself, not
+    // fabricated — keep it, and don't let this pass regress a plain,
+    // note-free whitelist. Rescoring/keeping is decided per catch-all line
+    // found, not globally, in case more than one landed in the section.
+    let end = lines0.length;
+    for (let i = hdIdx0 + 1; i < lines0.length; i++) { if (/^#\s/.test(lines0[i])) { end = i; break; } }
+    const knownRoleWords = new Set();
+    for (const r of (Array.isArray(preferredRoles) ? preferredRoles : [])) {
+      for (const w of String(r || "").toLowerCase().split(/[^a-z0-9]+/)) { if (w.length > 2) knownRoleWords.add(w); }
+    }
+    const kept = lines0.slice(hdIdx0 + 1, end).filter((l) => {
+      const low = norm(l);
+      if (!low.includes("all roles other than")) return true; // not a catch-all line — keep
+      if (!knownRoleWords.size) return false; // no profile roles to ground it in — fabricated, drop
+      // Words in the bullet's "X" list, after the catch-all phrase itself.
+      const afterPhrase = low.split("all roles other than")[1] || "";
+      const bulletWords = afterPhrase.split(/\s+/).filter((w) => w.length > 2);
+      const groundedInProfile = bulletWords.some((w) => knownRoleWords.has(w));
+      return groundedInProfile; // keep only if it genuinely echoes preferredRoles
+    });
+    if (kept.length !== end - (hdIdx0 + 1)) {
+      lines0.splice(hdIdx0 + 1, end - (hdIdx0 + 1), ...kept);
+      out = lines0.join("\n");
+    }
+    return out;
+  }
+  // 1) Guarantee the catch-all bullet exists.
+  const catchAll = `Skip all roles other than ${roles.join(", ")}.`;
+  out = ensureBulletInSection(out, "# Hard Disqualifiers", "all roles other than", `- ${catchAll}`, norm);
+  // 2) Strip any flipped-polarity bullet that lists a WHITELISTED role
+  // itself as an exclusion — the CRITICAL FAILURE the R0 worked example
+  // warns about. Only touches lines that name a whitelisted role AND read
+  // as a disqualifier for it specifically (not the catch-all line just
+  // ensured above).
+  const lines = out.split("\n");
+  const hdIdx = lines.findIndex((l) => l.trim().toLowerCase().startsWith("# hard disqualifiers"));
+  if (hdIdx !== -1) {
+    let end = lines.length;
+    for (let i = hdIdx + 1; i < lines.length; i++) { if (/^#\s/.test(lines[i])) { end = i; break; } }
+    const kept = [];
+    for (let i = hdIdx + 1; i < end; i++) {
+      const line = lines[i];
+      const low = norm(line);
+      const isCatchAll = low.includes("all roles other than");
+      const flipsAWhitelistedRole = !isCatchAll && roles.some((r) => norm(r) && low.includes(norm(r)));
+      if (flipsAWhitelistedRole) continue; // drop it — candidate WANTS this role
+      kept.push(line);
+    }
+    lines.splice(hdIdx + 1, end - (hdIdx + 1), ...kept);
+    out = lines.join("\n");
+  }
+  return out;
+}
+
 // ensureBulletInSection — append `bullet` under the given header iff the
 // section doesn't already mention `needle` (normalised substring). Never
 // fabricates a section; never rewrites existing lines.
@@ -1907,6 +2045,10 @@ async function runForProfileCore(profile, apiKey, reasonTag = "manual", deadline
   // Round 3 (deterministic): guarantee every company-rejecting removal
   // feedback entry produced its "Skip <Company> jobs." disqualifier.
   summary = enforceRemovalDirectives(summary, profile, activeLocks).slice(0, MAX_SUMMARY_CHARS);
+  // Round 4 (deterministic): guarantee an R0 "scrap only X" whitelist note
+  // produced its "Skip all roles other than X." catch-all, and strip any
+  // flipped-polarity bullet that wrongly excludes a whitelisted role.
+  summary = enforceWhitelistDirective(summary, (profile?.aiNotes?.text || "").trim(), activeLocks, profile?.preferredRoles).slice(0, MAX_SUMMARY_CHARS);
   // Final structural check — the overlay merge can drop a section too (a saved
   // overlay from an older prompt version, a lock whose body was emptied).
   const missingFinal = missingSections(summary);
