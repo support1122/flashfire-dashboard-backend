@@ -7,8 +7,37 @@ import { sanitizeJobTitle } from '../Utils/jobTitle.js';
 import { checkCap, detectOvershoot, checkPlanCap, enforcePlanCapPostInsert } from '../Utils/dailyCapGuard.js';
 import { jobLinkKey, inspectJobLink, SHARED_FORM_COMPANY_LIMIT } from '../Utils/jobLinkKey.js';
 
+// Clamp the judge's verdict into the shape JobModel.aiDecision expects.
+// Returns null when there is nothing worth storing, so a push from an older
+// extension build simply leaves the field unset.
+function sanitizeAiDecision(raw) {
+    if (!raw || typeof raw !== 'object') return null;
+    // 0-100, integers only. A score outside that range means a bug upstream,
+    // and storing it would make the operator-facing card lie.
+    const score = (v) => {
+        const n = Number(v);
+        return Number.isFinite(n) && n >= 0 && n <= 100 ? Math.round(n) : null;
+    };
+    const text = (v, max) => {
+        const t = String(v ?? '').trim();
+        return t ? t.slice(0, max) : null;
+    };
+    const when = new Date(raw.judgedAt);
+    const out = {
+        reason: text(raw.reason, 500),
+        score: score(raw.score),
+        matchedRole: text(raw.matchedRole, 120),
+        jrScore: score(raw.jrScore),
+        model: text(raw.model, 60),
+        judgedAt: Number.isNaN(when.getTime()) ? new Date() : when,
+    };
+    // A verdict with no reason and no scores carries no information.
+    if (!out.reason && out.score === null && out.jrScore === null) return null;
+    return out;
+}
+
 export default async function AddJob(req, res) {
-    let { jobDetails, userDetails, role, operationsEmail, operationsName, extensionCode, source } = req.body;
+    let { jobDetails, userDetails, role, operationsEmail, operationsName, extensionCode, source, aiDecision } = req.body;
 
     try {
         jobDetails = jobDetails || {};
@@ -291,6 +320,12 @@ export default async function AddJob(req, res) {
             // works on JobModel.extensionCode (today-stats / activity).
             const code = String(extensionCode || '').trim();
             if (/^\d{5}$/.test(code)) jobDetails.extensionCode = code;
+            // Why the extension picked this job. Sanitised rather than spread:
+            // /addjob is a public endpoint, so every field is re-derived here
+            // with its own type and length cap instead of trusting the body.
+            // Operations-only - a client-submitted job never carries one.
+            const ai = sanitizeAiDecision(aiDecision);
+            if (ai) jobDetails.aiDecision = ai;
         } else {
             jobDetails.createdByRole = 'user';
             jobDetails.timeline = ['Added by user'];

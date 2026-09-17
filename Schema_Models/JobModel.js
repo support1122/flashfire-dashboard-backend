@@ -113,6 +113,28 @@ export const JobSchema = new mongoose.Schema({
     required: false,
     default: null
   },
+  /**
+   * Why the extension's AI judge picked this job, captured at push time.
+   *
+   * OPERATOR-FACING ONLY. JobCard.tsx renders it behind `isOps`, and nothing
+   * client-facing reads it - a client seeing "scored 62, weak but legitimate"
+   * about their own job would be worse than showing nothing.
+   *
+   * Written once at creation and never updated: it is what the judge thought
+   * at the moment of the push, not a live opinion.
+   */
+  aiDecision: {
+    /** The judge's one-sentence justification. */
+    reason:      { type: String, default: null },
+    /** The judge's own 0-100 score. */
+    score:       { type: Number, default: null },
+    /** Which of the client's preferredRoles it mapped the job to. */
+    matchedRole: { type: String, default: null },
+    /** JobRight's card score, so an operator sees both opinions side by side. */
+    jrScore:     { type: Number, default: null },
+    model:       { type: String, default: null },
+    judgedAt:    { type: Date,   default: null },
+  },
   /** Who created the job in the dashboard: end client vs operations (extension jobs may omit). */
   createdByRole: {
     type: String,
