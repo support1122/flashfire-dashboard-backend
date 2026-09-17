@@ -50,6 +50,14 @@ const extensionSessionStatSchema = new mongoose.Schema({
         // so these cost nothing. Separate from `threshold` (which the model
         // itself returns) precisely so the saving is measurable.
         cardScore:           { type: Number, default: 0 },
+        // Internships skipped because the client did not ask for one. From
+        // 2026-09-16 this is the only fit-based skip the judge makes; role and
+        // seniority mismatch were retired.
+        intern:              { type: Number, default: 0 },
+        // A different engineering PROFESSION from the client's own (software vs
+        // semiconductor/mechanical/field-service). Added 2026-09-16 after a
+        // software client was pushed Process, ASIC and Service Engineer jobs.
+        disciplineMismatch:  { type: Number, default: 0 },
         other:               { type: Number, default: 0 },
     },
     // Judge-model split — how many AI-judge batches this session ran on
