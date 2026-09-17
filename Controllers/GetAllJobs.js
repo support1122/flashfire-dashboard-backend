@@ -25,9 +25,15 @@ export default async function GetAllJobs(req, res) {
         const limit = Math.max(parseInt(req.query?.limit || req.body?.limit || '0', 10), 0); // 0 means no limit
         const skip = limit > 0 ? (page - 1) * limit : 0;
 
-        // Fields: exclude heavy payloads explicitly
+        // Fields: exclude heavy payloads explicitly.
+        //
+        // aiDecision is excluded deliberately. It is operator-only context and
+        // a ~200-byte reason string on every card would add real weight to a
+        // list that routinely returns hundreds of jobs. Operators fetch it one
+        // job at a time from /operations/job-ai-decision when they click the
+        // "Why?" button, so the common path pays nothing for it.
         const query = { userID: userEmail };
-        const projection = '-jobDescription -optimizedResume.resumeData';
+        const projection = '-jobDescription -optimizedResume.resumeData -aiDecision';
 
         // Sort by updatedAt desc (most recently updated first) so moved jobs stay at top
         let cursor = JobModel.find(query)

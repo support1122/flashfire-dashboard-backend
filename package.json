@@ -8,7 +8,7 @@
     "dev": "nodemon index.js",
     "dev:bypass": "DEV_SESSION_KEY_BYPASS=true nodemon index.js",
     "build": "echo 'No build step required for Node.js'",
-    "test": "node --test \"Utils/__tests__/*.test.mjs\"",
+    "test": "node --experimental-test-module-mocks --test \"Utils/__tests__/*.test.mjs\"",
     "lint": "echo 'Add linting script here'",
     "health": "curl http://localhost:8001/health",
     "migrate:r2": "node scripts/migrate-resume-data-to-r2.js --batch-size=50 --use-url-in-key",

@@ -30,6 +30,7 @@ import { getDashboardManagers, getDashboardManagerByName, syncDashboardManagers 
 import Add_Update_Profile from "./Controllers/Add_Update_Profile.js";
 import AddJob from "./Controllers/AddJob.js";
 import GetAllJobs from "./Controllers/GetAllJobs.js";
+import GetJobAiDecision from "./Controllers/GetJobAiDecision.js";
 import Unsubscribe from "./Controllers/Unsubscribe.js";
 import Get24HourJobs from "./Controllers/Get24HourJobs.js";
 import StoreJobAndUserDetails, { saveToDashboard } from "./Controllers/StoreJobAndUserDetails.js";
@@ -607,6 +608,9 @@ app.post('/operations/alljobs', GetAllJobsOPS);
 app.post('/operations/saved-job-counts', GetSavedJobCounts);
 
 app.post("/operations/getalljobs", GetAllJobs);
+// Why the extension picked one job. Kept off the list response on purpose -
+// see the projection note in GetAllJobs.js.
+app.post("/operations/job-ai-decision", GetJobAiDecision);
 app.post('/operations/jobs', AddJob);
 app.put('/operations/jobs', VerifyJobIDAndChanges, UpdateChanges);
 app.post('/operations/plans/select', PlanSelect);
