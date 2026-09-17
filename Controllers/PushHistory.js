@@ -8,7 +8,7 @@
 
 import { JobModel } from "../Schema_Models/JobModel.js";
 import { ProfileModel } from "../Schema_Models/ProfileModel.js";
-import { startOfTodayIST, DEFAULT_DAILY_CAP } from "../Utils/dailyCapGuard.js";
+import { startOfTodayIST, DEFAULT_DAILY_CAP, CAP_WINDOW_LABEL } from "../Utils/dailyCapGuard.js";
 
 const TZ = "Asia/Kolkata";
 
@@ -105,7 +105,7 @@ export default async function PushHistory(req, res) {
           isDefaultCap: explicit == null,
           currentOps: opsCountToday,
           currentOpsAllTime: opsCountAll,
-          windowResetsAt: "00:00 Asia/Kolkata",
+          windowResetsAt: CAP_WINDOW_LABEL,
           remaining: Math.max(0, effective - opsCountToday),
         };
       })(),

@@ -2,7 +2,7 @@ import mongoose from "mongoose";
 import { AutopilotCreds } from "../Schema_Models/AutopilotCreds.js";
 import { ProfileModel } from "../Schema_Models/ProfileModel.js";
 import { JobModel } from "../Schema_Models/JobModel.js";
-import { checkCap, DEFAULT_DAILY_CAP, startOfTodayIST } from "../Utils/dailyCapGuard.js";
+import { checkCap, DEFAULT_DAILY_CAP, startOfTodayIST, CAP_WINDOW_LABEL } from "../Utils/dailyCapGuard.js";
 
 // Standard JobRight password for client accounts; a stored per-client
 // password always wins over it.
@@ -132,7 +132,7 @@ export const getAutopilotCreds = async (req, res) => {
         usedToday: cap.count,
         remaining: cap.remaining,
         capIsDefault: cap.isDefault,
-        windowResetsAt: "22:00 Asia/Kolkata",
+        windowResetsAt: CAP_WINDOW_LABEL,
 
         // Legacy alias. An autopilot that has not been upgraded reads maxJobs
         // as its run target, and "how many this client may still receive
