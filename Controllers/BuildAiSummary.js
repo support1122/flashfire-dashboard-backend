@@ -189,12 +189,14 @@ Then a bullet list grouping same-family roles on one line
 (e.g. "Software Engineer / Backend Engineer / Platform Engineer"). One
 bullet per family.
 
-Final bullet: seniority band — one of intern | entry | mid | senior | lead | exec.
-Derive from experienceLevel + resume YOE.
+Do NOT state a seniority band. Seniority is not a filter anywhere in the
+pipeline, and a band written here has repeatedly been read downstream as a cap
+— a JR 100% "Senior Agile Delivery Manager" was skipped for an "Agile delivery
+lead" candidate as "2+ levels above candidate's mid".
 
 # Hard Constraints
-- Locations: list cities + remote/hybrid policy. If profile says remote-only,
-  say so. If onsite-only in specific cities, list them.
+- Do NOT list locations. Where a job is no longer rejects it (changed
+  2026-09-17); a location line here becomes an enforced gate downstream.
 - Work authorisation: one short clause (e.g. "US Citizen", "H1B — on F1
   OPT until 2027", "Green Card holder", "Needs sponsorship now").
 - Salary floor: USD figure if the profile states one. Else "not specified".
@@ -276,8 +278,10 @@ reason. If there is no signal, there is no bullet.
 2–4 sentences of nuance on how to WEIGH conflicts (not a restatement of the
 disqualifiers above). Examples: "Role family trumps title cosmetics — pick
 'Software Developer' even when preferred says 'Software Engineer'." /
-"Location flexibility: candidate prefers NYC but will take remote anywhere
-in US." / "Seniority cap: open to APM and PM but not Director — too senior."
+"Adjacent families that still suit: delivery management and programme
+management both work; pure software engineering does not." Never write a
+sentence about seniority or location — both are scoring hints at most, and a
+sentence here becomes an enforced rule downstream.
 If the operator gave a geographic/region/language directive (R9), include the
 one sentence it requires: treat an unconfirmed or out-of-home-country location
 on a country/region/language-keyed title as a skip; keep it only when the
