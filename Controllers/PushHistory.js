@@ -9,6 +9,7 @@
 import { JobModel } from "../Schema_Models/JobModel.js";
 import { ProfileModel } from "../Schema_Models/ProfileModel.js";
 import { startOfTodayIST, DEFAULT_DAILY_CAP, CAP_WINDOW_LABEL } from "../Utils/dailyCapGuard.js";
+import { parseDaysParam, startOfIstDayWindow, istWindowLabel } from "../Utils/istWindow.js";
 
 const TZ = "Asia/Kolkata";
 
@@ -18,9 +19,15 @@ export default async function PushHistory(req, res) {
     if (!email || !email.includes("@")) {
       return res.status(400).json({ success: false, error: "BAD_INPUT", message: "email is required" });
     }
-    const days = Math.min(Math.max(parseInt(req.query.days, 10) || 30, 1), 365);
-
-    const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+    // days=N is N IST CALENDAR days, today included - not a rolling N*24h.
+    // The per-day buckets below are already grouped in Asia/Kolkata, so a
+    // rolling cutoff produced one extra, partial bucket at the old end of
+    // the window: days=7 at 18:00 IST returned EIGHT rows and the oldest
+    // covered six hours. That short bar read as a bad day rather than a
+    // half day. Anchoring the cutoff to 00:00 IST makes the count of
+    // buckets equal the count of days asked for.
+    const days = parseDaysParam(req.query.days, { fallback: 30, max: 365 });
+    const cutoff = startOfIstDayWindow(days);
 
     // ObjectIds prefixed with hex timestamp — generate a low-bound _id so
     // we can use the userID+_id index for fast range scan.
@@ -90,6 +97,8 @@ export default async function PushHistory(req, res) {
       success: true,
       email,
       days,
+      windowStart: cutoff.toISOString(),
+      windowLabel: istWindowLabel(days),
       history: rows.map((r) => ({ date: r._id, ops: r.ops, all: r.all })),
       totals: { ops: opsCountAll, all: allCount },
       capInfo: (() => {

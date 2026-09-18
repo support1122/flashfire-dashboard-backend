@@ -33,13 +33,22 @@ import mongoose from "mongoose";
 import { JobModel } from "../Schema_Models/JobModel.js";
 import { readPlanCap } from "./dailyCapGuard.js";
 import { parseLocaleDateMs, objectIdTimeMs } from "./jobActivityTime.js";
+// The IST calendar primitives moved to Utils/istWindow.js so the windowed
+// report controllers can share them without importing this module (which
+// pulls in JobModel and the cap guard). Re-exported below, unchanged, so
+// every existing importer of this file keeps working.
+import {
+  IST_OFFSET_MS,
+  DAY_MS,
+  toDate,
+  istParts,
+  startOfCalendarDayIST,
+  endOfCalendarDayIST,
+  pad2,
+  istDayKey
+} from "./istWindow.js";
 
-/** IST is a fixed UTC+05:30. India has never observed DST, so plain arithmetic
- *  is exact here and we never have to round-trip through toLocaleString for a
- *  boundary. Formatting still uses Intl (see istDayKey's siblings) because that
- *  is what Intl is good at; boundaries are computed, not parsed. */
-const IST_OFFSET_MS = 330 * 60 * 1000;
-const DAY_MS = 24 * 60 * 60 * 1000;
+export { istParts, startOfCalendarDayIST, endOfCalendarDayIST, istDayKey };
 
 const LOG_PREFIX = "[client-reminders]";
 
@@ -79,60 +88,6 @@ const MAX_BYDAY_ROWS = 400;
 // ---------------------------------------------------------------------------
 // IST calendar primitives
 // ---------------------------------------------------------------------------
-
-/** Coerce anything date-ish to a valid Date, or null. Accepts Date, epoch ms,
- *  and ISO strings; rejects Invalid Date rather than letting NaN propagate
- *  into an ObjectId or a day key. */
-function toDate(value) {
-  if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value;
-  if (typeof value === "number" && Number.isFinite(value)) return new Date(value);
-  if (typeof value === "string" && value.trim()) {
-    const d = new Date(value);
-    return Number.isNaN(d.getTime()) ? null : d;
-  }
-  return null;
-}
-
-/**
- * Calendar fields of `date` as seen in IST.
- * @returns {{year:number,month:number,day:number,hour:number,minute:number,weekday:number}}
- *   month is 1-12, weekday is 0=Sunday..6=Saturday.
- */
-export function istParts(date = new Date()) {
-  const d = toDate(date) || new Date();
-  // Shift into a pseudo-UTC frame where the UTC accessors read out IST fields.
-  const shifted = new Date(d.getTime() + IST_OFFSET_MS);
-  return {
-    year: shifted.getUTCFullYear(),
-    month: shifted.getUTCMonth() + 1,
-    day: shifted.getUTCDate(),
-    hour: shifted.getUTCHours(),
-    minute: shifted.getUTCMinutes(),
-    weekday: shifted.getUTCDay()
-  };
-}
-
-/** UTC instant of 00:00:00.000 IST on the IST calendar day containing `date`. */
-export function startOfCalendarDayIST(date = new Date()) {
-  const { year, month, day } = istParts(date);
-  return new Date(Date.UTC(year, month - 1, day, 0, 0, 0, 0) - IST_OFFSET_MS);
-}
-
-/** UTC instant of 23:59:59.999 IST on the IST calendar day containing `date`. */
-export function endOfCalendarDayIST(date = new Date()) {
-  const { year, month, day } = istParts(date);
-  return new Date(Date.UTC(year, month - 1, day, 23, 59, 59, 999) - IST_OFFSET_MS);
-}
-
-function pad2(n) {
-  return String(n).padStart(2, "0");
-}
-
-/** "YYYY-MM-DD" for the IST calendar day containing `date`. */
-export function istDayKey(date = new Date()) {
-  const { year, month, day } = istParts(date);
-  return `${year}-${pad2(month)}-${pad2(day)}`;
-}
 
 /** "YYYY-MM" for the IST calendar month containing `date`. */
 export function istMonthKey(date = new Date()) {

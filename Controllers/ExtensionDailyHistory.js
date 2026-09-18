@@ -14,6 +14,7 @@
 
 import { ExtensionSessionStat } from "../Schema_Models/ExtensionSessionStat.js";
 import { JobModel } from "../Schema_Models/JobModel.js";
+import { parseDaysParam, startOfIstDayWindow, istWindowLabel } from "../Utils/istWindow.js";
 
 const TZ = "Asia/Kolkata";
 const MAX_DAYS = 90;
@@ -24,9 +25,15 @@ export default async function ExtensionDailyHistory(req, res) {
         if (!email || !email.includes("@")) {
             return res.status(400).json({ success: false, error: "BAD_INPUT", message: "clientEmail required" });
         }
-        const requested = parseInt(req.query.days, 10);
-        const days = Math.min(Math.max(Number.isFinite(requested) ? requested : 14, 1), MAX_DAYS);
-        const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+        // days=N is N IST CALENDAR days, today included - not a rolling N*24h.
+        // The per-day buckets below are already grouped in Asia/Kolkata, so a
+        // rolling cutoff produced one extra, partial bucket at the old end of
+        // the window: days=7 at 18:00 IST returned EIGHT rows and the oldest
+        // covered six hours. That short bar read as a bad day rather than a
+        // half day. Anchoring the cutoff to 00:00 IST makes the count of
+        // buckets equal the count of days asked for.
+        const days = parseDaysParam(req.query.days, { fallback: 14, max: MAX_DAYS });
+        const cutoff = startOfIstDayWindow(days);
         const ObjectId = JobModel.base.Types.ObjectId;
         const cutoffSeconds = Math.floor(cutoff.getTime() / 1000);
         const cutoffOid = new ObjectId(cutoffSeconds.toString(16).padStart(8, "0") + "0000000000000000");

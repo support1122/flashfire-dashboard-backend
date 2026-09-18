@@ -19,13 +19,21 @@
 // IST so it matches the daily cap window in AddJob.js.
 
 import { ExtensionSessionStat } from "../Schema_Models/ExtensionSessionStat.js";
+import { parseDaysParam, startOfIstDayWindow, istWindowLabel } from "../Utils/istWindow.js";
 
 const TZ = "Asia/Kolkata";
 
 export default async function OperatorActivity(req, res) {
     try {
-        const days = Math.min(Math.max(parseInt(req.query.days, 10) || 7, 1), 90);
-        const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+        // days=N is N IST CALENDAR days, today included - not a rolling N*24h.
+        // The per-day buckets below are already grouped in Asia/Kolkata, so a
+        // rolling cutoff produced one extra, partial bucket at the old end of
+        // the window: days=7 at 18:00 IST returned EIGHT rows and the oldest
+        // covered six hours. That short bar read as a bad day rather than a
+        // half day. Anchoring the cutoff to 00:00 IST makes the count of
+        // buckets equal the count of days asked for.
+        const days = parseDaysParam(req.query.days, { fallback: 7, max: 90 });
+        const cutoff = startOfIstDayWindow(days);
 
         const rows = await ExtensionSessionStat.aggregate([
             { $match: { endedAt: { $gte: cutoff } } },
@@ -87,7 +95,14 @@ export default async function OperatorActivity(req, res) {
             { $sort: { date: -1, pushed: -1, captures: -1 } },
         ]);
 
-        return res.json({ success: true, days, rows });
+        return res.json({
+            success: true,
+            days,
+            windowStart: cutoff.toISOString(),
+            windowLabel: istWindowLabel(days),
+            timezone: TZ,
+            rows,
+        });
     } catch (err) {
         console.error("OperatorActivity error:", err);
         return res.status(500).json({ success: false, error: "INTERNAL", message: err.message });
