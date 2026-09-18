@@ -1,6 +1,7 @@
 import mongoose from "mongoose";
 import { AutopilotRun } from "../Schema_Models/AutopilotRun.js";
 import { AutopilotRunRequest } from "../Schema_Models/AutopilotRunRequest.js";
+import { parseDaysParam, startOfIstDayWindow, istWindowLabel } from "../Utils/istWindow.js";
 
 // Autopilot run history + the scrape request queue.
 //
@@ -124,15 +125,20 @@ export const listAutopilotRuns = async (req, res) => {
  */
 export const getAutopilotRunsSummary = async (req, res) => {
   try {
-    // A non-positive or unparseable days falls back to the default window.
-    // Math.max(n, 1) would have turned days=-5 into a silent one-day window,
-    // which looks like "there is no data" rather than like bad input.
-    const askedDays = Number.parseInt(req.query.days, 10);
-    const days = Number.isInteger(askedDays) && askedDays > 0 ? Math.min(askedDays, 365) : 30;
-    const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+    // days=N is N IST CALENDAR days, today included - not a rolling N*24h.
+    // "Today" therefore starts at 00:00 IST and resets at midnight, which is
+    // what the operators read it as and what the daily cap already uses. The
+    // old rolling cutoff meant that at 18:00 the "Today" totals still carried
+    // half of yesterday's runs and never reset.
+    const days = parseDaysParam(req.query.days, { fallback: 30, max: 365 });
+    const since = startOfIstDayWindow(days);
+    const until = new Date();
 
     const rows = await AutopilotRun.aggregate([
-      { $match: { finishedAt: { $gte: since } } },
+      // $lte now: a run row whose finishedAt is in the future (a clock skew on
+      // an autopilot host) would otherwise sit at the top of every window
+      // forever, since $sort is on finishedAt descending.
+      { $match: { finishedAt: { $gte: since, $lte: until } } },
       { $sort: { finishedAt: -1 } },
       {
         $group: {
@@ -186,7 +192,18 @@ export const getAutopilotRunsSummary = async (req, res) => {
       { clients: 0, runs: 0, captured: 0, pushed: 0, rejected: 0, failedRuns: 0 }
     );
 
-    res.status(200).json({ success: true, days, totals, count: data.length, data });
+    res.status(200).json({
+      success: true,
+      days,
+      // The client renders these, so it never has to re-derive the boundary
+      // and can never disagree with the server about where "today" starts.
+      windowStart: since.toISOString(),
+      windowLabel: istWindowLabel(days),
+      timezone: "Asia/Kolkata",
+      totals,
+      count: data.length,
+      data
+    });
   } catch (error) {
     console.error("getAutopilotRunsSummary failed:", error);
     res.status(500).json({ success: false, message: error.message });

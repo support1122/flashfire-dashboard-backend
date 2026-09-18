@@ -97,7 +97,10 @@ const REQUEUE_LEGACY_FLAGS = process.env.SECOND_JUDGE_REQUEUE_LEGACY_FLAGS !== '
 
 // Scraper (Playwright text extractor). EXTRACT path matches the extension's
 // exports.js SCRAPER_ENDPOINTS.EXTRACT_INFO ('/extract/infor=').
-const SCRAPER_BASE_URL = (process.env.SCRAPER_BASE_URL || 'http://34.100.143.80:8092').replace(/\/+$/, '');
+// Default points at the live cluster (77.237.239.34, 2 replicas behind nginx).
+// It used to fall back to 34.100.143.80, which was decommissioned - second-stage
+// screening silently failed wherever SCRAPER_BASE_URL was unset.
+const SCRAPER_BASE_URL = (process.env.SCRAPER_BASE_URL || 'http://77.237.239.34:8092').replace(/\/+$/, '');
 const SCRAPER_EXTRACT_PATH = process.env.SCRAPER_EXTRACT_PATH || '/extract/infor=';
 // 70s (was 45s): must exceed the scraper's own nav timeout (JDFETCH_NAV_TIMEOUT_MS,
 // now 35s) plus HTTP-tier + queue wait, else we abort a scrape that was about to
