@@ -780,6 +780,27 @@ app.post("/downloaded", resumeDownloaded);
 //AI optimizer routes
 // app.post("/saveChangedSession", saveChangedSession);
 
+// ONE-TIME MIGRATION: reduce default daily cap from 30 → 25
+// Secured with INTERNAL_SYNC_API_KEY. Delete this block after running once.
+app.post("/admin/migrate-cap-30-to-25", async (req, res) => {
+  const key = req.headers["x-sync-key"];
+  if (!key || key !== process.env.INTERNAL_SYNC_API_KEY) {
+    return res.status(403).json({ error: "forbidden" });
+  }
+  try {
+    const { ProfileModel } = await import("./Schema_Models/ProfileModel.js");
+    const result = await ProfileModel.updateMany(
+      { targetJobCount: 30 },
+      { $set: { targetJobCount: 25 } }
+    );
+    console.log(`[migrate-cap] updated ${result.modifiedCount} profiles 30→25`);
+    return res.json({ ok: true, updated: result.modifiedCount });
+  } catch (e) {
+    console.error("[migrate-cap] error:", e.message);
+    return res.status(500).json({ error: e.message });
+  }
+});
+
 export default app;
 
 
