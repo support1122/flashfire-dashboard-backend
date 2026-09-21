@@ -844,6 +844,7 @@ export default async function Add_Update_Profile(req, res) {
       experienceLevel,
       yearsOfExperience,
       expectedSalaryRange,
+      currency,
       expectedSalaryNarrative,
       preferredLocations,
       targetCompanies,
@@ -932,6 +933,7 @@ export default async function Add_Update_Profile(req, res) {
             ? Number(yearsOfExperience)
             : existingProfile.yearsOfExperience,
           expectedSalaryRange: expectedSalaryRange || existingProfile.expectedSalaryRange,
+          currency: currency || existingProfile.currency,
           expectedSalaryNarrative: expectedSalaryNarrative !== undefined ? expectedSalaryNarrative : existingProfile.expectedSalaryNarrative,
           preferredLocations: preferredLocations || existingProfile.preferredLocations,
           targetCompanies: targetCompanies || existingProfile.targetCompanies,
@@ -1013,6 +1015,7 @@ export default async function Add_Update_Profile(req, res) {
           ? Number(yearsOfExperience)
           : existingProfile.yearsOfExperience,
         expectedSalaryRange: expectedSalaryRange || existingProfile.expectedSalaryRange,
+        currency: currency || existingProfile.currency,
         expectedSalaryNarrative: expectedSalaryNarrative !== undefined ? expectedSalaryNarrative : existingProfile.expectedSalaryNarrative,
         preferredLocations: preferredLocations || existingProfile.preferredLocations,
         targetCompanies: targetCompanies || existingProfile.targetCompanies,
@@ -1081,6 +1084,7 @@ export default async function Add_Update_Profile(req, res) {
         experienceLevel: experienceLevel || "",
         yearsOfExperience: yearsOfExperience !== undefined && yearsOfExperience !== "" ? Number(yearsOfExperience) : null,
         expectedSalaryRange: expectedSalaryRange || "",
+        currency: currency || "USD",
         expectedSalaryNarrative: expectedSalaryNarrative || "",
         preferredLocations: preferredLocations || [],
         targetCompanies: targetCompanies || [],

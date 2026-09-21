@@ -332,6 +332,11 @@ export const profileSchema = new mongoose.Schema({
     enum: ["60k-100k", "100k-150k", "150k-200k", "Other"],
     required: true,
   },
+  currency: {
+    type: String,
+    enum: ["USD", "GBP", "CAD", "INR"],
+    default: "USD",
+  },
   preferredLocations: {
     type: [String],
     required: true,
