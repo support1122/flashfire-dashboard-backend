@@ -1,11 +1,10 @@
-import crypto from 'crypto'
 import dotenv from 'dotenv'
-import jwt from 'jsonwebtoken'
 import { UserModel } from '../Schema_Models/UserModel.js';
+import { signAuthToken } from '../Utils/AuthToken.js';
 import { encrypt } from '../Utils/CryptoHelper.js';
 dotenv.config();
 export default async function Register(req, res) {
-    let {email, firstName, lastName, password, planType} = req.body;
+    let {email, firstName, lastName, password, planType, dashboardManager} = req.body;
      try {
         // Check if user already exists
         const existingUser = await UserModel.findOne({email});
@@ -22,14 +21,17 @@ export default async function Register(req, res) {
             name: `${firstName} ${lastName}`, 
             email, 
             passwordHashed: passwordEncrypted,
-            planType: planType || "Free Trial"
+            planType: planType || "Free Trial",
+            dashboardManager: dashboardManager || ""
         };
         
         await UserModel.create(userData);
         let newUserDetails = await UserModel.findOne({email});
         
         // Generate JWT token
-        const token = jwt.sign({ email }, process.env.JWT_SECRET || 'flashfire-secret-key-2024', { expiresIn: '7d' });
+        // Same secret every other login path signs with, so this token is
+        // accepted by LocalTokenValidator like any other session.
+        const token = signAuthToken({ email, name: newUserDetails.name });
         
         res.status(200).json({
             message: 'User registered successfully',
@@ -41,7 +43,8 @@ export default async function Register(req, res) {
                 planLimit: newUserDetails.planLimit,
                 resumeLink: newUserDetails.resumeLink,
                 coverLetters: newUserDetails.coverLetters,
-                optimizedResumes: newUserDetails.optimizedResumes
+                optimizedResumes: newUserDetails.optimizedResumes,
+                dashboardManager: newUserDetails.dashboardManager
             },
             token: token
         });

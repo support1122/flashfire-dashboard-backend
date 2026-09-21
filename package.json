@@ -6,10 +6,22 @@
   "scripts": {
     "start": "node index.js",
     "dev": "nodemon index.js",
+    "dev:bypass": "DEV_SESSION_KEY_BYPASS=true nodemon index.js",
     "build": "echo 'No build step required for Node.js'",
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "test": "node --experimental-test-module-mocks --test \"Utils/__tests__/*.test.mjs\"",
     "lint": "echo 'Add linting script here'",
-    "health": "curl http://localhost:8001/health"
+    "health": "curl http://localhost:8001/health",
+    "migrate:r2": "node scripts/migrate-resume-data-to-r2.js --batch-size=50 --use-url-in-key",
+    "migrate:r2:dry": "node scripts/migrate-resume-data-to-r2.js --dry-run",
+    "migrate:r2:user": "node scripts/migrate-resume-data-to-r2.js --user=someone@example.com",
+    "verify:mail": "node scripts/verify-mail-pipeline.mjs",
+    "verify:client-alerts": "node scripts/verify-client-alerts.mjs",
+    "verify:mail-rules": "node scripts/verify-mail-rules.mjs",
+    "verify:client-smtp": "node scripts/verify-client-smtp.mjs",
+    "verify:mail-monitor": "node scripts/verify-mail-monitor.mjs",
+    "verify:client-reminders": "node scripts/verify-client-reminders.mjs",
+    "backfill:location": "node scripts/backfill-activity-location.mjs",
+    "geo:inspect": "node scripts/inspect-ip-location.mjs"
   },
   "keywords": [
     "flashfire",
@@ -26,16 +38,26 @@
     "npm": ">=8.0.0"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.911.0",
+    "@aws-sdk/s3-request-presigner": "^3.911.0",
+    "@google-cloud/vertexai": "^1.12.0",
+    "@sendgrid/mail": "^8.1.6",
+    "axios": "^1.7.9",
+    "bcrypt": "^6.0.0",
     "cloudinary": "^2.7.0",
     "cors": "^2.8.5",
     "dotenv": "^17.0.1",
     "express": "^4.18.2",
-    "express-rate-limit": "^7.5.1",
     "google-auth-library": "^10.1.0",
+    "googleapis": "^148.0.0",
     "helmet": "^7.2.0",
     "jsonwebtoken": "^9.0.2",
     "mongoose": "^8.16.1",
-    "multer": "^2.0.2"
+    "multer": "^2.0.2",
+    "node-cron": "^3.0.3",
+    "nodemailer": "^8.0.11",
+    "sharp": "^0.34.5",
+    "stripe": "^22.4.0"
   },
   "devDependencies": {
     "nodemon": "^3.1.10"

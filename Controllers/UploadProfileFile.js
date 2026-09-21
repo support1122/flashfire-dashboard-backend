@@ -1,15 +1,9 @@
 import multer from "multer";
-import { v2 as cloudinary } from "cloudinary";
+import { uploadFile } from "../Utils/storageService.js";
+import { ProfileModel } from "../Schema_Models/ProfileModel.js";
 import dotenv from "dotenv";
 
 dotenv.config();
-
-// Configure Cloudinary
-cloudinary.config({
-  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-  api_key: process.env.CLOUDINARY_API_KEY,
-  api_secret: process.env.CLOUDINARY_API_SECRET,
-});
 
 // Configure multer for memory storage
 const upload = multer({
@@ -42,24 +36,60 @@ export const uploadProfileFile = async (req, res) => {
       return res.status(400).json({ message: "Email is required" });
     }
 
-    // Convert buffer to base64
-    const fileBuffer = req.file.buffer;
-    const base64File = fileBuffer.toString('base64');
-    const dataURI = `data:${req.file.mimetype};base64,${base64File}`;
+    // Determine file type based on file extension or MIME type
+    const fileName = req.file.originalname.toLowerCase();
+    let fileType = 'attachments'; // default for attachments
+    
+    // Check if it's a PDF, DOC, DOCX, TXT (these should go to resume folder)
+    if (fileName.endsWith('.pdf') || 
+        fileName.endsWith('.doc') || 
+        fileName.endsWith('.docx') || 
+        fileName.endsWith('.txt') ||
+        req.file.mimetype === 'application/pdf' ||
+        req.file.mimetype === 'application/msword' ||
+        req.file.mimetype === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
+        req.file.mimetype === 'text/plain') {
+      fileType = 'resume'; // PDFs and documents go to resume folder
+    }
 
-    // Upload to Cloudinary
-    const uploadResult = await cloudinary.uploader.upload(dataURI, {
-      folder: 'flashfire-profiles',
-      resource_type: 'raw',
-      public_id: `${email}_${Date.now()}_${req.file.originalname}`,
-      overwrite: true,
+    // Use email as client identifier (unique and always available)
+    const clientEmail = email.replace(/[^a-zA-Z0-9._-]/g, '_');
+
+    // Upload file using unified storage service with email-based folder structure
+    const fileBuffer = req.file.buffer;
+    
+    const uploadResult = await uploadFile(fileBuffer, {
+      folder: 'flashfirejobs', // Base folder
+      filename: req.file.originalname,
+      contentType: req.file.mimetype,
+      clientName: clientEmail, // Use email as client identifier
+      fileType: fileType, // 'resume' for PDFs/docs, 'attachments' for images
+    });
+
+    if (!uploadResult.success) {
+      return res.status(500).json({
+        success: false,
+        message: "Failed to upload file",
+        error: uploadResult.error,
+      });
+    }
+
+    console.log('Upload Profile File Response:', {
+      url: uploadResult.url,
+      key: uploadResult.key,
+      storage: uploadResult.storage,
+      email,
+      filename: req.file.originalname,
     });
 
     res.json({
       success: true,
-      secure_url: uploadResult.secure_url,
-      public_id: uploadResult.public_id,
-      message: "File uploaded successfully"
+      secure_url: uploadResult.url,
+      url: uploadResult.url, // Also include url for consistency
+      public_id: uploadResult.key || uploadResult.public_id,
+      key: uploadResult.key,
+      storage: uploadResult.storage,
+      message: "File uploaded successfully",
     });
 
   } catch (error) {

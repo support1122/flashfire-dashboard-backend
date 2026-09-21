@@ -1,35 +1,38 @@
-# Use Node.js 18 Alpine for smaller image size
-FROM node:18-alpine
+# FlashFire dashboard backend image.
+# Node 20 alpine — supports every dep in package.json (engines >=18). Smaller
+# attack surface than full debian, includes apk for bcrypt build deps.
+FROM node:20-alpine
 
-# Set working directory
+# Build deps for native modules (bcrypt) + curl for healthcheck + tini for
+# proper PID 1 signal handling.
+RUN apk add --no-cache python3 make g++ curl tini
+
 WORKDIR /app
 
-# Copy package files
+# Copy manifests first so npm ci layer caches when only source changes.
 COPY package*.json ./
 
-# Install dependencies
-RUN npm ci --only=production && npm cache clean --force
+# Production install. Native deps (bcrypt) compile here.
+RUN npm ci --omit=dev && npm cache clean --force
 
-# Copy source code
+# Copy source.
 COPY . .
 
-# Create logs directory
-RUN mkdir -p logs
-
-# Create non-root user
-RUN addgroup -g 1001 -S nodejs
-RUN adduser -S nodejs -u 1001
-
-# Change ownership of the app directory
-RUN chown -R nodejs:nodejs /app
+# Logs dir + non-root user.
+RUN mkdir -p logs \
+    && addgroup -g 1001 -S nodejs \
+    && adduser -S nodejs -u 1001 \
+    && chown -R nodejs:nodejs /app
 USER nodejs
 
-# Expose port
-EXPOSE 8001
+# Default port — index.js reads process.env.PORT (defaults to 8086).
+EXPOSE 8086
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-  CMD node -e "require('http').get('http://localhost:8001/health', (res) => { process.exit(res.statusCode === 200 ? 0 : 1) })"
+# Healthcheck — index.js exposes GET /health returning 200.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+  CMD curl -fsS "http://localhost:${PORT:-8086}/health" || exit 1
 
-# Start the application
-CMD ["npm", "start"]
+# tini = PID 1 → reaps zombies, forwards SIGTERM cleanly so node exits fast
+# under docker stop / restart.
+ENTRYPOINT ["/sbin/tini", "--"]
+CMD ["node", "index.js"]

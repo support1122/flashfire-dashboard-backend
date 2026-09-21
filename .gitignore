@@ -66,3 +66,27 @@ uploads/
 # Build outputs
 dist/
 build/
+.env
+env.example
+*.example
+.env
+/.omc
+/graphify-out
+*.txt
+.graphify_analysis.json
+.graphify_ast.json
+.graphify_detect.json
+.graphify_extract.json
+.graphify_labels.json
+.graphify_python
+.graphify_semantic.json
+
+# Vertex AI service-account key (secret — never commit)
+flashfire-466710-*.json
+
+
+# Rendered reminder previews from scripts/verify-client-reminders.mjs --render.
+# These contain real client names and job titles; never commit them.
+tmp-reminder-preview/
+/docs
+/tmp-reminder-preview

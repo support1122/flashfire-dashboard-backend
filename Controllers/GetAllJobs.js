@@ -1,40 +1,117 @@
 import { JobModel } from "../Schema_Models/JobModel.js";
 import { UserModel } from "../Schema_Models/UserModel.js";
+import mongoose from "mongoose";
+import { computeJobTimes } from "../Utils/jobActivityTime.js";
 
 export default async function GetAllJobs(req, res) {
     try {
-        // Get user email from JWT token (set by LocalTokenValidator middleware)
-        const userEmail = req.user?.email || req.body?.userDetails?.email;
-        
-        console.log('GetAllJobs - User email:', userEmail);
-        
+        // Check MongoDB connection status before proceeding
+        if (mongoose.connection.readyState !== 1) {
+            console.error("GetAllJobs error: MongoDB not connected. State:", mongoose.connection.readyState);
+            return res.status(503).json({ 
+                message: "Database connection unavailable. Please try again in a moment.",
+                error: "Service temporarily unavailable"
+            });
+        }
+
+        const userEmail = (req.body?.email || req.body?.userDetails?.email || req.email || '').toLowerCase();
+
         if (!userEmail) {
-            console.log('GetAllJobs - No user email found');
             return res.status(400).json({ message: "User email not found" });
         }
 
-        // First, let's check if there are any jobs at all in the collection
-        const totalJobs = await JobModel.countDocuments({});
-        console.log('GetAllJobs - Total jobs in collection:', totalJobs);
+        // Optional pagination (defaults preserve old behavior if not provided)
+        const page = Math.max(parseInt(req.query?.page || req.body?.page || '1', 10), 1);
+        const limit = Math.max(parseInt(req.query?.limit || req.body?.limit || '0', 10), 0); // 0 means no limit
+        const skip = limit > 0 ? (page - 1) * limit : 0;
 
-        // Get all jobs for this user
-        let allJobs = await JobModel.find({ userID: userEmail });
-        console.log(`GetAllJobs - Found ${allJobs.length} jobs for user: ${userEmail}`);
-        
-        // If no jobs found, let's check what userIDs exist in the jobs collection
-        if (allJobs.length === 0) {
-            const distinctUserIDs = await JobModel.distinct('userID');
-            console.log('GetAllJobs - Distinct userIDs in jobs collection:', distinctUserIDs);
+        // Fields: exclude heavy payloads explicitly.
+        //
+        // aiDecision is excluded deliberately. It is operator-only context and
+        // a ~200-byte reason string on every card would add real weight to a
+        // list that routinely returns hundreds of jobs. Operators fetch it one
+        // job at a time from /operations/job-ai-decision when they click the
+        // "Why?" button, so the common path pays nothing for it.
+        const query = { userID: userEmail };
+        const projection = '-jobDescription -optimizedResume.resumeData -aiDecision';
+
+        // Sort by updatedAt desc (most recently updated first) so moved jobs stay at top
+        let cursor = JobModel.find(query)
+            .select(projection)
+            .lean({ virtuals: false, getters: false });
+
+        if (limit > 0) {
+            cursor = cursor.skip(skip).limit(limit);
         }
+
+        const allJobsRaw = await cursor;
+        
+        // Ordering used to run through a local locale-string parser that assumed
+        // MM/DD whenever the first number was <= 12. The collection is a mix of
+        // en-US (M/D, uppercase meridiem), en-IN (D/M, lowercase meridiem) and
+        // ISO, so that assumption silently threw a large slice of the cards into
+        // the wrong month - "1/5/2026" (1 May, en-IN) sorted as 5 January.
+        //
+        // Utils/jobActivityTime.js now owns this. It reads creation time from
+        // the ObjectId (exact, no parsing), disambiguates the remaining strings
+        // on the meridiem case, and clamps anything impossible back to the
+        // creation time. See the header comment there for the measurements.
+        const nowMs = Date.now();
+        const withTimes = allJobsRaw.map((job) => ({ job, times: computeJobTimes(job, nowMs) }));
+
+        withTimes.sort((a, b) => {
+            if (b.times.activityAt !== a.times.activityAt) {
+                return b.times.activityAt - a.times.activityAt;
+            }
+            // Same instant: fall back to insert order, newest first.
+            return b.job._id.toString().localeCompare(a.job._id.toString());
+        });
+
+        // Strip extensionCode only (secret). Keep addedBy for timeline ("Added by ...").
+        //
+        // The *Ms fields are the sortable form of the locale strings above. They
+        // are additive: every existing consumer of dateAdded / updatedAt keeps
+        // working untouched, and anything that needs to ORDER cards should read
+        // activityAt instead of re-parsing a string that cannot be parsed
+        // reliably without this file's disambiguation rules.
+        const allJobs = withTimes.map(({ job, times }) => {
+            const j = { ...job, _id: job._id.toString() };
+            delete j.extensionCode;
+            j.createdAtMs = times.createdAtMs;
+            j.updatedAtMs = times.updatedAtMs;
+            j.appliedAtMs = times.appliedAtMs;
+            j.activityAt = times.activityAt;
+            return j;
+        });
 
         res.status(200).json({
             message: 'All Jobs List',
             allJobs,
             count: allJobs.length,
-            userEmail: userEmail
+            userEmail
         });
     } catch (error) {
         console.error("GetAllJobs error:", error);
-        res.status(500).json({ message: "Failed to fetch jobs" });
+        
+        // Handle specific MongoDB errors
+        if (error.name === 'MongoNetworkTimeoutError' || error.name === 'MongoServerSelectionError') {
+            return res.status(503).json({ 
+                message: "Database connection timeout. Please try again in a moment.",
+                error: "Service temporarily unavailable"
+            });
+        }
+        
+        if (error.name === 'MongoNetworkError') {
+            return res.status(503).json({ 
+                message: "Database network error. Please try again in a moment.",
+                error: "Service temporarily unavailable"
+            });
+        }
+        
+        // Generic error response
+        res.status(500).json({ 
+            message: "Failed to fetch jobs",
+            error: process.env.NODE_ENV === 'development' ? error.message : undefined
+        });
     }
 }

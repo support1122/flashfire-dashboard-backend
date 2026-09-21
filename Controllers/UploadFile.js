@@ -1,0 +1,221 @@
+import multer from "multer";
+import { uploadFile } from "../Utils/storageService.js";
+import { ProfileModel } from "../Schema_Models/ProfileModel.js";
+import { compressImageBuffer, formatCompressionLog } from "../Utils/compressImage.js";
+import dotenv from "dotenv";
+
+dotenv.config();
+
+// Configure multer for memory storage
+// 25MB limit — source images can be 6-10MB; we compress server-side to ~1-2MB before R2.
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 25 * 1024 * 1024,
+  },
+});
+
+/**
+ * Generic file upload endpoint
+ * Supports multiple file types: images, PDFs, documents
+ */
+export const uploadSingleFile = async (req, res) => {
+  try {
+    // Check if file exists
+    if (!req.file) {
+      return res.status(400).json({ 
+        success: false,
+        message: "No file uploaded" 
+      });
+    }
+
+    const { folder = 'flashfirejobs', email, fileType = 'attachments' } = req.body;
+
+    // Determine file type based on file extension or MIME type if not provided
+    const fileName = req.file.originalname.toLowerCase();
+    let determinedFileType = fileType;
+    
+    // Check if it's a PDF, DOC, DOCX, TXT (these should go to resume folder)
+    if (fileName.endsWith('.pdf') || 
+        fileName.endsWith('.doc') || 
+        fileName.endsWith('.docx') || 
+        fileName.endsWith('.txt') ||
+        req.file.mimetype === 'application/pdf' ||
+        req.file.mimetype === 'application/msword' ||
+        req.file.mimetype === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
+        req.file.mimetype === 'text/plain') {
+      determinedFileType = 'resume'; // PDFs and documents go to resume folder
+    }
+
+    // Use email as client identifier (unique and always available)
+    // Sanitize email for use as folder name
+    let clientName = null;
+    if (email) {
+      // Use email directly as folder identifier
+      clientName = email.replace(/[^a-zA-Z0-9._-]/g, '_');
+    }
+
+    // Compress images server-side before R2/Cloudinary upload.
+    // Non-image MIME types pass through untouched.
+    const compression = await compressImageBuffer(req.file.buffer, {
+      originalMime: req.file.mimetype,
+      originalFilename: req.file.originalname,
+    });
+    console.log(formatCompressionLog(compression));
+
+    const uploadResult = await uploadFile(compression.buffer, {
+      folder,
+      filename: compression.filename || req.file.originalname,
+      contentType: compression.contentType || req.file.mimetype,
+      clientName,
+      fileType: determinedFileType,
+    });
+
+    if (!uploadResult.success) {
+      return res.status(500).json({
+        success: false,
+        message: "Failed to upload file",
+        error: uploadResult.error,
+      });
+    }
+
+    res.json({
+      success: true,
+      url: uploadResult.url,
+      secure_url: uploadResult.url,
+      key: uploadResult.key,
+      storage: uploadResult.storage,
+      contentType: uploadResult.contentType,
+      size: uploadResult.size,
+      message: "File uploaded successfully",
+    });
+
+  } catch (error) {
+    console.error("File upload error:", error);
+    res.status(500).json({ 
+      success: false,
+      message: error.message || "Failed to upload file" 
+    });
+  }
+};
+
+/**
+ * Base64 file upload endpoint
+ * Accepts base64 encoded files
+ */
+export const uploadBase64File = async (req, res) => {
+  try {
+    const { fileData, filename, folder = '', email, fileType = 'attachments' } = req.body;
+
+    if (!fileData || !filename) {
+      return res.status(400).json({
+        success: false,
+        message: "File data and filename are required",
+      });
+    }
+
+    // Get client information if email is provided
+    let clientName = null;
+    if (email) {
+      const profile = await ProfileModel.findOne({ email });
+      if (profile) {
+        clientName = `${profile.firstName}_${profile.lastName}`.replace(/[^a-zA-Z0-9._-]/g, '_');
+      }
+    }
+
+    // Extract content type from base64 string
+    const mimeMatch = fileData.match(/^data:([^;]+);base64,/);
+    if (!mimeMatch) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid base64 file format",
+      });
+    }
+
+    const contentType = mimeMatch[1];
+    const base64Data = fileData.split(',')[1];
+    const fileBuffer = Buffer.from(base64Data, 'base64');
+
+    // Compress images before storage upload.
+    const compression = await compressImageBuffer(fileBuffer, {
+      originalMime: contentType,
+      originalFilename: filename,
+    });
+    console.log(formatCompressionLog(compression));
+
+    const uploadResult = await uploadFile(compression.buffer, {
+      folder,
+      filename: compression.filename || filename,
+      contentType: compression.contentType || contentType,
+      clientName,
+      fileType,
+    });
+
+    if (!uploadResult.success) {
+      return res.status(500).json({
+        success: false,
+        message: "Failed to upload file",
+        error: uploadResult.error,
+      });
+    }
+
+    res.json({
+      success: true,
+      url: uploadResult.url,
+      secure_url: uploadResult.url,
+      key: uploadResult.key,
+      storage: uploadResult.storage,
+      contentType: uploadResult.contentType,
+      size: uploadResult.size,
+      message: "File uploaded successfully",
+    });
+
+  } catch (error) {
+    console.error("Base64 upload error:", error);
+    res.status(500).json({
+      success: false,
+      message: error.message || "Failed to upload file",
+    });
+  }
+};
+
+export const uploadOnboardingAttachment = async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ success: false, message: "No file uploaded" });
+    }
+    const compression = await compressImageBuffer(req.file.buffer, {
+      originalMime: req.file.mimetype,
+      originalFilename: req.file.originalname,
+    });
+    console.log(formatCompressionLog(compression));
+
+    const uploadResult = await uploadFile(compression.buffer, {
+      folder: 'onboarding-attachments',
+      filename: compression.filename || req.file.originalname,
+      contentType: compression.contentType || req.file.mimetype,
+      fileType: 'attachments',
+    });
+    if (!uploadResult.success) {
+      return res.status(500).json({
+        success: false,
+        message: "Failed to upload file",
+        error: uploadResult.error,
+      });
+    }
+    res.status(200).json({
+      success: true,
+      url: uploadResult.url,
+      filename: req.file.originalname,
+    });
+  } catch (error) {
+    console.error("Onboarding attachment upload error:", error);
+    res.status(500).json({
+      success: false,
+      message: error.message || "Failed to upload",
+    });
+  }
+};
+
+export { upload };
+
