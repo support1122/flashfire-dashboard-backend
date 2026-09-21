@@ -1,6 +1,6 @@
 // UpdateScrapeSources: set the per-client scrape-source allowlist.
 //
-// Input  : POST /update-scrape-sources  { email, scrapeSources: ["jobright","indeed","reed","flexa","hiringcafe"] }
+// Input  : POST /update-scrape-sources  { email, scrapeSources: ["jobright","indeed","reed","flexa","hiringcafe","seek"] }
 // Output : { success, profile? } | { success:false, error, message }
 //
 // Used by the clients-tracking AI Summary admin tab ("Scrape sources" card).
@@ -10,7 +10,7 @@
 
 import { ProfileModel } from "../Schema_Models/ProfileModel.js";
 
-const VALID_SOURCES = ["jobright", "indeed", "reed", "flexa", "hiringcafe"];
+const VALID_SOURCES = ["jobright", "indeed", "reed", "flexa", "hiringcafe", "seek"];
 
 export default async function UpdateScrapeSources(req, res) {
   try {
