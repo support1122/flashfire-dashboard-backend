@@ -34,7 +34,7 @@ import { ProfileModel } from "../Schema_Models/ProfileModel.js";
 import { UserModel } from "../Schema_Models/UserModel.js";
 import { ClientTrackingModel, computeAddonBonus } from "../Schema_Models/ClientTrackingModel.js";
 
-export const DEFAULT_DAILY_CAP = 25;
+export const DEFAULT_DAILY_CAP = 30;
 
 // Lifetime plan cap — TOTAL applications (jobs) allowed per client across all
 // time, by their plan. Counts both ops-added and user-added jobs. Once a
