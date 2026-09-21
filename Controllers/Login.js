@@ -67,6 +67,7 @@ export default async function Login(req, res) {
                          portfolioLinks: existanceOfUser.portfolioLinks || [],
                          dashboardManager: existanceOfUser.dashboardManager,
                          amountPaid,
+                         currency: existanceOfUser.currency || "USD",
                     },
                     // Signed with JWT_SECRET so the token is accepted by
                     // LocalTokenValidator; it used to use JWT_SECRET_KEY, which
