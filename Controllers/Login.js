@@ -1,5 +1,6 @@
 import { UserModel } from "../Schema_Models/UserModel.js";
 import { ProfileModel } from "../Schema_Models/ProfileModel.js";
+import { ClientTrackingModel } from "../Schema_Models/ClientTrackingModel.js";
 import dotenv from 'dotenv';
 import { signAuthToken, normalizeEmail } from "../Utils/AuthToken.js";
 import { decrypt } from "../Utils/CryptoHelper.js";
@@ -33,6 +34,10 @@ export default async function Login(req, res) {
                const hasProfile = profileLookUp && profileLookUp.email && profileLookUp.email.length > 0;
                const canonicalEmail = existanceOfUser.email || email;
 
+               // Get amountPaid from dashboardtrackings (has currency symbol baked in e.g. "£419")
+               const tracking = await ClientTrackingModel.findOne({ email: canonicalEmail }).lean();
+               const amountPaid = tracking?.amountPaid || existanceOfUser.amountPaid || "0";
+
                // Record the client login for the admin Activity Monitor (captures
                // IP + resolves location async). Fire-and-forget; never blocks login.
                logActivity(req, {
@@ -60,7 +65,8 @@ export default async function Login(req, res) {
                          optimizedResumes: existanceOfUser.optimizedResumes,
                          transcript: existanceOfUser.transcript,
                          portfolioLinks: existanceOfUser.portfolioLinks || [],
-                         dashboardManager: existanceOfUser.dashboardManager
+                         dashboardManager: existanceOfUser.dashboardManager,
+                         amountPaid,
                     },
                     // Signed with JWT_SECRET so the token is accepted by
                     // LocalTokenValidator; it used to use JWT_SECRET_KEY, which
