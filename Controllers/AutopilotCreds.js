@@ -152,6 +152,80 @@ export const getAutopilotCreds = async (req, res) => {
 // maxJobs / dailyCap here writes ProfileModel.targetJobCount - the same field
 // the dashboard's own admin tab edits - so changing the cap from the autopilot
 // changes it everywhere at once.
+// POST /autopilot/creds/:email/provision   (ops key)
+//
+// Give a client the JobRight credentials the autopilot needs, in one
+// idempotent call. Written for the Client Job Analysis "JobRight: Yes" toggle
+// in clients-tracking, which fires this the moment an operator says the
+// account exists - so nobody has to open the autopilot and type the same
+// password for the 300th time.
+//
+// What it writes, and only when the field is BLANK:
+//   jrEmail    <- the client's own email (the JobRight account is theirs)
+//   jrPassword <- DEFAULT_JR_PASSWORD, the standard team password
+//
+// Never overwrites a value that is already there. A client whose JobRight
+// account uses a different password has it stored here deliberately (see
+// Schema_Models/AutopilotCreds.js), and an operator re-toggling the switch -
+// or a bulk sync sweeping every client - must not wipe it. That makes the
+// route safe to call repeatedly and safe to call on clients who are already
+// set up, which is what lets the toggle call it unconditionally.
+//
+// It deliberately does NOT touch extEmail / extPassword / extCode. Those are
+// the dashboard-panel login, a different account with a different password,
+// and guessing them would produce a row that looks provisioned and fails at
+// the panel step instead of the JobRight one.
+export const provisionAutopilotCreds = async (req, res) => {
+  try {
+    const email = String(req.params.email || "").toLowerCase().trim();
+    if (!email.includes("@")) {
+      return res.status(400).json({ success: false, message: "bad email" });
+    }
+    const updatedBy = String(req.body?.updatedBy || "").trim().slice(0, 200);
+
+    const existing = await AutopilotCreds.findOne({ clientEmail: email })
+      .select("jrEmail jrPassword")
+      .lean();
+
+    const set = {};
+    if (!String(existing?.jrEmail || "").trim()) set.jrEmail = email;
+    if (!String(existing?.jrPassword || "").trim()) set.jrPassword = DEFAULT_JR_PASSWORD;
+    if (updatedBy) set.updatedBy = updatedBy;
+
+    // Nothing to fill and no row to create: say so rather than writing an
+    // empty $set, so the caller can tell "already had it" from "just made it".
+    const created = !existing;
+    const filled = Object.keys(set).filter((k) => k !== "updatedBy");
+
+    if (created || filled.length || updatedBy) {
+      await AutopilotCreds.updateOne({ clientEmail: email }, { $set: set }, { upsert: true });
+    }
+
+    const after = await AutopilotCreds.findOne({ clientEmail: email })
+      .select("jrEmail jrPassword")
+      .lean();
+
+    res.status(200).json({
+      success: true,
+      clientEmail: email,
+      created,
+      filled,                       // which blanks this call populated
+      jrEmail: after?.jrEmail || "",
+      // Never echo the password. The autopilot reads it from GET
+      // /autopilot/creds/:email, which is behind the same ops key; this route
+      // is called from another service's request handler and its response can
+      // end up in a log or a browser's network tab.
+      hasJrPassword: !!String(after?.jrPassword || "").trim(),
+      // The autopilot can only auto-login when BOTH are present, so state the
+      // conclusion rather than leaving the caller to infer it.
+      autoLoginReady: !!String(after?.jrEmail || "").trim() && !!String(after?.jrPassword || "").trim()
+    });
+  } catch (error) {
+    console.error("provisionAutopilotCreds failed:", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 export const putAutopilotCreds = async (req, res) => {
   try {
     const email = String(req.params.email || "").toLowerCase().trim();
