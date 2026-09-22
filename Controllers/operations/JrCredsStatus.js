@@ -1,6 +1,40 @@
 import Operations from "../../Schema_Models/Operations.js";
 import { UserModel } from "../../Schema_Models/UserModel.js";
 import { AutopilotCreds } from "../../Schema_Models/AutopilotCreds.js";
+import { ClientTrackingModel } from "../../Schema_Models/ClientTrackingModel.js";
+
+// Do two hand-typed names refer to the same person?
+//
+// Both sides are free text typed by different people into different systems,
+// and the live data shows every way that goes wrong: DashboardTracking carries
+// "Sarah" on 107 clients and "Sarah " - trailing space - on another 47, the
+// Operations collection has "sushmitha" in lowercase, and a lead field is
+// sometimes run together with something else, as in "sarahali".
+//
+// So: strip everything that is not a letter, fold the case, and compare the
+// first NAME_MATCH_CHARS letters. That accepts "Sarah" == "Sarah " ==
+// "sarahali" == "Sarah K." while still keeping the real names apart - the two
+// managers in service, Sarah and Sonali, differ at the third letter, and no
+// operator name is a prefix of another (asserted in the tests).
+//
+// The min() matters for short names: "asif" is four letters, so comparing a
+// fixed five would never match it against itself. Below three letters there is
+// not enough to be confident, so it is not a match at all - better to show the
+// prompt to nobody than to the wrong manager.
+const NAME_MATCH_CHARS = 5;
+
+function nameKey(raw) {
+    return String(raw || "").toLowerCase().replace(/[^a-z]/g, "");
+}
+
+function sameName(a, b) {
+    const x = nameKey(a);
+    const y = nameKey(b);
+    if (!x || !y) return false;
+    const n = Math.min(x.length, y.length, NAME_MATCH_CHARS);
+    if (n < 3) return false;
+    return x.slice(0, n) === y.slice(0, n);
+}
 
 // POST /operations/jr-creds-status   body: { operatorEmail, clientEmail }
 //
@@ -43,7 +77,7 @@ export default async function JrCredsStatus(req, res) {
             res.status(403).json({ success: false, error: "NOT_AN_OPERATOR" });
 
         const operator = await Operations.findOne({ email: operatorEmail })
-            .select("email role managedUsers")
+            .select("email name role managedUsers")
             .lean();
         if (!operator) return deny();
 
@@ -55,6 +89,37 @@ export default async function JrCredsStatus(req, res) {
                 (id) => String(id) === String(client._id),
             );
             if (!managed) return deny();
+        }
+
+        // WHO IS THIS PROMPT FOR
+        // Only the dashboard manager (team lead) who owns this client, per
+        // bsc: the person who would actually go and create the account. Every
+        // other operator can work the client perfectly well without being told
+        // about a JobRight account they are not responsible for, and a prompt
+        // that appears for everyone is a prompt everyone learns to dismiss.
+        //
+        // Admins are let through because they oversee every client and are the
+        // ones chasing this when a manager has not done it.
+        //
+        // The team lead lives in the DashboardTracking collection, written by
+        // the applications-monitor backend and read here through the same
+        // shared URI - see Schema_Models/ClientTrackingModel.js.
+        if (operator.role !== "admin") {
+            const tracking = await ClientTrackingModel.findOne({ email: clientEmail })
+                .select("dashboardTeamLeadName")
+                .lean();
+            const lead = String(tracking?.dashboardTeamLeadName || "").trim();
+            // No team lead assigned means nobody owns this client's setup, so
+            // there is nobody to prompt. Reported rather than silently false so
+            // the gap is visible if anyone goes looking.
+            if (!lead || !sameName(lead, operator.name)) {
+                return res.status(200).json({
+                    success: true,
+                    clientEmail,
+                    needsSetup: false,
+                    reason: lead ? "not-this-client-dashboard-manager" : "no-dashboard-manager-assigned",
+                });
+            }
         }
 
         const creds = await AutopilotCreds.findOne({ clientEmail })
