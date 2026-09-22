@@ -66,6 +66,7 @@ import { OperationsLogin, OperationsRegister } from "./Controllers/operations/Lo
 import { requestDashboardOtp, verifyDashboardOtp, validateOtpTrust } from "./Controllers/operations/OtpController.js";
 import OperationsHandeling from "./Middlewares/OperationsHandeling.js";
 import GetUserDetails from "./Controllers/operations/GetUserDetails.js";
+import JrCredsStatus from "./Controllers/operations/JrCredsStatus.js";
 import GetUserResumes from "./Controllers/operations/GetUserResumes.js";
 import GetAllJobsOPS from "./Controllers/operations/GetAllJobs.js";
 import GetSavedJobCounts from "./Controllers/operations/GetSavedJobCounts.js";
@@ -614,6 +615,9 @@ app.post("/operations/getalljobs", GetAllJobs);
 // Why the extension picked one job. Kept off the list response on purpose -
 // see the projection note in GetAllJobs.js.
 app.post("/operations/job-ai-decision", GetJobAiDecision);
+// Operator-only: does this client still need their JobRight login saved?
+// Re-verifies the operator against the database - see the controller for why.
+app.post("/operations/jr-creds-status", JrCredsStatus);
 app.post('/operations/jobs', AddJob);
 app.put('/operations/jobs', VerifyJobIDAndChanges, UpdateChanges);
 app.post('/operations/plans/select', PlanSelect);
