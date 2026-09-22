@@ -6,7 +6,7 @@ import Register from "./Controllers/Register.js";
 import GoogleOAuth from "./Controllers/GoogleOAuth.js";
 import { getAllClients } from './Controllers/ClientController.js';
 import { getClientTrackingStatus } from './Controllers/ClientTrackingStatus.js';
-import { listAutopilotCreds, getAutopilotCreds, putAutopilotCreds } from './Controllers/AutopilotCreds.js';
+import { listAutopilotCreds, getAutopilotCreds, putAutopilotCreds, provisionAutopilotCreds } from './Controllers/AutopilotCreds.js';
 import {
   recordAutopilotRun,
   listAutopilotRuns,
@@ -149,6 +149,9 @@ app.get("/api/clients/tracking-status", getClientTrackingStatus);
 app.get("/autopilot/creds", requireOpsKey, listAutopilotCreds);
 app.get("/autopilot/creds/:email", requireOpsKey, getAutopilotCreds);
 app.put("/autopilot/creds/:email", requireOpsKey, putAutopilotCreds);
+// Fired by the clients-tracking "JobRight: Yes" toggle. Idempotent, fills
+// blanks only - see Controllers/AutopilotCreds.js.
+app.post("/autopilot/creds/:email/provision", requireOpsKey, provisionAutopilotCreds);
 
 // Autopilot run history + the scrape request queue.
 // See Controllers/AutopilotRuns.js. Anything the autopilot WRITES is ops-key
