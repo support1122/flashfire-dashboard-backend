@@ -43,13 +43,13 @@ const DASHBOARD_URL = "https://portal.flashfirejobs.com"; // email CTA target
 const FROM_EMAIL = ""; // SMTP path uses SMTP_FROM_EMAIL / SMTP_USER
 const FROM_NAME = "Flashfire";
 
-// ─── Rollout gate (2026-08-24) ─────────────────────────────────────────
-// The stream just came back from a 12-day pause behind the new AI verifier.
-// While we prove it in production, milestone alerts send ONLY for the clients
-// listed here — matched against the client's dashboard email, payment email,
-// or connected mailbox, all lowercased. EMPTY SET = everyone. To go live for
-// all clients, clear the set.
-const ROLLOUT_ALLOWLIST = new Set(["rijuljain17@gmail.com"]);
+// ─── Rollout gate (opened 2026-09-23) ──────────────────────────────────
+// Was a one-client staged rollout behind the new AI verifier. The verifier has
+// held up in production, so the gate is open: EMPTY SET = every client.
+// Re-narrowing is a matter of putting addresses back in - they are matched
+// against the client's dashboard email, payment email or connected mailbox,
+// all lowercased.
+const ROLLOUT_ALLOWLIST = new Set();
 
 /** Pure rollout check — exported for tests. */
 export function rolloutAllows({ clientEmail, paymentEmail, mailbox }) {
@@ -106,13 +106,16 @@ function resolveRecipient(client) {
 }
 
 /**
- * Per-client opt-in for inbox milestone forwarding, read from the Client
- * Reminders tab.
+ * Whether this client receives inbox milestone alerts.
  *
- * OFF unless an operator has explicitly switched it on. This is a classifier
- * reading somebody's real mailbox: a false positive here does not send a wrong
- * number, it tells a client they have an offer they do not have. Opt-in is the
- * only safe default, and a missing config document means opt-out.
+ * ON for every client. Only an explicit opt-out stops it - the unsubscribe
+ * link, or an operator switching the client off in the Client Reminders tab.
+ * A client with no config document at all receives them, which is the whole
+ * point: the alerts should not depend on somebody having configured a row.
+ *
+ * inboxAlertsOptOut is read rather than the legacy inboxAlertsEnabled because
+ * a stored `false` on that field cannot tell "never opted in" apart from
+ * "asked us to stop" - see the field comment in the schema.
  *
  * @returns {Promise<{enabled: boolean, webhookUrl: string}>}
  */
@@ -121,15 +124,18 @@ export async function readInboxAlertConfig(clientEmail) {
   if (!email) return { enabled: false, webhookUrl: "" };
   try {
     const cfg = await ClientReminderConfig.findOne({ clientEmail: email })
-      .select("inboxAlertsEnabled mattermostWebhookUrl")
+      .select("inboxAlertsOptOut mattermostWebhookUrl")
       .lean();
     return {
-      enabled: cfg?.inboxAlertsEnabled === true,
+      // Strict === true. A stray string or a missing field must never read as
+      // "this client asked us to stop".
+      enabled: cfg?.inboxAlertsOptOut !== true,
       webhookUrl: normalizeWebhookUrl(cfg?.mattermostWebhookUrl || "")
     };
   } catch (err) {
-    // Fail CLOSED. If we cannot read the opt-in we do not send - the failure
-    // mode of guessing "on" is a client-facing false alarm.
+    // Fail CLOSED. A read failure is not consent: mailing somebody who opted
+    // out is the one mistake this function must never make, and a skipped
+    // digest is retried on the next tick with no attempt burned.
     console.error(`[client-notify] inbox-alert config read failed for ${email}:`, err?.message || err);
     return { enabled: false, webhookUrl: "" };
   }
@@ -198,8 +204,8 @@ export async function notifyClientForDigest({ digestDoc, client, mailbox }) {
     ).catch(() => {});
     return "skipped";
   }
-  // Per-client opt-in. Read BEFORE the attempt counter so leaving it off never
-  // burns retries: flipping the toggle on later must let fresh digests send
+  // Per-client opt-out. Read BEFORE the attempt counter so a client who is off
+  // never burns retries: switching them back on must let fresh digests send
   // normally (stale ones are still stopped by the age guard below).
   const inbox = await readInboxAlertConfig(client?.email || mailbox);
   if (!inbox.enabled) {

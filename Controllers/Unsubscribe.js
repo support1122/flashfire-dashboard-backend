@@ -78,7 +78,12 @@ async function applyOptOut(clientEmail, stream) {
     // first, WITHOUT touching the array, and only then are the items switched
     // off. A client who never had a config row must still be able to opt out.
     const set = { updatedAt: now, updatedBy: "unsubscribe-link" };
-    if (silenceInbox) set.inboxAlertsEnabled = false;
+    if (silenceInbox) {
+      // inboxAlertsOptOut is what the notifier reads. inboxAlertsEnabled is
+      // kept in step so the Operations toggle shows the client as off too.
+      set.inboxAlertsOptOut = true;
+      set.inboxAlertsEnabled = false;
+    }
 
     await ClientReminderConfig.updateOne(
       { clientEmail },

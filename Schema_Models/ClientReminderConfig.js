@@ -115,14 +115,32 @@ const clientReminderConfigSchema = new mongoose.Schema(
      * hourly mail poll to this client, over whichever of the two channels below
      * are configured.
      *
-     * Default FALSE, and it must stay that way. Unlike the scheduled reports
-     * this is driven by a CLASSIFIER reading the client's real mailbox, so a
-     * false positive does not send a wrong number - it sends "you've got an
-     * offer" to somebody who has not. That has happened before (an Amazon
-     * "thank you for applying" auto-reply), which is why the whole stream was
-     * paused. Opt in per client, deliberately.
+     * LEGACY, and no longer the gate. It was the per-client opt-in during the
+     * staged rollout, when a classifier reading somebody's real mailbox was new
+     * and a false positive ("you've got an offer" to somebody who has not, the
+     * Amazon auto-reply incident) was the risk being managed. The verifier has
+     * since been proved in production, so the product rule is now the opposite:
+     * every client gets these, and the gate is inboxAlertsOptOut below.
+     *
+     * Still written so the Operations toggle and its API keep a readable value,
+     * but nothing decides delivery from it. Read inboxAlertsOptOut instead.
      */
-    inboxAlertsEnabled: { type: Boolean, default: false },
+    inboxAlertsEnabled: { type: Boolean, default: true },
+
+    /**
+     * THE gate for inbox milestone alerts (interview / assignment / offer).
+     *
+     * A dedicated opt-OUT rather than flipping the default of the field above,
+     * because a stored `inboxAlertsEnabled: false` is ambiguous: almost every
+     * one of them means "an operator never opted this client in", but a few
+     * mean "this client clicked unsubscribe". Reading that field as consent
+     * would either keep the silent majority silent or start mailing people who
+     * asked us to stop. A separate field written ONLY when somebody really
+     * opts out has one meaning and needs no migration.
+     *
+     * false / missing -> the client receives the alerts. true -> never.
+     */
+    inboxAlertsOptOut: { type: Boolean, default: false },
 
     // Only consulted when dashboardtrackings has no paymentEmail for this
     // client. The tracking collection is owned by the applications-monitor
@@ -271,10 +289,11 @@ export function mergeWithDefaults(doc) {
   return {
     clientEmail: String(src.clientEmail || "").toLowerCase().trim(),
     clientName: String(src.clientName || ""),
-    // Absent on every row written before this shipped. Reading a missing field
-    // as false is the safe direction: an un-migrated client stays silent until
-    // somebody opts them in.
-    inboxAlertsEnabled: src.inboxAlertsEnabled === true,
+    // Derived from the opt-out, never from the stored legacy flag, so the
+    // Operations toggle shows what delivery actually does. Only an explicit
+    // opt-out reads as off.
+    inboxAlertsEnabled: src.inboxAlertsOptOut !== true,
+    inboxAlertsOptOut: src.inboxAlertsOptOut === true,
     paymentEmailOverride: String(src.paymentEmailOverride || "").toLowerCase().trim(),
     mattermostWebhookUrl: String(src.mattermostWebhookUrl || "").trim(),
     items,

@@ -160,9 +160,11 @@ async function readOrCreateConfig(clientEmail, updatedBy = "") {
       $setOnInsert: {
         clientEmail,
         clientName: "",
-        // Off until an operator opts this client in. See the field comment in
-        // the schema for why this one in particular must never default on.
-        inboxAlertsEnabled: false,
+        // Every client receives inbox milestone alerts; creating a config row
+        // to set a webhook or a schedule must not silence them. Only an
+        // explicit opt-out does that.
+        inboxAlertsEnabled: true,
+        inboxAlertsOptOut: false,
         paymentEmailOverride: "",
         mattermostWebhookUrl: "",
         items: mergeWithDefaults(null).items,
@@ -272,9 +274,14 @@ export const updateClientReminderConfig = async (req, res) => {
     };
     if (webhookProvided) set.mattermostWebhookUrl = webhook;
     if (clientName !== undefined) set.clientName = String(clientName || "").slice(0, 200);
-    // Strict === true. A stray string must never read as "start forwarding this
-    // client's inbox milestones to them".
-    if (inboxAlertsEnabled !== undefined) set.inboxAlertsEnabled = inboxAlertsEnabled === true;
+    // The toggle is now an opt-OUT switch: alerts are on for everyone, and
+    // turning this off is what records the client as opted out. Both fields
+    // are written together so the stored row never contradicts itself.
+    // Strict === true: a stray string must not read as "switch this client on".
+    if (inboxAlertsEnabled !== undefined) {
+      set.inboxAlertsEnabled = inboxAlertsEnabled === true;
+      set.inboxAlertsOptOut = inboxAlertsEnabled !== true;
+    }
 
     const saved = await ClientReminderConfig.findOneAndUpdate(
       { clientEmail },

@@ -53,9 +53,11 @@ export const MAIL_CATEGORY = {
 //
 //   1. mailMilestoneVerifier - second-stage AI check. verifyGenuine must be
 //      true, and pre-verifier digests are permanently parked.
-//   2. ROLLOUT_ALLOWLIST in src/services/clientMailNotifier.js.
-//   3. inboxAlertsEnabled on the client's ClientReminderConfig - opt-in, OFF by
-//      default, flipped per client from the Client Reminders tab.
+//   2. ROLLOUT_ALLOWLIST in src/services/clientMailNotifier.js - now EMPTY,
+//      i.e. every client (opened 2026-09-23 once the verifier had held up).
+//   3. inboxAlertsOptOut on the client's ClientReminderConfig - alerts are ON
+//      for everyone, and only an explicit opt-out (the unsubscribe link, or the
+//      Client Reminders toggle) stops them.
 //   4. MAX_ALERT_AGE_HOURS - a milestone older than 48h is never flushed.
 //
 // To stop the stream without a deploy, switch the clients off in the tab.
