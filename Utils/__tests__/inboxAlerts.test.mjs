@@ -64,16 +64,28 @@ test("inbox milestone alerts", async (t) => {
     );
   });
 
-  await t.test("forwarding is opt-in and fails closed", () => {
+  await t.test("forwarding reaches every client, and a read failure fails closed", async () => {
     const notifier = read("../../src/services/clientMailNotifier.js");
-    // A config read failure must not be read as consent.
+    // A config read failure must not be read as consent to mail somebody who
+    // may have opted out.
     assert.match(notifier, /return \{ enabled: false, webhookUrl: "" \};/, "must fail closed");
     assert.match(
       notifier,
-      /cfg\?\.inboxAlertsEnabled === true/,
-      "opt-in must be a strict boolean check, not a truthy one"
+      /cfg\?\.inboxAlertsOptOut !== true/,
+      "the gate is a strict opt-out check, not a truthy read of the legacy flag"
     );
     assert.match(notifier, /inbox_alerts_off/, "an opted-out digest records why it was skipped");
+
+    // The staged rollout is over: no client is excluded by the allowlist.
+    const { rolloutAllows } = await import("../../src/services/clientMailNotifier.js");
+    for (const who of [
+      { clientEmail: "brand-new@client.com" },
+      { paymentEmail: "pays@elsewhere.com" },
+      { mailbox: "connected@gmail.com" },
+      {}
+    ]) {
+      assert.equal(rolloutAllows(who), true, `${JSON.stringify(who)} must not be gated out`);
+    }
   });
 
   await t.test("a skipped or disabled email never leaks to Mattermost", () => {
@@ -87,22 +99,44 @@ test("inbox milestone alerts", async (t) => {
     );
   });
 
-  await t.test("the config default is off, and a truthy string is not consent", async () => {
+  await t.test("the config default is ON, and only an explicit opt-out is off", async () => {
     const { mergeWithDefaults } = await import("../../Schema_Models/ClientReminderConfig.js");
-    assert.equal(mergeWithDefaults(null).inboxAlertsEnabled, false, "fresh config is off");
+    assert.equal(mergeWithDefaults(null).inboxAlertsEnabled, true, "a fresh config receives alerts");
     assert.equal(
       mergeWithDefaults({ clientEmail: "a@b.com" }).inboxAlertsEnabled,
-      false,
-      "a row written before this shipped is off"
+      true,
+      "a row written before this shipped receives them too"
     );
-    assert.equal(mergeWithDefaults({ clientEmail: "a@b.com", inboxAlertsEnabled: true }).inboxAlertsEnabled, true);
+    // THE migration property: the legacy flag stored false on almost every row
+    // that exists, and it meant "nobody opted this client in", not "stop". It
+    // must no longer silence anyone.
+    assert.equal(
+      mergeWithDefaults({ clientEmail: "a@b.com", inboxAlertsEnabled: false }).inboxAlertsEnabled,
+      true,
+      "the legacy opt-in flag must not read as an opt-out"
+    );
+    assert.equal(
+      mergeWithDefaults({ clientEmail: "a@b.com", inboxAlertsOptOut: true }).inboxAlertsEnabled,
+      false,
+      "an explicit opt-out is respected"
+    );
     for (const bad of ["true", "yes", 1, {}]) {
       assert.equal(
-        mergeWithDefaults({ clientEmail: "a@b.com", inboxAlertsEnabled: bad }).inboxAlertsEnabled,
-        false,
-        `${JSON.stringify(bad)} must not read as opted in`
+        mergeWithDefaults({ clientEmail: "a@b.com", inboxAlertsOptOut: bad }).inboxAlertsEnabled,
+        true,
+        `${JSON.stringify(bad)} must not read as an opt-out`
       );
     }
+  });
+
+  await t.test("unsubscribing records the opt-out the notifier actually reads", () => {
+    const unsub = read("../../Controllers/Unsubscribe.js");
+    assert.match(unsub, /set\.inboxAlertsOptOut = true;/, "the link must write the real gate");
+    const ops = read("../../Controllers/operations/ClientReminders.js");
+    // The operator toggle and the unsubscribe link must write the same field,
+    // or one of them silently does nothing.
+    assert.match(ops, /set\.inboxAlertsOptOut = inboxAlertsEnabled !== true;/);
+    assert.match(ops, /inboxAlertsOptOut: false,/, "a new config row is not born opted out");
   });
 
   await t.test("the milestone EMAIL escapes scraped subject and sender", async () => {

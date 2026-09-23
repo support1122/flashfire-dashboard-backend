@@ -60,18 +60,19 @@ test("suppression: empty domain → never suppress", () => {
 
 // ── rollout gate ─────────────────────────────────────────────────────
 
-test("rollout: the test client passes on any of the three identities", () => {
+// The allowlist was a staged rollout to one client while the AI verifier was
+// new. It is empty now, so the gate is open to everyone (2026-09-23). If it is
+// ever re-narrowed, restore a test for the identity matching: the address is
+// checked against clientEmail, paymentEmail and mailbox, lowercased and
+// trimmed, so a client is not gated out over a stray capital.
+test("rollout: the gate is open - no client is excluded", () => {
   assert.equal(rolloutAllows({ clientEmail: "rijuljain17@gmail.com" }), true);
-  assert.equal(rolloutAllows({ paymentEmail: "RijulJain17@Gmail.com " }), true, "case/space-insensitive");
-  assert.equal(rolloutAllows({ mailbox: "rijuljain17@gmail.com" }), true);
-});
-
-test("rollout: everyone else is gated while the allowlist is non-empty", () => {
   assert.equal(
     rolloutAllows({ clientEmail: "other@client.com", paymentEmail: "pay@client.com", mailbox: "mb@client.com" }),
-    false
+    true,
+    "a client who was never on the list still passes"
   );
-  assert.equal(rolloutAllows({}), false);
+  assert.equal(rolloutAllows({}), true, "and so does one we know nothing about");
 });
 
 // ── stale-digest guard ───────────────────────────────────────────────
