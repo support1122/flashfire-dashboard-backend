@@ -1,13 +1,31 @@
-// ClientTrackingModel — read-only handle on the `DashboardTracking` collection
-// owned by the applications-monitor backend (DASH/clients-tracking). Both
-// backends share the same MongoDB URI, so we can query the same docs from
-// here without an HTTP hop.
+// ClientTrackingModel — read-only handle on the client tracking docs owned by
+// the applications-monitor backend (DASH/clients-tracking). Both backends
+// share the same MongoDB URI, so we can query the same docs from here without
+// an HTTP hop.
+//
+// COLLECTION NAME. clients-tracking registers `mongoose.model('DashboardTracking',
+// ClientSchema)` with no explicit collection, so Mongoose pluralises it and
+// every client record lives in `dashboardtrackings`. This model used to say
+// `collection: "DashboardTracking"` - a different, EMPTY collection - so every
+// read through it found nothing:
+//   • readPlanCap (Utils/dailyCapGuard.js) saw 0 addons for every client, and
+//     /addjob refused a Professional client with a paid +250 addon at 500/500
+//     (reported 2026-09-23, aayushjaiswal290598@gmail.com).
+//   • JrCredsStatus never found a client's dashboardTeamLeadName.
+// Controllers/operations/ClientOperations.js registers the same model name
+// with the correct collection, so which one won depended on import order.
+// Both now agree. Utils/__tests__/clientTrackingCollection.test.mjs pins the
+// name to Mongoose's own pluralisation so this cannot drift again.
 //
 // Only the fields the dashboard-backend reads are declared (strict:false
 // keeps unknown fields in lean() results). The applications-monitor backend
 // remains the writer.
 
 import mongoose from "mongoose";
+
+// The collection clients-tracking actually writes: Mongoose's pluralisation of
+// its model name "DashboardTracking".
+export const CLIENT_TRACKING_COLLECTION = "dashboardtrackings";
 
 const ClientTrackingSchema = new mongoose.Schema(
     {
@@ -18,7 +36,7 @@ const ClientTrackingSchema = new mongoose.Schema(
         // applications-monitor sums parseInt(a.type) for each entry.
         addons: { type: Array, default: [] },
     },
-    { strict: false, collection: "DashboardTracking" },
+    { strict: false, collection: CLIENT_TRACKING_COLLECTION },
 );
 
 // Avoid re-compile errors when this module is re-imported in test/dev.
