@@ -16,15 +16,13 @@ import mongoose from "mongoose";
  *
  * WHY THE COLLECTION IS NAMED DIRECTLY
  * ------------------------------------
- * Schema_Models/ClientTrackingModel.js declares `collection: "DashboardTracking"`,
- * and that collection is EMPTY — 0 documents. The live client records are in
- * `dashboardtrackings` (295 documents, all carrying status and isPaused), which
- * is what mongoose produces by default from model("DashboardTracking") and what
- * the applications-monitor backend actually writes.
- *
- * Reaching for the raw collection keeps this fix self-contained. Repointing the
- * shared model would also change what dailyCapGuard sees when it computes addon
- * bonuses, and that deserves its own decision rather than riding along here.
+ * The live client records are in `dashboardtrackings` (295 documents, all
+ * carrying status and isPaused), which is what mongoose produces by default from
+ * model("DashboardTracking") and what the applications-monitor backend actually
+ * writes. When this was written, Schema_Models/ClientTrackingModel.js still
+ * pointed at an empty `DashboardTracking` collection, hence the raw collection
+ * here. That model was repointed on 2026-09-23 (addons were not counting toward
+ * the plan cap), so both now read the same place.
  */
 
 /** The collection the applications-monitor backend really writes client state to. */

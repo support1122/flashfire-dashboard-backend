@@ -10,9 +10,9 @@
 // real collection (verified: 27 docs live there; a `DashboardTracking`
 // collection does not exist). We bind explicitly to `dashboardtrackings` under
 // a DISTINCT model name so we never collide with, or inherit the wrong
-// collection from, the existing `DashboardTracking` model registration
-// (Schema_Models/ClientTrackingModel.js currently points at a non-existent
-// "DashboardTracking" collection — a separate latent bug).
+// collection from, the existing `DashboardTracking` model registration.
+// (Schema_Models/ClientTrackingModel.js pointed at the empty "DashboardTracking"
+// collection until 2026-09-23; it now binds to `dashboardtrackings` too.)
 
 import mongoose from "mongoose";
 
