@@ -20,6 +20,7 @@ import {
   finishAutopilotRequest,
   cancelAutopilotRequest
 } from './Controllers/AutopilotRuns.js';
+import { getManualExtensionSummary } from './Controllers/ManualExtensionSummary.js';
 import {
   listAutopilotWorkers,
   createAutopilotWorker,
@@ -169,6 +170,8 @@ app.post("/autopilot/runs/start", requireOpsKey, startAutopilotRun);
 app.post("/autopilot/runs/:id/progress", requireOpsKey, progressAutopilotRun);
 app.post("/autopilot/runs", requireOpsKey, recordAutopilotRun);
 app.get("/autopilot/runs/summary", getAutopilotRunsSummary);
+// Same numbers for operators running the extension by hand (not the autopilot).
+app.get("/autopilot/manual/summary", getManualExtensionSummary);
 app.get("/autopilot/runs/client/:email", getAutopilotRunsForClient);
 app.get("/autopilot/runs", listAutopilotRuns);
 // queue + cancel are called by the Client Tracking portal, so they are NOT
