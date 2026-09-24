@@ -1,6 +1,7 @@
 import mongoose from "mongoose";
 import { AutopilotRun } from "../Schema_Models/AutopilotRun.js";
 import { AutopilotRunRequest } from "../Schema_Models/AutopilotRunRequest.js";
+import { JobModel } from "../Schema_Models/JobModel.js";
 import { parseDaysParam, startOfIstDayWindow, istWindowLabel } from "../Utils/istWindow.js";
 
 // Autopilot run history + the scrape request queue.
@@ -29,6 +30,137 @@ const num = (raw) => {
   return Number.isFinite(n) && n >= 0 ? Math.round(n) : 0;
 };
 
+const cleanStr = (raw, max) => String(raw || "").slice(0, max);
+
+const toDate = (raw) => {
+  if (!raw) return null;
+  const d = new Date(raw);
+  return Number.isNaN(d.getTime()) ? null : d;
+};
+
+// Lowest ObjectId that could have been minted at or after `d`.
+const oidAt = (d, extraSeconds = 0) =>
+  new mongoose.Types.ObjectId(
+    Math.floor(d.getTime() / 1000 + extraSeconds).toString(16).padStart(8, "0") + "0000000000000000"
+  );
+
+/**
+ * How many jobs actually landed on this client's dashboard between `from` and
+ * `to` - the server's own answer to "what did this run push".
+ *
+ * WHY THE SERVER COUNTS INSTEAD OF TRUSTING THE AUTOPILOT
+ * The autopilot's number is read off the extension panel's DOM, and that read
+ * swallows its errors and returns 0. On 2026-09-23 a run for
+ * mittapallisharmelee9599@gmail.com reported captured 0 / pushed 0 while 33
+ * operator jobs were created for that client inside the run's own window - the
+ * autopilot UI (which asks the server) showed "cap 26/30" at the same moment.
+ * The jobs themselves cannot be misread, so they are the count.
+ *
+ * Every operator-created job counts, including ones the second judge later
+ * removed: this run DID push them, and "pushed" means "reached the dashboard".
+ * The one thing this cannot tell apart is a human operator pushing to the same
+ * client inside the same few minutes; that is rare, and over-counting a real
+ * push beats reporting zero for 33.
+ */
+export async function countPushedDuring(clientEmail, from, to) {
+  if (!(from instanceof Date) || Number.isNaN(from.getTime())) return null;
+  const end = to instanceof Date && !Number.isNaN(to.getTime()) ? to : new Date();
+  return JobModel.countDocuments({
+    userID: clientEmail,
+    createdByRole: "operations",
+    // +1s on the upper bound: ObjectIds carry whole seconds, so a job minted
+    // in the run's final second would otherwise fall outside it.
+    _id: { $gte: oidAt(from), $lt: oidAt(end, 1) }
+  });
+}
+
+// A "running" row whose last progress is older than this is a run whose
+// machine went away (closed laptop, crashed app). Reported as interrupted.
+export const STALE_RUNNING_MS = 15 * 60 * 1000;
+
+/**
+ * POST /autopilot/runs/start   (ops key)
+ *
+ * Opens a run the moment it starts, so the portal shows it live instead of
+ * finding out twenty minutes later - or never, if the laptop is shut mid-run.
+ */
+export const startAutopilotRun = async (req, res) => {
+  try {
+    const body = req.body || {};
+    const clientEmail = cleanEmail(body.clientEmail);
+    if (!clientEmail.includes("@")) {
+      return res.status(400).json({ success: false, message: "clientEmail is required" });
+    }
+    const startedAt = toDate(body.startedAt) || new Date();
+    const doc = await AutopilotRun.create({
+      clientEmail,
+      clientName: String(body.clientName || "").trim(),
+      profile: String(body.profile || "").trim(),
+      cap: num(body.cap),
+      host: cleanStr(body.host, 120),
+      trigger: ["schedule", "manual", "portal"].includes(body.trigger) ? body.trigger : "manual",
+      requestedBy: cleanStr(body.requestedBy, 200),
+      status: "running",
+      outcome: "running",
+      outcomeLabel: "Running",
+      why: "Scrape in progress.",
+      startedAt,
+      finishedAt: startedAt
+    });
+    res.status(201).json({ success: true, id: doc._id });
+  } catch (error) {
+    console.error("startAutopilotRun failed:", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+/**
+ * POST /autopilot/runs/:id/progress   (ops key)
+ * body: { captured?, pushedReported?, panelReadErrors?, stage?, pageUrl? }
+ *
+ * Called every few seconds while a run is live. `pushed` is recounted here from
+ * the jobs themselves (see countPushedDuring), so the portal is right even when
+ * the panel read is not.
+ */
+export const progressAutopilotRun = async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!mongoose.isValidObjectId(id)) {
+      return res.status(400).json({ success: false, message: "bad id" });
+    }
+    const run = await AutopilotRun.findById(id).select("clientEmail startedAt status captured").lean();
+    if (!run) return res.status(404).json({ success: false, message: "run not found" });
+    // A late progress call must never reopen a run that already finished.
+    if (run.status !== "running") {
+      return res.status(409).json({ success: false, message: "run already finished" });
+    }
+
+    const body = req.body || {};
+    const now = new Date();
+    const pushed = (await countPushedDuring(run.clientEmail, run.startedAt, now)) ?? 0;
+    // The panel's capture counter only grows within a run; never let a stale
+    // or failed read pull the live number backwards.
+    const captured = Math.max(num(body.captured), run.captured || 0);
+
+    const set = {
+      captured,
+      pushed,
+      rejected: Math.max(captured - pushed, 0),
+      pushedReported: num(body.pushedReported),
+      panelReadErrors: num(body.panelReadErrors),
+      finishedAt: now
+    };
+    if (body.stage !== undefined) set.stage = cleanStr(body.stage, 300);
+    if (body.pageUrl !== undefined) set.pageUrl = cleanStr(body.pageUrl, 500);
+
+    await AutopilotRun.updateOne({ _id: id, status: "running" }, { $set: set });
+    res.status(200).json({ success: true, captured, pushed });
+  } catch (error) {
+    console.error("progressAutopilotRun failed:", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 /**
  * POST /autopilot/runs   (ops key)
  *
@@ -45,15 +177,25 @@ export const recordAutopilotRun = async (req, res) => {
     }
 
     const captured = num(body.captured);
-    const pushed = num(body.pushed);
+    const pushedReported = num(body.pushed);
+    const startedAt = body.startedAt ? toDate(body.startedAt) : null;
+    const finishedAt = toDate(body.finishedAt) || new Date();
 
-    const doc = await AutopilotRun.create({
+    // The server's count wins whenever the run's window is known - see
+    // countPushedDuring for the incident that made this necessary. A build
+    // too old to send startedAt keeps its own number.
+    const counted = startedAt ? await countPushedDuring(clientEmail, startedAt, finishedAt) : null;
+    const pushed = counted ?? pushedReported;
+
+    const fields = {
       clientEmail,
       clientName: String(body.clientName || "").trim(),
       profile: String(body.profile || "").trim(),
 
       captured,
       pushed,
+      pushedReported,
+      panelReadErrors: num(body.panelReadErrors),
       // Trust our own arithmetic over a number that travelled: rejected is
       // captured minus pushed by definition, and a run that pushed more than
       // it captured (panel counters read mid-update) must not go negative.
@@ -77,11 +219,31 @@ export const recordAutopilotRun = async (req, res) => {
       trigger: ["schedule", "manual", "portal"].includes(body.trigger) ? body.trigger : "manual",
       requestedBy: String(body.requestedBy || "").slice(0, 200),
 
-      startedAt: body.startedAt ? new Date(body.startedAt) : undefined,
-      finishedAt: body.finishedAt ? new Date(body.finishedAt) : new Date()
-    });
+      pageUrl: cleanStr(body.pageUrl, 500),
+      report: cleanStr(body.report, 200),
+      snapshot: cleanStr(body.snapshot, 200),
+      stage: "",
+      status: "finished",
 
-    res.status(201).json({ success: true, id: doc._id });
+      startedAt: startedAt || undefined,
+      finishedAt
+    };
+
+    // A run opened with /autopilot/runs/start is closed in place, so the live
+    // row and the final row are one document rather than two.
+    if (body.runId && mongoose.isValidObjectId(body.runId)) {
+      const updated = await AutopilotRun.findOneAndUpdate(
+        { _id: body.runId, clientEmail },
+        { $set: fields },
+        { new: true, lean: true }
+      );
+      if (updated) return res.status(200).json({ success: true, id: updated._id, pushed });
+      // The opening row is gone (or belongs to someone else): fall through
+      // and record the run fresh rather than lose it.
+    }
+
+    const doc = await AutopilotRun.create(fields);
+    res.status(201).json({ success: true, id: doc._id, pushed });
   } catch (error) {
     console.error("recordAutopilotRun failed:", error);
     res.status(500).json({ success: false, message: error.message });
@@ -177,7 +339,19 @@ export const getAutopilotRunsSummary = async (req, res) => {
       lastWhy: r.lastRun.why,
       lastSeverity: r.lastRun.severity,
       lastError: r.lastRun.errorText,
-      lastTrigger: r.lastRun.trigger
+      lastTrigger: r.lastRun.trigger,
+      // Live-run fields. A "running" row that stopped updating is reported as
+      // interrupted, so a closed laptop never shows as eternally scraping.
+      lastStatus:
+        r.lastRun.status === "running" &&
+        Date.now() - new Date(r.lastRun.finishedAt).getTime() > STALE_RUNNING_MS
+          ? "interrupted"
+          : r.lastRun.status || "finished",
+      lastStage: r.lastRun.stage || "",
+      lastPageUrl: r.lastRun.pageUrl || "",
+      lastSnapshot: r.lastRun.snapshot || "",
+      lastReport: r.lastRun.report || "",
+      lastHost: r.lastRun.host || ""
     }));
 
     const totals = data.reduce(

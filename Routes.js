@@ -9,6 +9,8 @@ import { getClientTrackingStatus } from './Controllers/ClientTrackingStatus.js';
 import { listAutopilotCreds, getAutopilotCreds, putAutopilotCreds, provisionAutopilotCreds } from './Controllers/AutopilotCreds.js';
 import {
   recordAutopilotRun,
+  startAutopilotRun,
+  progressAutopilotRun,
   listAutopilotRuns,
   getAutopilotRunsSummary,
   getAutopilotRunsForClient,
@@ -160,6 +162,11 @@ app.post("/autopilot/creds/:email/provision", requireOpsKey, provisionAutopilotC
 // the other dashboard endpoints that portal already calls. Route order matters:
 // /runs/summary and /runs/client/:email are declared before any bare /runs/:x
 // could shadow them.
+// Live runs: opened at start, updated every few seconds, closed by the POST
+// below with the runId. Older autopilot builds skip the first two and still
+// work exactly as before.
+app.post("/autopilot/runs/start", requireOpsKey, startAutopilotRun);
+app.post("/autopilot/runs/:id/progress", requireOpsKey, progressAutopilotRun);
 app.post("/autopilot/runs", requireOpsKey, recordAutopilotRun);
 app.get("/autopilot/runs/summary", getAutopilotRunsSummary);
 app.get("/autopilot/runs/client/:email", getAutopilotRunsForClient);
