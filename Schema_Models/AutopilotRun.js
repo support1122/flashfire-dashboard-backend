@@ -56,7 +56,37 @@ const AutopilotRunSchema = new mongoose.Schema(
     requestedBy: { type: String, default: "" },
 
     startedAt: { type: Date },
-    finishedAt: { type: Date, required: true, index: true }
+    // While status is "running", finishedAt holds the time of the LAST
+    // progress update, so a live run sorts as the newest row and falls inside
+    // every report window with no special-casing in the queries. When the run
+    // ends it becomes the real finish time. A running row whose finishedAt
+    // has stopped moving is a run whose machine went away - the summary
+    // reports that as "interrupted" rather than leaving it "running" forever.
+    finishedAt: { type: Date, required: true, index: true },
+
+    // "running" from the moment a run starts (newer autopilot builds report at
+    // start and then every few seconds), "finished" once it ends. Older builds
+    // only ever post at the end, so their rows are born "finished".
+    status: { type: String, enum: ["running", "finished"], default: "finished" },
+
+    // What the panel's own counter said was pushed. Kept beside `pushed` for
+    // diagnosis only: `pushed` is counted by the server from the jobs that
+    // actually landed during the run, because the panel read has been seen to
+    // return 0 while 33 jobs arrived (mittapallisharmelee9599, 2026-09-23).
+    pushedReported: { type: Number, default: 0, min: 0 },
+    // How many times reading the panel threw during the run. Non-zero means
+    // captured/pushed from the panel cannot be trusted for this run.
+    panelReadErrors: { type: Number, default: 0, min: 0 },
+
+    // Where the browser actually was, so "which URL did the script scrape"
+    // is answerable without the laptop that ran it.
+    pageUrl: { type: String, default: "" },
+    // Live status line from the extension panel while running.
+    stage: { type: String, default: "" },
+    // Evidence files written on the autopilot machine (captures folder):
+    // the PDF report and the full-page HTML snapshot.
+    report: { type: String, default: "" },
+    snapshot: { type: String, default: "" }
   },
   { timestamps: true, collection: "autopilotruns" }
 );
