@@ -5,6 +5,7 @@ import dotenv from 'dotenv';
 import { signAuthToken, normalizeEmail } from "../Utils/AuthToken.js";
 import { decrypt } from "../Utils/CryptoHelper.js";
 import { logActivity } from "../Utils/activityLogger.js";
+import { arePerksDisabled } from "../Utils/clientPerks.js";
 dotenv.config();
 const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
@@ -52,11 +53,17 @@ export default async function Login(req, res) {
                     summary: `${existanceOfUser.name || canonicalEmail} logged in`,
                });
 
+               // Carried on the login response as well as /get-updated-user, so
+               // a dormant client never sees Upgrade and Refer n Earn light up
+               // for the moment between signing in and the first refresh.
+               const perksDisabled = await arePerksDisabled(canonicalEmail);
+
                return res.status(200).json({
                     message: 'Login Success..!',
                     userDetails: {
                          name: existanceOfUser.name,
                          email: canonicalEmail,
+                         perksDisabled,
                          planType: existanceOfUser.planType,
                          userType: existanceOfUser.userType,
                          planLimit: existanceOfUser.planLimit,

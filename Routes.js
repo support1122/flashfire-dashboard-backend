@@ -42,6 +42,7 @@ import GetRemovalReason from "./Controllers/GetRemovalReason.js";
 import GetAiRemovedJobs from "./Controllers/GetAiRemovedJobs.js";
 import ResolveSecondJudgeFlag from "./Controllers/ResolveSecondJudgeFlag.js";
 import PlanSelect from "./Controllers/PlanSelect.js";
+import { arePerksDisabled } from "./Utils/clientPerks.js";
 import { uploadProfileFile, upload } from "./Controllers/UploadProfileFile.js";
 import { uploadSingleFile, uploadBase64File, uploadOnboardingAttachment, upload as uploadMiddleware } from "./Controllers/UploadFile.js";
 import { uploadClientDocument, getClientDocuments, updateClientOptimizationStatus, upload as internalUpload } from "./Controllers/InternalClientUpload.js";
@@ -225,6 +226,13 @@ app.post('/get-updated-user', async (req, res) => {
       return res.status(404).json({ message: "User not found", code: "ACCOUNT_NOT_FOUND" });
     }
 
+    // Upgrade and Refer n Earn are withdrawn permanently once a client goes
+    // inactive with no activity for 14 days (written by clients-tracking, read
+    // by Utils/clientPerks.js). The portal calls this endpoint on every load and
+    // merges the result into the session, so this is where the flag reaches the
+    // client. It fails open, so a lookup error leaves the buttons alone.
+    const perksDisabled = await arePerksDisabled(existanceOfUser.email);
+
     return res.status(200).json({
       name: existanceOfUser.name,
       email: existanceOfUser.email,
@@ -240,6 +248,7 @@ app.post('/get-updated-user', async (req, res) => {
       currency: existanceOfUser.currency || "USD",
       addons: existanceOfUser.addons || [],
       amountPaid: existanceOfUser.amountPaid || "0",
+      perksDisabled,
     })
   } catch (error) {
     // This used to log and never respond, hanging the request until timeout.
