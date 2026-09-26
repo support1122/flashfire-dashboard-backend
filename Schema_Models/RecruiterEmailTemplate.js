@@ -15,7 +15,11 @@ const recruiterEmailTemplateSchema = new mongoose.Schema(
     aiGenerated: { type: Boolean, default: false },
     aiOwnerEmail: { type: String, default: "", lowercase: true, index: true },
     aiBuiltAt: { type: Date, default: null },
-    aiModel: { type: String, default: "" }
+    aiModel: { type: String, default: "" },
+    // Last time the nightly sweep rewrote this body's education sentence
+    // because the client's graduation date had passed since it was written.
+    // See refreshStaleEducationClaims() in Controllers/RecruiterAiTemplate.js.
+    educationCheckedAt: { type: Date, default: null }
   },
   { timestamps: true }
 );
