@@ -8,7 +8,7 @@ import { RecruiterEmailAutomation } from "../Schema_Models/RecruiterEmailAutomat
 import { GmailSendLog } from "../Schema_Models/GmailSendLog.js";
 import { UserModel } from "../Schema_Models/UserModel.js";
 import { JobModel } from "../Schema_Models/JobModel.js";
-import { ensureAiTemplateForOwner } from "./RecruiterAiTemplate.js";
+import { ensureAiTemplateForOwner, refreshStaleEducationClaims } from "./RecruiterAiTemplate.js";
 
 const EXECUTIVE_AUTOMATION_THRESHOLD = 200;
 // Counts a job toward the threshold if it is in any "active pipeline" status:
@@ -817,6 +817,16 @@ async function sendGmail(user, { to, subject, text, attachment = null }) {
 }
 
 async function runAiTemplatePrePass() {
+  // Before anything is generated or sent, correct any stored template whose
+  // education sentence has gone out of date - a client who has graduated since
+  // the template was written must stop telling recruiters they are still
+  // studying. Deterministic and cheap, so it runs every night over all of them.
+  try {
+    await refreshStaleEducationClaims();
+  } catch (e) {
+    console.error("[RecruiterAutomation] education sweep error:", e?.message);
+  }
+
   try {
     const executiveUsers = await UserModel.find({ planType: "Executive" })
       .select("email")

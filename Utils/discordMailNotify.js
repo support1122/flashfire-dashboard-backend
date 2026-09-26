@@ -13,7 +13,8 @@
 //
 // ONE channel, and it carries ONLY the mails that matter to the team: one
 // line per interview / assignment / offer as the poll finds it, and the daily
-// 5am summary of the same. Connection nudges ("please connect", "token dead")
+// 5am summary of the same. Rejections are posted too, but to their own channel
+// when DISCORD_REJECTION_WEBHOOK_URL is set (see REJECTION_WEBHOOK below). Connection nudges ("please connect", "token dead")
 // and auth-error embeds were removed on purpose (Sept 2026): ops asked for a
 // channel with nothing but real milestones in it. Connection health is still
 // logged by the poll and counted in the daily header. Hard-coded here (per request) so it works with no env;
@@ -21,6 +22,24 @@
 const MAIL_WEBHOOK =
   process.env.ONE_MAIN_DISCORD_FOR_MAIL_NOTIFICATIONS ||
   "https://discord.com/api/webhooks/1535172893590294579/hJQzqUbV_vmreWWdQrNoXS3Z3tMTqMIxZeZ9i9LmHVpewgGyxb858MBb0TIbgNyH7Em7";
+
+// Rejections go to their own channel when one is configured, because the mail
+// channel was deliberately narrowed to real milestones and a steady trickle of
+// bad news would undo that. Unset falls back to the main channel, so the
+// feature is never silently dead - set DISCORD_REJECTION_WEBHOOK_URL to split
+// them out.
+const REJECTION_WEBHOOK =
+  String(process.env.DISCORD_REJECTION_WEBHOOK_URL || "").trim() || MAIL_WEBHOOK;
+
+/** The channel rejections post to. Exported so the health route can show it. */
+export function rejectionNotifyWebhook() {
+  return REJECTION_WEBHOOK;
+}
+
+/** True when rejections have a channel of their own. */
+export function rejectionChannelIsSeparate() {
+  return REJECTION_WEBHOOK !== MAIL_WEBHOOK;
+}
 
 /** The single mail-notifications webhook. */
 export function mailNotifyWebhook() {
@@ -467,6 +486,40 @@ export async function notifyUsefulMailLine(a = {}) {
     footer: { text: "FlashFire • Mail update" }
   };
   return postToWebhook(MAIL_WEBHOOK, { embeds: [embed], allowed_mentions: { parse: [] } });
+}
+
+/**
+ * One line per confirmed rejection: "<Client> was turned down by <sender>".
+ *
+ * Deliberately plain. No celebration colour, no trophy, no "milestone" framing
+ * - this is the outcome nobody wants, and an ops channel that dresses it up
+ * reads badly when somebody scrolls it with a client. Muted slate, a single
+ * line, and the subject so ops can find the thread.
+ *
+ * @param {Object} a - { clientName, clientEmail, subject, from, receivedAt, unverified }
+ */
+export async function notifyRejectionLine(a = {}) {
+  const who = truncate(a.clientName || a.clientEmail || "A client", 80);
+  const embed = {
+    title: `Rejection - ${who}${a.unverified ? " (unverified)" : ""}`,
+    color: 0x64748b, // slate: present, not alarming, clearly not a win
+    description: truncate(`**${who}** was turned down: **${a.subject || "(no subject)"}**`, LIMIT.description),
+    fields: [
+      { name: "From", value: truncate(a.from || "—", LIMIT.fieldValue), inline: false },
+      {
+        name: "Received",
+        value: a.receivedAt ? `${discordTimestamp(a.receivedAt)} · ${discordTimestamp(a.receivedAt, "R")}` : "—",
+        inline: true
+      }
+    ],
+    timestamp: a.receivedAt ? new Date(a.receivedAt).toISOString() : new Date().toISOString(),
+    footer: {
+      text: a.unverified
+        ? "FlashFire • Mail • rejection (AI check unavailable)"
+        : "FlashFire • Mail • rejection"
+    }
+  };
+  return postToWebhook(REJECTION_WEBHOOK, { embeds: [embed], allowed_mentions: { parse: [] } });
 }
 
 export const __testables = { truncate, pickUploadable, discordTimestamp };

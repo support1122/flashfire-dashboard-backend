@@ -74,6 +74,34 @@ export const GENUINE_FIXTURES = [
   }
 ];
 
+// ── Canonical GENUINE REJECTIONS. Kept separate from the milestone fixtures
+// because a proposal is only regression-tested against the category it guards:
+// an exclusion written to kill a marketing mail that looked like an interview
+// has no business being measured against rejection wording, and vice versa.
+// Add cases here whenever a learned rule is found to have eaten a real one.
+export const GENUINE_REJECTION_FIXTURES = [
+  {
+    subject: "Your application to Acme",
+    from: "no-reply@acme.com",
+    body: "After careful consideration, we regret to inform you that we will not be moving forward with your application for the Backend Engineer role."
+  },
+  {
+    subject: "Update on your application - Senior Engineer",
+    from: "talent@nimbus.dev",
+    body: "Thank you for taking the time to interview with us. Unfortunately, we have decided to move forward with other candidates whose experience more closely matches the role."
+  },
+  {
+    subject: "Stripe - Software Engineer",
+    from: "recruiting@stripe.com",
+    body: "We appreciate your interest. The position has been filled, and you were not selected on this occasion. We will keep your resume on file."
+  },
+  {
+    subject: "Thank you for your interest in Hooli",
+    from: "careers@hooli.com",
+    body: "After reviewing your application, we have decided not to proceed. We wish you the best of luck in your search."
+  }
+];
+
 // ── Pattern safety validation (pure, exported for tests) ─────────────
 
 // Dangerous or useless constructs an exclusion pattern may not contain:
@@ -115,9 +143,17 @@ function fieldText(mail, targetField) {
  * @param {string} a.targetField
  * @param {Object} a.offendingMail        - { subject, from, bodyText }
  * @param {Array}  [a.genuineExamples]    - extra known-genuine mails to protect
+ * @param {Array}  [a.fixtures]            - the canonical set for this category;
+ *                                           defaults to the milestone fixtures
  * @returns {{ok:true, re:RegExp} | {ok:false, reason:string}}
  */
-export function acceptProposal({ pattern, targetField, offendingMail, genuineExamples = [] }) {
+export function acceptProposal({
+  pattern,
+  targetField,
+  offendingMail,
+  genuineExamples = [],
+  fixtures = GENUINE_FIXTURES
+}) {
   if (!TARGET_FIELDS.has(targetField)) return { ok: false, reason: `bad targetField: ${targetField}` };
   const v = validatePatternSource(pattern);
   if (!v.ok) return v;
@@ -127,8 +163,8 @@ export function acceptProposal({ pattern, targetField, offendingMail, genuineExa
     return { ok: false, reason: "does not match the offending mail" };
   }
 
-  // Must not catch ANY genuine milestone — fixtures first, then live examples.
-  for (const g of [...GENUINE_FIXTURES, ...genuineExamples]) {
+  // Must not catch ANY genuine mail of this kind — fixtures first, then live examples.
+  for (const g of [...fixtures, ...genuineExamples]) {
     if (v.re.test(fieldText(g, targetField))) {
       return { ok: false, reason: `matches genuine mail: "${(g.subject || g.from || "").slice(0, 80)}"` };
     }
@@ -172,9 +208,13 @@ async function loadActiveRules() {
  * @param {Object} classification - output of classifyMailByRules()
  * @param {Object} mail - { subject, from, bodyText }
  */
+// Every category the learner may write an exclusion for. Rejection joined in
+// Sept 2026 when rejections started reaching the ops channel.
+export const LEARNABLE_CATEGORIES = new Set(["interview", "assessment", "offer", "rejection"]);
+
 export async function applyLearnedExclusions(classification, mail) {
   const cat = classification?.category;
-  if (cat !== "interview" && cat !== "assessment" && cat !== "offer") return classification;
+  if (!LEARNABLE_CATEGORIES.has(cat)) return classification;
   try {
     const rules = await loadActiveRules();
     for (const rule of rules) {
@@ -201,7 +241,11 @@ export async function applyLearnedExclusions(classification, mail) {
 
 // ── Proposal pipeline (AI writes, gauntlet decides) ──────────────────
 
-const SYSTEM_PROMPT = `You maintain the keyword filter of a job-search email classifier. A mail was WRONGLY flagged as a career milestone; the human-facing alert was stopped by a second AI check, and now you must write ONE exclusion pattern so this kind of mail is filtered out at the regex stage in future.
+const MILESTONE_BRIEF = `A mail was WRONGLY flagged as a career milestone (an interview invitation, an assessment, or a job offer); the human-facing alert was stopped by a second AI check, and now you must write ONE exclusion pattern so this kind of mail is filtered out at the regex stage in future.`;
+
+const REJECTION_BRIEF = `A mail was WRONGLY flagged as a REJECTION of the candidate's job application; a second AI check found it was nothing of the kind, and now you must write ONE exclusion pattern so this kind of mail is filtered out at the regex stage in future.`;
+
+const SYSTEM_PROMPT = `You maintain the keyword filter of a job-search email classifier. {{BRIEF}}
 
 Return ONLY a JSON object:
 {
@@ -212,7 +256,7 @@ Return ONLY a JSON object:
 
 Hard requirements for the pattern:
 - It must match THIS mail's chosen field.
-- It must NEVER match genuine interview invitations, assessment invitations, or job offers from real employers. Target what makes this mail promotional/automated: a distinctive marketing phrase, a product/brand name, a bulk-sender address pattern. Do not target generic recruiting vocabulary like "interview", "offer", "schedule a call", "next step" on their own.
+- It must NEVER match genuine recruiting mail from a real employer: interview invitations, assessment invitations, job offers, or genuine rejection letters. Target what makes this mail promotional/automated: a distinctive marketing phrase, a product/brand name, a bulk-sender address pattern. Do not target generic recruiting vocabulary like "interview", "offer", "schedule a call", "next step", "unfortunately" or "other candidates" on their own.
 - Prefer "from" when the sender address itself is the tell (e.g. a marketing subdomain); prefer "subject"/"body" for a distinctive phrase.
 - 8 to 200 characters. No lookbehind, no backreferences, no nested quantifiers like (x+)+.
 - Escape regex metacharacters that should be literal.
@@ -286,7 +330,13 @@ export async function proposeAndStoreExclusion({ mail, rulesCategory, verdict })
       body: JSON.stringify({
         model: MODEL,
         messages: [
-          { role: "system", content: SYSTEM_PROMPT },
+          {
+            role: "system",
+            content: SYSTEM_PROMPT.replace(
+              "{{BRIEF}}",
+              rulesCategory === "rejection" ? REJECTION_BRIEF : MILESTONE_BRIEF
+            )
+          },
           { role: "user", content: userPrompt }
         ],
         response_format: { type: "json_object" },
@@ -311,7 +361,9 @@ export async function proposeAndStoreExclusion({ mail, rulesCategory, verdict })
     pattern: proposal.pattern,
     targetField: proposal.targetField,
     offendingMail: mail,
-    genuineExamples
+    genuineExamples,
+    // Protect the category this rule will guard, not the other one.
+    fixtures: rulesCategory === "rejection" ? GENUINE_REJECTION_FIXTURES : GENUINE_FIXTURES
   });
   if (!check.ok) {
     console.log(`[mail-regex] proposal REJECTED (${check.reason}): /${proposal.pattern}/i on ${proposal.targetField}`);
@@ -323,7 +375,7 @@ export async function proposeAndStoreExclusion({ mail, rulesCategory, verdict })
       { pattern: proposal.pattern, targetField: proposal.targetField },
       {
         $setOnInsert: {
-          category: ["interview", "assessment", "offer"].includes(rulesCategory) ? rulesCategory : "any",
+          category: LEARNABLE_CATEGORIES.has(rulesCategory) ? rulesCategory : "any",
           status: "active",
           source: "ai",
           explanation: clamp(proposal.explanation, 300),
@@ -343,4 +395,4 @@ export async function proposeAndStoreExclusion({ mail, rulesCategory, verdict })
   }
 }
 
-export const __config = { MAX_ACTIVE_RULES, MIN_PATTERN_LEN, MAX_PATTERN_LEN, MODEL };
+export const __config = { MAX_ACTIVE_RULES, MIN_PATTERN_LEN, MAX_PATTERN_LEN, MODEL, LEARNABLE_CATEGORIES };

@@ -77,6 +77,16 @@ const MailDigestSchema = new mongoose.Schema(
     // NOT ops-eligible — promos stop reaching Discord too.
     opsNotifyEligible: { type: Boolean, default: false, index: true },
 
+    // Same idea for a confirmed REJECTION: the rules flagged it, the AI agreed
+    // (or could not run), so the ops channel gets one line. Deliberately a
+    // separate flag rather than a category check on opsNotifyEligible, because
+    // the two produce different Discord messages and the retry sweep has to
+    // know which one to re-send.
+    //
+    // A rejection NEVER reaches the client. clientNotifyEligible stays false
+    // for it - see NOTIFY_CATEGORIES in src/services/clientMailNotifier.js.
+    opsRejectionEligible: { type: Boolean, default: false, index: true },
+
     // Client milestone-alert state (SendGrid → the client).
     // clientNotifyEligible is decided once, when the digest is created, from the
     // AI category. clientNotifiedAt !== null is the dedupe guard: the client is

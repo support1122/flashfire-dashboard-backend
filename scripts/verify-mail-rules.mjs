@@ -131,5 +131,37 @@ console.log("\n[5] 2026-09-10 incident: digests, ATS housekeeping and auto-acks 
   ok("body-only 'next step' is not an interview", weakBody.category !== "interview", weakBody.category);
 }
 
+// ─────────────────────────────────────────────────────────────
+console.log("\n[6] Rejections are detected, and near-misses are not");
+{
+  const rejections = [
+    ["Your application to Databricks", "After careful consideration, we have decided to move forward with other candidates for this role.", "no-reply@greenhouse.io"],
+    ["Update on your Meta application", "Unfortunately, we will not be moving forward with your candidacy at this time.", "careers@meta.com"],
+    ["Application Status", "We have decided to pursue other applicants. We will keep your resume on file.", "noreply@myworkday.com"],
+    ["Stripe - Backend Engineer", "We regret to inform you that you were not selected to move to the next stage.", "talent@stripe.com"],
+    ["Re: Interview follow-up", "Thanks for interviewing. The position has been filled internally. Best of luck.", "hr@acme.io"],
+    ["Your application", "Your application was unsuccessful on this occasion. We wish you the best in your future opportunities.", "no-reply@lever.co"]
+  ];
+  for (const [subj, body, from] of rejections) {
+    const c = classify(subj, body, from);
+    ok(`rejection: "${subj}"`, c.category === "rejection", `got ${c.category}`);
+    ok(`rejection: "${subj}" never emails the client`, eligible(c) === false);
+  }
+
+  // The expensive mistakes: silencing a real invite, or crying rejection over
+  // an acknowledgement or a careers article.
+  const invite = classify("Interview invitation", "We would like to invite you to a technical interview. Other candidates are also in process, but we were impressed.", "jane@acme.com");
+  ok("an invite mentioning 'other candidates' stays an interview", invite.category === "interview", invite.category);
+
+  const ack = classify("Thank you for your application", "We have received your application and will be in touch about the next step.", "no-reply@workday.com");
+  ok("an acknowledgement is not a rejection", ack.category !== "rejection", ack.category);
+
+  const article = classify("How to handle job rejection", "Unfortunately, most applicants get rejected. Here is how to bounce back. Best of luck!", "noreply@redditmail.com");
+  ok("a careers article is not a rejection", article.category !== "rejection", article.category);
+
+  const signoff = classify("Good luck", "Best of luck with the new job!", "friend@example.com");
+  ok("a friendly sign-off alone is not a rejection", signoff.category !== "rejection", signoff.category);
+}
+
 console.log(`\n${fail === 0 ? "ALL PASS" : "FAILURES"} — ${pass} passed, ${fail} failed\n`);
 process.exit(fail === 0 ? 0 : 1);

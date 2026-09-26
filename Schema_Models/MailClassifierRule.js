@@ -4,8 +4,8 @@ import mongoose from "mongoose";
 // the classifier improves at runtime without a deploy.
 //
 // Direction of learning is deliberately one-way: a learned rule can only
-// EXCLUDE a mail the keyword regexes flagged as a milestone — it can never
-// create a new alert. The worst a bad learned rule can do is silence, and the
+// EXCLUDE a mail the keyword regexes flagged as a milestone or a rejection —
+// it can never create a new alert. The worst a bad learned rule can do is silence, and the
 // AI verifier stage still sees everything the exclusions let through, so a
 // missed exclusion costs one AI call, not a wrong client email.
 //
@@ -20,7 +20,11 @@ const MailClassifierRuleSchema = new mongoose.Schema(
     // Which field of the mail the pattern is tested against.
     targetField: { type: String, enum: ["subject", "from", "body"], required: true },
     // Which positive category this exclusion guards ("any" = all three).
-    category: { type: String, enum: ["interview", "assessment", "offer", "any"], default: "any" },
+    category: {
+      type: String,
+      enum: ["interview", "assessment", "offer", "rejection", "any"],
+      default: "any"
+    },
 
     status: { type: String, enum: ["active", "disabled"], default: "active", index: true },
     source: { type: String, default: "ai" }, // "ai" | "manual"

@@ -28,6 +28,7 @@ const TIMEOUT_MS = Number(process.env.MAIL_VERIFY_TIMEOUT_MS) || 20000;
 const MAX_BODY_CHARS = 9000;
 
 const MILESTONE_CATEGORIES = new Set(["interview", "assessment", "offer"]);
+const REJECTION_CATEGORIES = new Set(["rejection"]);
 const CONFIDENCES = new Set(["high", "medium", "low"]);
 
 const SYSTEM_PROMPT = `You are a strict verifier for a job-search operations team. Keyword rules flagged one email from a client's inbox as a possible career milestone (interview invite, assessment/assignment, or job offer). Most flagged emails are false positives. Your job is to reject them.
@@ -50,6 +51,30 @@ Return ONLY a JSON object:
 {
   "genuine": true | false,
   "category": "interview" | "assessment" | "offer" | "not-milestone",
+  "confidence": "high" | "medium" | "low",
+  "reason": "one short sentence naming the decisive evidence"
+}
+
+Rules: base the decision only on the email content given. When uncertain, return genuine=false. Output raw JSON only.`;
+
+const REJECTION_SYSTEM_PROMPT = `You are a strict verifier for a job-search operations team. Keyword rules flagged one email from a candidate's inbox as a possible REJECTION of a job application they made. Your job is to confirm or reject that reading.
+
+It is a GENUINE rejection only if ALL of these hold:
+- It is addressed to this candidate about a SPECIFIC application, role, or hiring process they were in.
+- It comes from the employer, their recruiting team, or the applicant-tracking system acting for them.
+- It tells the candidate they are no longer being considered: not selected, not moving forward, the role was filled, or the application was declined.
+
+It is NOT a genuine rejection if it is any of:
+- An interview invitation, assessment invitation or offer. Those are the opposite outcome, even when the mail also mentions a previous rejection.
+- An application acknowledgement ("thank you for applying", "we received your application", "we will be in touch") with no decision in it.
+- A job-board digest, newsletter, marketing mail or careers-advice content, including articles about handling rejection.
+- A withdrawal the candidate made themselves, an expired or cancelled posting with no decision about this candidate, or a rejection addressed to somebody else.
+- A polite sign-off in an otherwise neutral mail. "Best of luck" or "other candidates" on their own do not make a rejection.
+
+Return ONLY a JSON object:
+{
+  "genuine": true | false,
+  "category": "rejection" | "not-rejection",
   "confidence": "high" | "medium" | "low",
   "reason": "one short sentence naming the decisive evidence"
 }
@@ -86,6 +111,58 @@ function fail(error) {
  *          Always resolves; ok=false means the AI check could not run — treat as unverified, never as genuine.
  */
 export async function verifyMilestoneMail({ from, subject, bodyText, snippet, rulesCategory }) {
+  return askVerifier({
+    systemPrompt: SYSTEM_PROMPT,
+    from,
+    subject,
+    bodyText,
+    snippet,
+    rulesCategory,
+    allowed: MILESTONE_CATEGORIES,
+    fallbackCategory: "not-milestone",
+    usageSource: AI_USAGE_SOURCES.MAIL_VERIFY
+  });
+}
+
+/**
+ * Verify one rules-flagged REJECTION candidate.
+ *
+ * Same contract as verifyMilestoneMail, and the same fail-closed rule, but the
+ * stakes are lower on this side: a rejection never reaches the client, so an
+ * unverifiable one still earns its ops Discord line, marked unverified.
+ *
+ * @param {Object} mail
+ * @param {string} mail.from
+ * @param {string} mail.subject
+ * @param {string} [mail.bodyText]
+ * @param {string} [mail.snippet]
+ * @returns {Promise<{ok:boolean, genuine:boolean, category:string, confidence:string, reason:string, model:string, error:string}>}
+ */
+export async function verifyRejectionMail({ from, subject, bodyText, snippet }) {
+  return askVerifier({
+    systemPrompt: REJECTION_SYSTEM_PROMPT,
+    from,
+    subject,
+    bodyText,
+    snippet,
+    rulesCategory: "rejection",
+    allowed: REJECTION_CATEGORIES,
+    fallbackCategory: "not-rejection",
+    usageSource: AI_USAGE_SOURCES.MAIL_VERIFY
+  });
+}
+
+async function askVerifier({
+  systemPrompt,
+  from,
+  subject,
+  bodyText,
+  snippet,
+  rulesCategory,
+  allowed,
+  fallbackCategory,
+  usageSource
+}) {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) return fail("OPENAI_API_KEY not configured");
 
@@ -107,7 +184,7 @@ export async function verifyMilestoneMail({ from, subject, bodyText, snippet, ru
       body: JSON.stringify({
         model: MODEL,
         messages: [
-          { role: "system", content: SYSTEM_PROMPT },
+          { role: "system", content: systemPrompt },
           { role: "user", content: userPrompt }
         ],
         response_format: { type: "json_object" },
@@ -123,7 +200,7 @@ export async function verifyMilestoneMail({ from, subject, bodyText, snippet, ru
 
     const data = await res.json();
     recordAiUsage({
-      source: AI_USAGE_SOURCES.MAIL_VERIFY,
+      source: usageSource,
       model: data?.model || MODEL,
       usage: data?.usage
     });
@@ -138,10 +215,10 @@ export async function verifyMilestoneMail({ from, subject, bodyText, snippet, ru
       return fail("OpenAI returned unparseable JSON");
     }
 
-    const category = MILESTONE_CATEGORIES.has(parsed?.category) ? parsed.category : "not-milestone";
+    const category = allowed.has(parsed?.category) ? parsed.category : fallbackCategory;
     return {
       ok: true,
-      genuine: parsed?.genuine === true && category !== "not-milestone",
+      genuine: parsed?.genuine === true && category !== fallbackCategory,
       category,
       confidence: CONFIDENCES.has(parsed?.confidence) ? parsed.confidence : "low",
       reason: typeof parsed?.reason === "string" ? parsed.reason.trim().slice(0, 300) : "",
@@ -176,4 +253,29 @@ export function milestoneGate(verdict) {
   return { eligible: true, category: verdict.category, reason: verdict.reason || "" };
 }
 
-export const __config = { MODEL, TIMEOUT_MS, MILESTONE_CATEGORIES };
+/**
+ * Ops gate for a rejection, pure and unit-testable.
+ *
+ * Deliberately LOOSER than milestoneGate. A rejection goes to an internal
+ * channel and never to the client, so the cost of showing ops one mail that
+ * turned out not to be a rejection is a glance, while the cost of hiding a real
+ * one is a client who was rejected and nobody noticed. So:
+ *   • verifier confirms          -> post
+ *   • verifier could not run     -> post, marked unverified
+ *   • verifier says not-rejection-> do not post
+ * Low confidence still posts, because "probably a rejection" is worth a line.
+ *
+ * @param {Object} verdict - result of verifyRejectionMail()
+ * @returns {{eligible:boolean, unverified:boolean, reason:string}}
+ */
+export function rejectionGate(verdict) {
+  if (!verdict?.ok) {
+    return { eligible: true, unverified: true, reason: `verifier_unavailable:${verdict?.error || "unknown"}` };
+  }
+  if (!verdict.genuine) {
+    return { eligible: false, unverified: false, reason: `verifier_rejected:${verdict.reason || "not a rejection"}` };
+  }
+  return { eligible: true, unverified: false, reason: verdict.reason || "" };
+}
+
+export const __config = { MODEL, TIMEOUT_MS, MILESTONE_CATEGORIES, REJECTION_CATEGORIES };

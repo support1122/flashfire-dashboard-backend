@@ -32,32 +32,60 @@
 
 import { extractUrls } from "./gmailMessage.js";
 
-// ── Rejection: multi-word phrases only, so a stray "unfortunately" in a
-// reschedule note doesn't nuke a real interview invite. Checked before any
-// positive category and wins outright.
-const REJECTION = [
+// ── Rejection ────────────────────────────────────────────────────────
+// Checked FIRST and wins outright over every positive category. Rejection mail
+// routinely contains "interview" and "offer" ("thank you for interviewing with
+// us, but unfortunately..."), so a naive /offer/ match would fire a "you got an
+// offer!" alert on bad news.
+//
+// Split the same way as the positives (Sept 2026). STRONG phrases only ever
+// appear in a real rejection. WEAK ones appear in rejections but also in
+// ordinary recruiter mail - "we have other candidates in the pipeline, but we
+// liked your profile" is not a rejection, and neither is a friendly sign-off
+// that wishes somebody luck. One weak phrase is not evidence; two together are.
+const REJECTION_STRONG = [
   /\bregret to inform\b/i,
   /\bwe regret\b/i,
-  /\bnot (?:be )?(?:moving|going|proceeding|progressing) forward\b/i,
+  /\bnot (?:be )?(?:moving|going|proceeding|progressing) (?:forward|ahead)\b/i,
   /\bwill not be (?:moving|proceeding|progressing)\b/i,
+  /\bwon'?t be (?:moving|proceeding)\b/i,
   /\bdecided not to (?:move|proceed|progress)\b/i,
-  /\bdecided to (?:move|proceed) (?:forward |ahead )?with (?:other|another)\b/i,
+  /\bnot to proceed with your (?:application|candidacy)\b/i,
+  /\bdecided to (?:move|proceed|go) (?:forward |ahead )?with (?:other|another)\b/i,
   /\bwe have decided to pursue\b/i,
-  /\bother candidates\b/i,
-  /\bmore closely (?:match|aligned)\b/i,
-  /\bnot (?:be )?selected\b/i,
-  /\bnot (?:been )?selected\b/i,
+  /\bpursue other (?:candidates|applicants)\b/i,
+  /\bnot (?:be |been )?selected\b/i,
   /\bwere not selected\b/i,
-  /\bposition has been filled\b/i,
-  /\brole has been filled\b/i,
+  /\b(?:position|role|vacancy) has been filled\b/i,
   /\bno longer (?:being )?(?:under )?consider(?:ed|ation)\b/i,
   /\bunfortunately,? (?:we|after|your|the|you)\b/i,
   /\bafter careful consideration,? we\b/i,
-  /\bwish you (?:the best|luck|success)\b/i,
+  /\bafter (?:carefully )?reviewing your (?:application|profile|resume|cv),? we\b/i,
   /\bnot (?:a )?(?:the )?right fit\b/i,
-  /\bwon'?t be (?:moving|proceeding)\b/i,
-  /\bapplication (?:was )?(?:unsuccessful|not successful)\b/i
+  /\bapplication (?:was |has been )?(?:unsuccessful|not successful|declined|rejected)\b/i,
+  /\bunable to (?:offer|move forward|progress)\b/i,
+  /\bat this time,? we (?:will not|are not|have decided|cannot)\b/i,
+  /\bkeep your (?:resume|cv|details|profile) on file\b/i
 ];
+
+const REJECTION_WEAK = [
+  /\bother candidates\b/i,
+  /\bmore closely (?:match|aligned)\b/i,
+  /\bwish you (?:the best|luck|success|all the best)\b/i,
+  /\bbest of luck\b/i,
+  /\bfuture opportunities\b/i
+];
+
+/** Exported so the verify script can report which half fired. */
+export function rejectionSignal(subject, body) {
+  const hay = `${subject}\n${body}`;
+  if (anyMatch(REJECTION_STRONG, subject)) return { hit: true, strength: "strong", priority: "high" };
+  if (anyMatch(REJECTION_STRONG, body)) return { hit: true, strength: "strong", priority: "medium" };
+  // Two independent weak phrases. One on its own is ordinary recruiter English.
+  const weakHits = REJECTION_WEAK.filter((re) => re.test(hay)).length;
+  if (weakHits >= 2) return { hit: true, strength: "weak", priority: "low" };
+  return { hit: false, strength: "", priority: "low" };
+}
 
 // ── Positive milestone categories (client-notifiable) ──
 // STRONG: the phrase only appears when the mail really is about this step.
@@ -193,7 +221,7 @@ export function classifyMailByRules({ subject = "", from = "", bodyText = "", sn
   // Subject is the highest-signal field; a subject hit → "high", body-only → "medium".
   const hay = `${subj}\n${body}`;
 
-  const isRejection = anyMatch(REJECTION, hay);
+  const rejection = rejectionSignal(subj, body);
 
   let category = "other";
   let priority = "low";
@@ -223,9 +251,11 @@ export function classifyMailByRules({ subject = "", from = "", bodyText = "", sn
     ASSESSMENT, ASSESSMENT_WEAK, ASSESSMENT_SUBJECT
   ].some((list) => anyMatch(list, subj));
 
-  if (isRejection) {
+  if (rejection.hit) {
     // Hard override — never a positive milestone, regardless of other keywords.
-    set("rejection", "low");
+    // Priority carries how sure the phrasing was, which the AI verifier and the
+    // ops Discord line both read.
+    set("rejection", rejection.priority);
   } else if (JOB_BOARD_SENDERS.test(fromLc)) {
     set("job-alert", "low");
   } else if (CONTENT_PLATFORM_SENDERS.test(fromLc)) {
@@ -269,7 +299,8 @@ export function classifyMailByRules({ subject = "", from = "", bodyText = "", sn
 
 // Exported for the verification script.
 export const __patterns = {
-  REJECTION,
+  REJECTION_STRONG,
+  REJECTION_WEAK,
   OFFER,
   OFFER_WEAK,
   INTERVIEW,

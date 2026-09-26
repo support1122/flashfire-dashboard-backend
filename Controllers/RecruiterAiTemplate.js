@@ -1,4 +1,10 @@
 import axios from "axios";
+import {
+  profileEducationStatus,
+  educationPromptLine,
+  enforceEducationTense,
+  educationClaimIsStale
+} from "../Utils/graduationStatus.js";
 import { recordAiUsage, AI_USAGE_SOURCES } from "../Utils/aiUsage.js";
 import { ProfileModel } from "../Schema_Models/ProfileModel.js";
 import { UserModel } from "../Schema_Models/UserModel.js";
@@ -160,10 +166,18 @@ function compactProfileContext(profile, user) {
     if (profile.experienceLevel) lines.push(`Experience level: ${profile.experienceLevel}`);
     if (profile.visaStatus)
       lines.push(`Visa status: ${profile.visaStatus}${profile.otherVisaType ? ` (${profile.otherVisaType})` : ""}`);
+    // A bare date ("Masters: MS CS (May 2025)") leaves the model to work out
+    // whether that is past or future, which it cannot do reliably - it wrote
+    // "currently pursuing" for clients who had already graduated. Decide it
+    // here against the clock and hand over the answer.
+    const edu = profileEducationStatus(profile);
+    const eduLine = educationPromptLine(edu);
+    if (eduLine) lines.push(eduLine);
+    // Still pass the raw rows, so the model can name the university exactly.
     if (profile.mastersUniDegree)
-      lines.push(`Masters: ${profile.mastersUniDegree} (${profile.mastersGradMonthYear || "?"})`);
+      lines.push(`Masters (raw): ${profile.mastersUniDegree} (${profile.mastersGradMonthYear || "?"})`);
     if (profile.bachelorsUniDegree)
-      lines.push(`Bachelors: ${profile.bachelorsUniDegree} (${profile.bachelorsGradMonthYear || "?"})`);
+      lines.push(`Bachelors (raw): ${profile.bachelorsUniDegree} (${profile.bachelorsGradMonthYear || "?"})`);
   }
   if (user) {
     if (user.planType) lines.push(`Plan: ${user.planType}`);
@@ -179,6 +193,7 @@ STYLE RULES (strict — violation is failure):
 - Never use em dashes ("—") or en dashes ("–"). If you need a pause, use a comma, period, or parentheses.
 - No AI-language tells: do not use phrases like "I hope this email finds you well", "delve", "leverage", "spearhead", "synergy", "in today's fast-paced", "passionate about", "circle back", "moreover", "furthermore", "in conclusion".
 - Warm but professional. Confident, not boastful. No exclamation marks.
+- EDUCATION TENSE IS NOT A STYLE CHOICE. The profile context carries one "Education:" line with a bracketed status. Follow it exactly. COMPLETED means the candidate has the degree: write "I hold a ..." or "I completed my ...", and never "pursuing", "completing", "working towards", "expected" or "currently studying". IN PROGRESS means they do not have it yet: never write that they hold it. STATUS UNKNOWN means say neither. This overrides the style reference example below, whatever tense that example happens to use. Telling a recruiter a candidate is still studying when they graduated, or that they hold a degree they have not finished, is a false statement about a real person.
 - Do not invent metrics, employers, projects, technologies, or dates. Use ONLY facts present in the candidate's resume / profile context provided in the user message. If a fact is missing, leave it out — never fabricate.
 - Match the candidate's actual stack and seniority. Do not generalize.
 - Subject must communicate: target role + years of experience. Format: "Application <Role Title> | <N>+ Years Experience". Replace <Role> with the candidate's primary target role. Replace <N> with their actual experience years.
@@ -188,7 +203,7 @@ STYLE RULES (strict — violation is failure):
   3. Blank line, then the intro paragraph (3-4 sentences): full name, the role they target with seniority, their core stack, and a sentence on what they specialize in or focus on. Make this paragraph substantive, not a one-liner.
   4. Blank line, then the lead-in line exactly: "In my recent roles, I have:"
   5. Blank line, then 5 to 6 bullet points of concrete achievements pulled directly from the resume's work experience. Each bullet starts with a bullet character "•" followed by a single space. Each bullet should be a FULL, detailed sentence of 30 to 55 words: state the achievement AND the method / context / tools that produced it (e.g. "...through workflow optimization and automation initiatives", "...to support strategic decision-making and business planning"). Do not write terse bullets. The last bullet should describe cross-functional collaboration or stakeholder work if the resume supports it.
-  6. Blank line, then a closing paragraph (1-2 sentences) about education and work authorization.
+  6. Blank line, then a closing paragraph (1-2 sentences) about education and work authorization, in the tense the Education status line dictates.
   7. Blank line, then a final line offering to connect, exactly in this spirit: "I would welcome the opportunity to discuss how my <discipline> experience can contribute to your team and business goals." DO NOT mention any attached resume, attachment, or file — the automated workflow does not attach resumes, so claiming an attachment misleads recipients.
 - Signature block exactly:
   Best regards,
@@ -219,6 +234,7 @@ In my recent roles, I have:
 • Collaborated cross-functionally with stakeholders to gather business requirements, develop analytical insights, and support data-backed operational and strategic initiatives.
 
 I am currently pursuing a Master of Science in Engineering Management at the University of Southern California and am on F1 OPT status in the United States.
+[TENSE NOTE: the line above is correct ONLY because that candidate's degree is IN PROGRESS. Use the tense your own Education status line dictates, not this one. For a COMPLETED degree the equivalent line is "I hold a Master of Science in Engineering Management from the University of Southern California and am on F1 OPT status in the United States."]
 
 I would welcome the opportunity to discuss how my analytical and strategic experience can contribute to your team and business goals.
 
@@ -349,14 +365,30 @@ export async function generateAiRecruiterTemplate(ownerEmail) {
     throw new Error("ai_response_not_json");
   }
   const subject = sanitizeSubject(parsed.subject || "");
-  const bodyText = sanitizeBody(parsed.body || "");
+  let bodyText = sanitizeBody(parsed.body || "");
   if (!subject || !bodyText) throw new Error("ai_response_missing_fields");
+
+  // The prompt asks for the right tense; this enforces it. A model that has
+  // just been shown a "currently pursuing" example will sometimes copy it
+  // regardless, and the result is a false statement about the client sent to a
+  // recruiter. Correct it deterministically, and say so in the log when it
+  // fires so a drifting prompt is visible rather than silently patched.
+  const edu = profileEducationStatus(profile);
+  const corrected = enforceEducationTense(bodyText, edu);
+  if (corrected.changed) {
+    bodyText = corrected.text;
+    console.warn(
+      `[RecruiterAiTemplate] education tense corrected for ${owner} ` +
+        `(${edu.graduated ? "graduated" : "still studying"} ${edu.label}): ${corrected.corrections.join("; ")}`
+    );
+  }
 
   return {
     subject,
     text: bodyText,
     model: usedModel,
-    usage
+    usage,
+    educationCorrected: corrected.changed
   };
 }
 
@@ -487,4 +519,64 @@ export async function aiGenerateTemplateHandler(req, res) {
     const status = code === "no_resume_assigned" ? 422 : 500;
     res.status(status).json({ error: message });
   }
+}
+
+/**
+ * Daily sweep: correct stored templates whose education claim has gone stale.
+ *
+ * A template is written once and then reused for months - ensureAiTemplateForOwner
+ * returns "skip_already_has_template" and never rebuilds it. So a client who was
+ * genuinely still studying when their template was generated keeps introducing
+ * themselves as "currently pursuing" long after they graduated, to every
+ * recruiter, indefinitely. Nothing in the old flow ever revisited that sentence.
+ *
+ * This runs from the nightly recruiter cron and rewrites the sentence in place.
+ * No AI call: the correction is deterministic, so the sweep is free, instant,
+ * and cannot introduce a new hallucination while fixing an old one. Templates
+ * whose graduation date is missing or unparseable are left alone.
+ *
+ * @param {Date} [now] injectable clock, for tests
+ * @returns {Promise<{checked:number, corrected:number, details:Array}>}
+ */
+export async function refreshStaleEducationClaims(now = new Date()) {
+  const out = { checked: 0, corrected: 0, details: [] };
+  let templates = [];
+  try {
+    templates = await RecruiterEmailTemplate.find({ aiGenerated: true })
+      .select("_id aiOwnerEmail subject text")
+      .lean();
+  } catch (e) {
+    console.error("[RecruiterAiTemplate] education sweep: template read failed:", e?.message || e);
+    return out;
+  }
+
+  for (const tpl of templates) {
+    const owner = String(tpl.aiOwnerEmail || "").toLowerCase().trim();
+    if (!owner || !tpl.text) continue;
+    out.checked += 1;
+    try {
+      const profile = await fetchProfile(owner);
+      const edu = profileEducationStatus(profile, now);
+      if (!educationClaimIsStale(tpl.text, edu)) continue;
+
+      const fixed = enforceEducationTense(tpl.text, edu);
+      await RecruiterEmailTemplate.updateOne(
+        { _id: tpl._id },
+        { $set: { text: fixed.text, educationCheckedAt: new Date() } }
+      );
+      out.corrected += 1;
+      out.details.push({ owner, graduated: edu.graduated, label: edu.label, corrections: fixed.corrections });
+      console.log(
+        `[RecruiterAiTemplate] education claim corrected for ${owner} ` +
+          `(${edu.graduated ? "graduated" : "still studying"} ${edu.label})`
+      );
+    } catch (e) {
+      console.warn(`[RecruiterAiTemplate] education sweep failed for ${owner}: ${e?.message || e}`);
+    }
+  }
+
+  if (out.corrected) {
+    console.log(`[RecruiterAiTemplate] education sweep — checked=${out.checked} corrected=${out.corrected}`);
+  }
+  return out;
 }
