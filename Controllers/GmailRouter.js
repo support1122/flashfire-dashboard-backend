@@ -9,6 +9,7 @@ import { GmailSendLog } from "../Schema_Models/GmailSendLog.js";
 import { UserModel } from "../Schema_Models/UserModel.js";
 import { JobModel } from "../Schema_Models/JobModel.js";
 import { ensureAiTemplateForOwner, refreshStaleEducationClaims } from "./RecruiterAiTemplate.js";
+import { isRecruiterSendDay, weekendSkipReason, weekdayName, RECRUITER_SEND_TIMEZONE } from "../Utils/businessDays.js";
 
 const EXECUTIVE_AUTOMATION_THRESHOLD = 200;
 // Counts a job toward the threshold if it is in any "active pipeline" status:
@@ -215,6 +216,12 @@ router.post("/send", upload.single("attachment"), handleMulterError, async (req,
 
     if (!rawRecipients.length) {
       return res.status(400).json({ error: "At least one recipient email is required" });
+    }
+
+    // Same rule as the automation. A hand-composed mail is still a cold mail
+    // arriving in a recruiter's inbox on a Saturday.
+    if (!isRecruiterSendDay()) {
+      return res.status(409).json({ error: weekendSkipReason(), status: "weekend" });
     }
 
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -591,7 +598,8 @@ router.post("/automation/run-now", async (req, res) => {
       below_threshold: `User hasn't reached ${EXECUTIVE_AUTOMATION_THRESHOLD} applications. Turn on "Skip 200 limit" to send anyway.`,
       no_emails: "The selected recruiter group has no emails.",
       no_recipients: "No new recipients available to send to.",
-      no_gmail: "No Gmail account is connected for this user."
+      no_gmail: "No Gmail account is connected for this user.",
+      weekend: weekendSkipReason()
     };
 
     if (result.status === "sent") {
@@ -610,6 +618,11 @@ router.post("/automation/run-now", async (req, res) => {
         message: "Today's emails were already sent for this user.",
         lastRunAt: result.lastRunAt
       });
+    }
+    // Not a failure the operator can fix by changing settings, so it is
+    // answered like the other two send routes: 409, with the day named.
+    if (result.status === "weekend") {
+      return res.status(409).json({ ok: false, status: "weekend", error: result.reason || messages.weekend });
     }
     return res.status(400).json({
       ok: false,
@@ -637,6 +650,12 @@ router.post("/automation/resend", async (req, res) => {
       return res.status(404).json({ error: "Log entry not found" });
     }
     const ownerEmailLc = log.ownerEmail.toLowerCase();
+
+    // A retry of Friday's failure can wait for Monday; the recipient sees a
+    // weekend mail either way.
+    if (!isRecruiterSendDay()) {
+      return res.status(409).json({ error: weekendSkipReason(), status: "weekend" });
+    }
 
     const automation = await RecruiterEmailAutomation.findOne({ ownerEmail: ownerEmailLc })
       .populate("template");
@@ -870,6 +889,14 @@ function istDayKey(date) {
 // Returns a structured status the caller can surface to the operator.
 async function processAutomation(automation, { force = false } = {}) {
   if (!automation) return { status: "no_config" };
+
+  // Monday to Friday only, and NOT forceable. `force` exists to let an operator
+  // re-run a day that was already claimed; it is not a licence to put cold
+  // outreach in a recruiter's inbox on a Sunday. Checked before the day claim
+  // so a weekend never burns the once-per-day guard - Monday's batch still runs.
+  if (!isRecruiterSendDay()) {
+    return { status: "weekend", reason: weekendSkipReason() };
+  }
   if (!automation.group || !automation.template) {
     return { status: "missing_group_template" };
   }
@@ -1011,6 +1038,16 @@ async function processAutomation(automation, { force = false } = {}) {
 }
 
 export async function runRecruiterAutomationDailyJob() {
+  // Weekend: stop here rather than walking every automation row to log the same
+  // skip N times. The template pre-pass is skipped too - there is nothing for it
+  // to prepare until Monday, and it costs an AI call per new client.
+  if (!isRecruiterSendDay()) {
+    console.log(
+      `[RecruiterAutomation] ${weekdayName()} (${RECRUITER_SEND_TIMEZONE}) — recruiter mail is Monday to Friday only, nothing sent`
+    );
+    return;
+  }
+
   // Pre-pass: for any Executive user crossing the threshold whose automation
   // row exists with a group set but no template, build an AI template (resume +
   // profile -> GPT) and link it. Defaults dailyLimit=20, enabled=true.
