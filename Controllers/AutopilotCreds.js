@@ -126,6 +126,7 @@ export const getAutopilotCreds = async (req, res) => {
         extEmail: doc.extEmail || "",
         extPassword: doc.extPassword || "",
         extCode: doc.extCode || "",
+        hcSearch: doc.hcSearch || "",
 
         // The real per-day cap and where the client stands against it today.
         dailyCap: cap.cap,
@@ -230,7 +231,7 @@ export const putAutopilotCreds = async (req, res) => {
   try {
     const email = String(req.params.email || "").toLowerCase().trim();
     if (!email.includes("@")) return res.status(400).json({ success: false, message: "bad email" });
-    const allowed = ["jrEmail", "jrPassword", "extEmail", "extPassword", "extCode", "updatedBy"];
+    const allowed = ["jrEmail", "jrPassword", "extEmail", "extPassword", "extCode", "hcSearch", "updatedBy"];
     const set = {};
     for (const k of allowed) {
       if (typeof req.body?.[k] === "string") set[k] = req.body[k].trim();

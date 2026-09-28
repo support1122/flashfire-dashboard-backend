@@ -35,6 +35,17 @@ const AutopilotCredsSchema = new mongoose.Schema(
     extEmail: { type: String, default: "" },
     extPassword: { type: String, default: "" },
     extCode: { type: String, default: "" },
+    // What to search on hiring.cafe for this client. Either a plain role
+    // ("Machine Learning Engineer") or a full hiring.cafe URL the operator
+    // copied after setting filters by hand.
+    //
+    // HiringCafe carries its whole search in one query parameter -
+    // ?searchState={"searchQuery":"..."} - URL-encoded JSON, verified live
+    // 2026-09-28: a role alone returns 56 hits against 130 unfiltered, and
+    // &page=N keeps the filter. So a role is enough to build the URL, and a
+    // pasted URL preserves any extra filters (location, pay, work model)
+    // without this end needing to understand them.
+    hcSearch: { type: String, default: "" },
     maxJobs: { type: Number, default: 30, min: 1, max: 30 }, // legacy, unread
     updatedBy: { type: String, default: "" }
   },
