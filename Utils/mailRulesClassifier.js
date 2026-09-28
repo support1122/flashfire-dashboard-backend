@@ -44,27 +44,52 @@ import { extractUrls } from "./gmailMessage.js";
 // liked your profile" is not a rejection, and neither is a friendly sign-off
 // that wishes somebody luck. One weak phrase is not evidence; two together are.
 const REJECTION_STRONG = [
-  /\bregret to inform\b/i,
+  // Regret and refusal
+  /\bregret(?:fully)? to inform\b/i,
   /\bwe regret\b/i,
-  /\bnot (?:be )?(?:moving|going|proceeding|progressing) (?:forward|ahead)\b/i,
-  /\bwill not be (?:moving|proceeding|progressing)\b/i,
-  /\bwon'?t be (?:moving|proceeding)\b/i,
-  /\bdecided not to (?:move|proceed|progress)\b/i,
-  /\bnot to proceed with your (?:application|candidacy)\b/i,
-  /\bdecided to (?:move|proceed|go) (?:forward |ahead )?with (?:other|another)\b/i,
-  /\bwe have decided to pursue\b/i,
-  /\bpursue other (?:candidates|applicants)\b/i,
-  /\bnot (?:be |been )?selected\b/i,
-  /\bwere not selected\b/i,
-  /\b(?:position|role|vacancy) has been filled\b/i,
-  /\bno longer (?:being )?(?:under )?consider(?:ed|ation)\b/i,
+  /\bregretfully,? we\b/i,
   /\bunfortunately,? (?:we|after|your|the|you)\b/i,
   /\bafter careful consideration,? we\b/i,
-  /\bafter (?:carefully )?reviewing your (?:application|profile|resume|cv),? we\b/i,
+  /\bafter (?:carefully )?reviewing your (?:application|profile|resume|cv|candidacy),? we\b/i,
+
+  // Not proceeding
+  /\bnot (?:be )?(?:moving|going|proceeding|progressing) (?:forward|ahead)\b/i,
+  /\bwill not be (?:moving|proceeding|progressing|continuing)\b/i,
+  /\b(?:won'?t|will not|cannot|can'?t) be able to (?:move|proceed|progress)\b/i,
+  /\bwon'?t be (?:moving|proceeding|progressing)\b/i,
+  /\bdecided not to (?:move|proceed|progress|continue)\b/i,
+  /\bnot to proceed with your (?:application|candidacy)\b/i,
+  /\bunable to (?:offer|move forward|progress|proceed)\b/i,
+  /\bnot progressing your (?:application|candidacy)\b/i,
+  /\bwill not be extending an offer\b/i,
+  /\bat this time,? we (?:will not|are not|have decided|cannot)\b/i,
+
+  // Someone else got it
+  /\bdecided to (?:move|proceed|go) (?:forward |ahead )?with (?:other|another)\b/i,
+  /\b(?:moving|moved) forward with (?:other|another|candidates whose)\b/i,
+  /\b(?:chosen|selected|decided) to (?:move forward|proceed) with (?:another|other)\b/i,
+  /\bwe have decided to pursue\b/i,
+  /\bpursu(?:e|ing) (?:other|another) (?:candidates?|applicants?)\b/i,
+  /\b(?:selected|chosen) another candidate\b/i,
+  /\bmove in a different direction\b/i,
+
+  // Not selected
+  /\bnot (?:be |been )?selected\b/i,
+  /\bwere not selected\b/i,
+  /\bnot (?:been )?shortlisted\b/i,
+  /\bdid not (?:make it|progress|advance) to the next (?:round|stage|step)\b/i,
+  /\bno longer (?:being )?(?:under )?consider(?:ed|ation)\b/i,
+  /\bcandidacy has (?:concluded|ended)\b/i,
   /\bnot (?:a )?(?:the )?right fit\b/i,
   /\bapplication (?:was |has been )?(?:unsuccessful|not successful|declined|rejected)\b/i,
-  /\bunable to (?:offer|move forward|progress)\b/i,
-  /\bat this time,? we (?:will not|are not|have decided|cannot)\b/i,
+  /\bunsuccessful (?:in|on) (?:your|this) (?:application|occasion)\b/i,
+
+  // The role is gone
+  /\b(?:position|role|vacancy|req(?:uisition)?) (?:has been|was) (?:filled|closed)\b/i,
+  /\bwe have filled (?:the|this) (?:position|role)\b/i,
+  /\b(?:position|role|opportunity) is no longer (?:available|open)\b/i,
+
+  // The classic closing line
   /\bkeep your (?:resume|cv|details|profile) on file\b/i
 ];
 

@@ -47,10 +47,10 @@ import {
 } from "../../Utils/gmailMessage.js";
 import { summarizeMail } from "./mailAiSummarizer.js";
 import { classifyMailByRules } from "../../Utils/mailRulesClassifier.js";
-import { verifyMilestoneMail, milestoneGate, verifyRejectionMail, rejectionGate } from "./mailMilestoneVerifier.js";
+import { verifyMilestoneMail, milestoneGate, verifyRejectionMail } from "./mailMilestoneVerifier.js";
 import { shouldSuppressSender, recordVerdict } from "./mailVerifierLearning.js";
 import { applyLearnedExclusions, proposeAndStoreExclusion } from "./mailRegexLearner.js";
-import { notifyUsefulMailLine, notifyRejectionLine, isGmailAuthError, errorText } from "../../Utils/discordMailNotify.js";
+import { notifyUsefulMailLine, isGmailAuthError, errorText } from "../../Utils/discordMailNotify.js";
 import {
   deriveEligibility,
   notifyClientForDigestAllChannels,
@@ -283,33 +283,18 @@ async function fetchMessage(gmail, messageId) {
 // promos or job alerts — only the digests marked clientNotifyEligible ever get
 // here. discordPostedAt is the at-most-once guard; a failed post is retried.
 async function deliver({ digestDoc, client, mailbox }) {
-  const clientName = client?.name || client?.email || mailbox;
-  // A digest is a milestone or a rejection, never both - the rules classifier
-  // treats rejection as a hard override. opsNotifyEligible wins if both are
-  // somehow set, because a milestone is the more consequential line to show.
-  const isRejection = digestDoc.opsNotifyEligible !== true && digestDoc.opsRejectionEligible === true;
-
-  const result = isRejection
-    ? await notifyRejectionLine({
-        clientName,
-        clientEmail: mailbox,
-        subject: digestDoc.subject,
-        from: digestDoc.from,
-        receivedAt: digestDoc.date,
-        unverified: Boolean(digestDoc.verifyError)
-      })
-    : await notifyUsefulMailLine({
-        clientName,
-        clientEmail: mailbox,
-        // An ops-eligible digest without a client category is one the AI verifier
-        // could not check (outage) — tell ops it needs a human eye.
-        category:
-          digestDoc.clientNotifyCategory ||
-          (digestDoc.verifyError ? `${digestDoc.category} (unverified — check manually)` : digestDoc.category),
-        subject: digestDoc.subject,
-        from: digestDoc.from,
-        receivedAt: digestDoc.date
-      });
+  const result = await notifyUsefulMailLine({
+    clientName: client?.name || client?.email || mailbox,
+    clientEmail: mailbox,
+    // An ops-eligible digest without a client category is one the AI verifier
+    // could not check (outage) — tell ops it needs a human eye.
+    category:
+      digestDoc.clientNotifyCategory ||
+      (digestDoc.verifyError ? `${digestDoc.category} (unverified — check manually)` : digestDoc.category),
+    subject: digestDoc.subject,
+    from: digestDoc.from,
+    receivedAt: digestDoc.date
+  });
 
   if (!result.ok) {
     await MailDigest.updateOne(
@@ -345,11 +330,7 @@ async function retryPendingDigests({ user, client, state }) {
     gmailEmail: user.email,
     // opsNotifyEligible gates Discord since the verifier landed; the $or keeps
     // retrying pre-upgrade docs that only carry clientNotifyEligible.
-    $or: [
-      { opsNotifyEligible: true },
-      { opsRejectionEligible: true },
-      { opsNotifyEligible: { $exists: false }, clientNotifyEligible: true }
-    ],
+    $or: [{ opsNotifyEligible: true }, { opsNotifyEligible: { $exists: false }, clientNotifyEligible: true }],
     discordPostedAt: null,
     createdAt: { $gte: cutoff },
     discordAttempts: { $lt: MAX_DELIVERY_ATTEMPTS }
@@ -490,12 +471,7 @@ async function pollMailbox(user, clientCache) {
         confident: ai.aiSucceeded === true || ai.matched === true
       });
       let verifyFields = {};
-      let eligibility = {
-        clientNotifyEligible: false,
-        clientNotifyCategory: "",
-        opsNotifyEligible: false,
-        opsRejectionEligible: false
-      };
+      let eligibility = { clientNotifyEligible: false, clientNotifyCategory: "", opsNotifyEligible: false };
       const senderEmail = parseFromHeader(msg.meta.from).email;
       // Learned suppression: a sender domain the AI has already rejected
       // repeatedly (and never once confirmed) skips the AI entirely — the
@@ -564,17 +540,21 @@ async function pollMailbox(user, clientCache) {
           );
         }
       } else if (ai.category === "rejection") {
-        // REJECTIONS. Same shape as the milestone path with two deliberate
-        // differences.
+        // REJECTIONS ARE CLASSIFIED AND STORED, AND THEY NOTIFY NOBODY.
         //
-        // 1. Sender suppression is NOT consulted, and the verdict is NOT fed
-        //    back into it. Those counters are per DOMAIN and not per category,
-        //    so a rejected rejection-candidate from greenhouse.io would push
-        //    that domain toward suppression and start silencing genuine
-        //    INTERVIEW mail from the same sender. The regex learner is safe to
-        //    share because its rules are category-scoped.
-        // 2. The gate is looser (see rejectionGate): an unverifiable rejection
-        //    still reaches ops, because it never reaches the client.
+        // No Discord line (ops asked for that to stop on 28 Sept 2026 - a
+        // steady trickle of bad news is not what that channel is for) and never
+        // a client email. The digest still records the verdict, so the data is
+        // there to query, and the AI check still runs for ONE reason: when it
+        // finds a false positive it has the regex learner write an exclusion,
+        // which is what keeps the rejection patterns sharpening over time.
+        //
+        // Sender suppression is NOT consulted here and the verdict is NOT fed
+        // back into it. Those counters are per DOMAIN and not per category, so
+        // a rejected rejection-candidate from greenhouse.io would push that
+        // domain toward suppression and start silencing genuine INTERVIEW mail
+        // from the same sender. The regex learner is safe to share because its
+        // rules carry a category.
         const verdict = await verifyRejectionMail({
           from: msg.meta.from,
           subject: msg.meta.subject,
@@ -591,7 +571,6 @@ async function pollMailbox(user, clientCache) {
             console.log(`[mail-regex] ${mailbox}: new rejection exclusion /${learned.pattern}/i from ${messageId}`);
           }
         }
-        const gate = rejectionGate(verdict);
         verifyFields = {
           verifyRan: true,
           verifyGenuine: verdict.genuine,
@@ -601,18 +580,14 @@ async function pollMailbox(user, clientCache) {
           verifyModel: verdict.model,
           verifyError: verdict.error
         };
+        // Every flag stays false. A rejection reaches neither the client nor
+        // the ops channel; it is recorded and nothing else.
         eligibility = {
-          // A rejection is never emailed to the client. This is the whole
-          // reason the two paths stay separate.
           clientNotifyEligible: false,
           clientNotifyCategory: "",
           opsNotifyEligible: false,
-          opsRejectionEligible: gate.eligible,
-          ...(gate.eligible ? {} : { clientNotifySkippedReason: gate.reason })
+          clientNotifySkippedReason: "rejection_recorded_only"
         };
-        if (!gate.eligible) {
-          console.log(`[mail-verify] ${mailbox}: rejected rejection candidate (${messageId}): ${gate.reason}`);
-        }
       }
 
       const uploadedNames = new Set(msg.textAttachments.map((a) => a.filename));
@@ -672,7 +647,7 @@ async function pollMailbox(user, clientCache) {
       // ops team should eyeball). Promos, job alerts, newsletters, rejections,
       // recruiter outreach and VERIFIED false positives are stored and counted
       // in the 5 AM summary, but never posted per-mail.
-      if (digestDoc.opsNotifyEligible || digestDoc.opsRejectionEligible) {
+      if (digestDoc.opsNotifyEligible) {
         const ok = await deliver({ digestDoc, client, mailbox });
         if (ok) posted++;
       }

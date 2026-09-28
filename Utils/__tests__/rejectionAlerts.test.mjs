@@ -1,51 +1,96 @@
-// Rejection detection: find it, verify it, tell ops, never tell the client.
+// Rejections: detect them, record them, tell nobody.
 //
-// Rejections were already classified and stored, but nothing surfaced them, so
-// a client could be turned down and nobody noticed until someone read the
-// mailbox by hand. This pins the three properties that make the new path safe:
+// The rules classifier flags rejection mail and the digest stores the verdict,
+// so the data is queryable. Nothing is delivered off the back of it:
 //
-//   1. The rejection rules stay the hard override over every positive category
-//      ("thank you for interviewing, but unfortunately..." is not an interview).
-//   2. The ops gate is looser than the milestone gate on purpose - a rejection
-//      goes to an internal channel, so an unverifiable one is still worth a
-//      line, while a verified non-rejection is not.
-//   3. A rejection NEVER reaches the client, by any route.
+//   • NO Discord line. Ops asked for that to stop (28 Sept 2026); a steady
+//     trickle of bad news is not what the mail channel is for.
+//   • NO client email, ever. Telling somebody by robot that they were turned
+//     down is not a thing this product does.
 //
-// Pure functions and a stubbed webhook. No Mongo, no OpenAI, nothing sent.
+// The AI check still runs, for one reason only: when it catches a false
+// positive it has the regex learner write an exclusion, which is what keeps the
+// rejection patterns sharpening. That loop is the whole remaining point.
+//
+// Pure functions and source checks. No Mongo, no OpenAI, nothing sent.
 
-import { test, after } from "node:test";
+import { test } from "node:test";
 import assert from "node:assert/strict";
-import http from "node:http";
-
-const hits = [];
-const srv = http.createServer(async (req, res) => {
-  const chunks = [];
-  for await (const c of req) chunks.push(c);
-  hits.push(JSON.parse(Buffer.concat(chunks).toString() || "{}"));
-  res.writeHead(204);
-  res.end();
-});
-await new Promise((r) => srv.listen(0, "127.0.0.1", r));
-process.env.ONE_MAIN_DISCORD_FOR_MAIL_NOTIFICATIONS = `http://127.0.0.1:${srv.address().port}/hook`;
-after(() => srv.close());
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 
 const { classifyMailByRules, rejectionSignal } = await import("../mailRulesClassifier.js");
-const { rejectionGate } = await import("../../src/services/mailMilestoneVerifier.js");
-const { notifyRejectionLine } = await import("../discordMailNotify.js");
 const { GENUINE_REJECTION_FIXTURES, acceptProposal, LEARNABLE_CATEGORIES } = await import(
   "../../src/services/mailRegexLearner.js"
 );
 const { NOTIFIABLE_CATEGORIES } = await import("../clientMailTemplates.js");
 
+const read = (rel) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), "utf8");
 const classify = (from, subject, body) =>
   classifyMailByRules({ from, subject, bodyText: body, snippet: body.slice(0, 120) });
 
-// ── detection ─────────────────────────────────────────────────────────────
+// ── nothing is delivered ──────────────────────────────────────────────────
 
-test("every canonical rejection is detected", () => {
+test("no Discord line exists for a rejection any more", () => {
+  const discord = read("../discordMailNotify.js");
+  assert.equal(/notifyRejectionLine/.test(discord), false, "the rejection embed builder must be gone");
+  assert.equal(/REJECTION_WEBHOOK/.test(discord), false, "and so must its webhook");
+
+  const worker = read("../../src/services/mailPollWorker.js");
+  assert.equal(/opsRejectionEligible/.test(worker), false, "no flag can route a rejection to Discord");
+  assert.equal(/notifyRejectionLine/.test(worker), false);
+});
+
+test("the rejection branch leaves every delivery flag false", () => {
+  const worker = read("../../src/services/mailPollWorker.js");
+  const from = worker.indexOf('} else if (ai.category === "rejection") {');
+  assert.ok(from > -1, "the rejection branch must still exist - detection is kept");
+  const branch = worker.slice(from, worker.indexOf("const uploadedNames", from));
+
+  assert.match(branch, /clientNotifyEligible: false/);
+  assert.match(branch, /opsNotifyEligible: false/);
+  assert.equal(/clientNotifyEligible: true/.test(branch), false);
+  assert.equal(/opsNotifyEligible: true/.test(branch), false);
+  assert.match(branch, /rejection_recorded_only/, "the digest says why nothing went out");
+});
+
+test("a rejection can never be emailed to a client", () => {
+  // The client templates only know the three positive categories, so there is
+  // no rejection mail to render even if something tried.
+  assert.deepEqual(NOTIFIABLE_CATEGORIES, ["interview", "assessment", "offer"]);
+  assert.equal(NOTIFIABLE_CATEGORIES.includes("rejection"), false);
+
+  const notifier = read("../../src/services/clientMailNotifier.js");
+  const line = notifier.split("\n").find((l) => l.includes("NOTIFY_CATEGORIES = new Set"));
+  assert.ok(line, "the notifier's own category gate must exist");
+  assert.equal(/rejection/.test(line), false, "rejection must not be a notifiable category");
+});
+
+// ── detection is kept, and sharper ────────────────────────────────────────
+
+test("every canonical rejection is still detected", () => {
   for (const f of GENUINE_REJECTION_FIXTURES) {
-    const c = classify(f.from, f.subject, f.body);
-    assert.equal(c.category, "rejection", `${f.subject} -> ${c.category}`);
+    assert.equal(classify(f.from, f.subject, f.body).category, "rejection", f.subject);
+  }
+});
+
+test("the phrasings employers and ATS systems actually use", () => {
+  const bodies = [
+    "We have moved forward with another candidate for this role.",
+    "After reviewing your candidacy, we have decided to move in a different direction.",
+    "You were not shortlisted for the Backend Engineer position.",
+    "You did not progress to the next round following the technical screen.",
+    "Your candidacy has concluded for this requisition.",
+    "Regretfully, we will not be extending an offer at this time.",
+    "The requisition has been closed and the position is no longer available.",
+    "We have filled the position internally.",
+    "You were unsuccessful on this occasion.",
+    "We won't be able to move forward with your application.",
+    "We regret to inform you that we will not be proceeding with your application.",
+    "Thank you for your interest. We will keep your resume on file."
+  ];
+  for (const body of bodies) {
+    assert.equal(classify("hr@acme.com", "Your application", body).category, "rejection", body);
   }
 });
 
@@ -58,103 +103,64 @@ test("a rejection still beats interview and offer wording in the same mail", () 
   assert.equal(c.category, "rejection");
 });
 
+test("the broadened patterns do not swallow good news", () => {
+  const safe = [
+    ["We would like to invite you to a technical interview. Please pick a slot.", "interview"],
+    ["Thank you for applying. We have received your application and will be in touch.", "job-application"],
+    ["We are pleased to extend a formal offer for the Senior Engineer position.", "offer"],
+    ["Complete your Codility assessment for the Software Engineer role within 5 days.", "assessment"]
+  ];
+  for (const [body, want] of safe) {
+    assert.equal(classify("hr@acme.com", "Update", body).category, want, body);
+  }
+  // "moving forward with" is a rejection phrase only when somebody ELSE got it.
+  const onboarding = classify("hr@acme.com", "Welcome", "Moving forward with your onboarding, please complete the forms.");
+  assert.notEqual(onboarding.category, "rejection");
+});
+
 test("one weak phrase on its own is not a rejection", () => {
-  // Ordinary recruiter English. Silencing on this would eat real invitations.
   const stillOpen = classify(
     "jane@acme.com",
     "Next steps",
     "We have other candidates in the pipeline, but we liked your profile and would like to schedule an interview."
   );
   assert.equal(stillOpen.category, "interview");
-
-  const signoff = classify("friend@example.com", "Good luck", "Best of luck with the new job!");
-  assert.notEqual(signoff.category, "rejection");
+  assert.notEqual(classify("friend@example.com", "Good luck", "Best of luck with the new job!").category, "rejection");
 });
 
-test("two weak phrases together are enough to look at", () => {
+test("two weak phrases together are enough to record", () => {
   const c = classify(
     "no-reply@acme.com",
     "Your application",
     "We went with other candidates whose background more closely matches the role. We wish you the best."
   );
   assert.equal(c.category, "rejection");
-  assert.equal(c.priority, "low", "weak evidence is flagged low, and the AI verifier decides");
+  assert.equal(c.priority, "low", "weak evidence is flagged low and the AI verifier decides");
 });
 
-test("a rejection in the subject line outranks one found only in the body", () => {
+test("a subject-line rejection outranks a body-only one", () => {
   assert.equal(rejectionSignal("We regret to inform you", "").priority, "high");
   assert.equal(rejectionSignal("Your application", "We regret to inform you").priority, "medium");
   assert.equal(rejectionSignal("Hello", "Nothing to see here").hit, false);
 });
 
-// ── the ops gate ──────────────────────────────────────────────────────────
-
-test("a confirmed rejection is posted", () => {
-  const g = rejectionGate({ ok: true, genuine: true, category: "rejection", confidence: "high", reason: "r" });
-  assert.equal(g.eligible, true);
-  assert.equal(g.unverified, false);
-});
-
-test("an unverifiable rejection is still posted, marked unverified", () => {
-  // Looser than milestoneGate on purpose: this line never leaves the team, so
-  // a missed real rejection costs more than one extra line to look at.
-  const g = rejectionGate({ ok: false, error: "timeout after 20000ms" });
-  assert.equal(g.eligible, true);
-  assert.equal(g.unverified, true);
-  assert.match(g.reason, /verifier_unavailable/);
-});
-
-test("a verified non-rejection is not posted", () => {
-  const g = rejectionGate({ ok: true, genuine: false, category: "not-rejection", reason: "careers newsletter" });
-  assert.equal(g.eligible, false);
-  assert.match(g.reason, /verifier_rejected/);
-});
-
-test("low confidence still posts", () => {
-  const g = rejectionGate({ ok: true, genuine: true, category: "rejection", confidence: "low", reason: "r" });
-  assert.equal(g.eligible, true);
-});
-
-// ── the Discord line ──────────────────────────────────────────────────────
-
-test("the rejection line is plain, not a celebration", async () => {
-  hits.length = 0;
-  const r = await notifyRejectionLine({
-    clientName: "Asha Rao",
-    clientEmail: "asha@example.com",
-    subject: "Your application to Acme",
-    from: "no-reply@acme.com",
-    receivedAt: new Date("2026-09-26T10:00:00Z")
-  });
-  assert.equal(r.ok, true, r.error);
-  const embed = hits[0].embeds[0];
-  assert.match(embed.title, /^Rejection - Asha Rao$/);
-  assert.match(embed.description, /Asha Rao\*\* was turned down/);
-  assert.equal(embed.color, 0x64748b, "muted slate, not the green/purple of a win");
-  const flat = JSON.stringify(embed);
-  for (const wrong of ["🎉", "🏆", "Interview", "Offer", "congrat"]) {
-    assert.equal(flat.includes(wrong), false, `a rejection must not read as ${wrong}`);
-  }
-  assert.match(flat, /no-reply@acme\.com/, "ops need the sender to find the thread");
-});
-
-test("an unverified rejection says so on the line", async () => {
-  hits.length = 0;
-  await notifyRejectionLine({ clientName: "Asha", subject: "s", from: "f", unverified: true });
-  const embed = hits[0].embeds[0];
-  assert.match(embed.title, /\(unverified\)/);
-  assert.match(embed.footer.text, /AI check unavailable/);
-});
-
-// ── the learning loop ─────────────────────────────────────────────────────
+// ── the learning loop, which is the point of still verifying ──────────────
 
 test("rejection is a category the regex learner may write rules for", () => {
   assert.equal(LEARNABLE_CATEGORIES.has("rejection"), true);
 });
 
+test("the AI check still runs so the learner keeps getting taught", () => {
+  const worker = read("../../src/services/mailPollWorker.js");
+  const branch = worker.slice(
+    worker.indexOf('} else if (ai.category === "rejection") {'),
+    worker.indexOf("const uploadedNames", worker.indexOf('} else if (ai.category === "rejection") {'))
+  );
+  assert.match(branch, /verifyRejectionMail/);
+  assert.match(branch, /proposeAndStoreExclusion/, "a false positive must still teach an exclusion");
+});
+
 test("a learned rejection exclusion may not eat a real rejection", () => {
-  // The whole safety argument for letting an AI write regexes: every proposal
-  // is regression-tested against the canonical mails of its own category.
   const greedy = acceptProposal({
     pattern: "unfortunately",
     targetField: "body",
@@ -164,7 +170,6 @@ test("a learned rejection exclusion may not eat a real rejection", () => {
   assert.equal(greedy.ok, false);
   assert.match(greedy.reason, /matches genuine mail/);
 
-  // A narrow one that only hits the offending mail is accepted.
   const narrow = acceptProposal({
     pattern: "this newsletter is ending",
     targetField: "body",
@@ -172,27 +177,4 @@ test("a learned rejection exclusion may not eat a real rejection", () => {
     fixtures: GENUINE_REJECTION_FIXTURES
   });
   assert.equal(narrow.ok, true, narrow.reason);
-});
-
-// ── the guarantee that matters ────────────────────────────────────────────
-
-test("a rejection can never be emailed to the client", async () => {
-  // Two independent locks. First, the client templates only know the three
-  // positive categories.
-  assert.deepEqual(NOTIFIABLE_CATEGORIES, ["interview", "assessment", "offer"]);
-  assert.equal(NOTIFIABLE_CATEGORIES.includes("rejection"), false);
-
-  // Second, the poll worker sets clientNotifyEligible false on the rejection
-  // branch and never calls the client notifier from it.
-  const { readFileSync } = await import("node:fs");
-  const { fileURLToPath } = await import("node:url");
-  const worker = readFileSync(
-    fileURLToPath(new URL("../../src/services/mailPollWorker.js", import.meta.url)),
-    "utf8"
-  );
-  const branch = worker.slice(worker.indexOf('} else if (ai.category === "rejection") {'));
-  const endOfBranch = branch.indexOf("const uploadedNames");
-  const rejectionBranch = branch.slice(0, endOfBranch > 0 ? endOfBranch : branch.length);
-  assert.match(rejectionBranch, /clientNotifyEligible: false/);
-  assert.equal(/clientNotifyEligible: true/.test(rejectionBranch), false);
 });
