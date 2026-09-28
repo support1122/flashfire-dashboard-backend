@@ -253,29 +253,4 @@ export function milestoneGate(verdict) {
   return { eligible: true, category: verdict.category, reason: verdict.reason || "" };
 }
 
-/**
- * Ops gate for a rejection, pure and unit-testable.
- *
- * Deliberately LOOSER than milestoneGate. A rejection goes to an internal
- * channel and never to the client, so the cost of showing ops one mail that
- * turned out not to be a rejection is a glance, while the cost of hiding a real
- * one is a client who was rejected and nobody noticed. So:
- *   • verifier confirms          -> post
- *   • verifier could not run     -> post, marked unverified
- *   • verifier says not-rejection-> do not post
- * Low confidence still posts, because "probably a rejection" is worth a line.
- *
- * @param {Object} verdict - result of verifyRejectionMail()
- * @returns {{eligible:boolean, unverified:boolean, reason:string}}
- */
-export function rejectionGate(verdict) {
-  if (!verdict?.ok) {
-    return { eligible: true, unverified: true, reason: `verifier_unavailable:${verdict?.error || "unknown"}` };
-  }
-  if (!verdict.genuine) {
-    return { eligible: false, unverified: false, reason: `verifier_rejected:${verdict.reason || "not a rejection"}` };
-  }
-  return { eligible: true, unverified: false, reason: verdict.reason || "" };
-}
-
 export const __config = { MODEL, TIMEOUT_MS, MILESTONE_CATEGORIES, REJECTION_CATEGORIES };
