@@ -7,6 +7,7 @@ import GoogleOAuth from "./Controllers/GoogleOAuth.js";
 import { getAllClients } from './Controllers/ClientController.js';
 import { getClientTrackingStatus } from './Controllers/ClientTrackingStatus.js';
 import { listAutopilotCreds, getAutopilotCreds, putAutopilotCreds, provisionAutopilotCreds } from './Controllers/AutopilotCreds.js';
+import { getJobApiSettings, putJobApiSettings, runJobApiScrape } from "./Controllers/JobApiScrape.js";
 import {
   recordAutopilotRun,
   startAutopilotRun,
@@ -167,6 +168,13 @@ app.post("/autopilot/creds/:email/provision", requireOpsKey, provisionAutopilotC
 // Live runs: opened at start, updated every few seconds, closed by the POST
 // below with the runId. Older autopilot builds skip the first two and still
 // work exactly as before.
+// Job APIs: the autopilot's "Scrape from Job APIs" mode. Settings are not
+// secrets (they are a saved search), so reading and saving them is open like
+// the other portal-facing routes; the run itself writes jobs, so it is gated.
+app.get("/job-api/settings/:email", getJobApiSettings);
+app.put("/job-api/settings/:email", putJobApiSettings);
+app.post("/job-api/scrape/:email", requireOpsKey, runJobApiScrape);
+
 app.post("/autopilot/runs/start", requireOpsKey, startAutopilotRun);
 app.post("/autopilot/runs/:id/progress", requireOpsKey, progressAutopilotRun);
 app.post("/autopilot/runs", requireOpsKey, recordAutopilotRun);
