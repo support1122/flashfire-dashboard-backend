@@ -157,3 +157,51 @@ test("large sets are split into batches, and every job still gets a verdict", as
   assert.equal(r.decisions.length, many.length);
   assert.ok(r.decisions.every((d) => d.pick));
 });
+
+// ── which OpenAI key the judge uses ──────────────────────────────────
+//
+// This judge originally read process.env.OPENAI_API_KEY and nothing else,
+// which made it the only AI path in the backend that could not fall back to
+// the global key operators set from the admin page. Rotating that key fixed
+// the summaries, the templates and the extension while API-mode runs kept
+// failing on their own, with nothing in the UI to explain why.
+
+import { readFileSync } from "node:fs";
+
+const APIJUDGE_SRC = readFileSync(new URL("../apiJudge.js", import.meta.url), "utf8");
+
+test("the judge falls back to the global key, like every other AI path", () => {
+  assert.match(APIJUDGE_SRC, /getAppSettings/,
+    "without the settings read there is no fallback to the global key");
+  assert.match(APIJUDGE_SRC, /globalOpenaiKey/);
+});
+
+test("the call that reaches OpenAI actually goes through that resolution", () => {
+  // Defining resolveOpenAIKey and then not calling it is the same bug with
+  // more code, so assert on the call site rather than on the helper existing.
+  const call = APIJUDGE_SRC.slice(APIJUDGE_SRC.indexOf("async function defaultCallOpenAi"));
+  const upToRequest = call.slice(0, call.indexOf("fetch("));
+  assert.match(upToRequest, /await resolveOpenAIKey\(\)/,
+    "defaultCallOpenAi must resolve the key, not read process.env directly");
+  assert.doesNotMatch(upToRequest, /process\.env\.OPENAI_API_KEY/,
+    "reading the variable here bypasses the global-key fallback");
+});
+
+test("the environment still wins over the global key", () => {
+  const body = APIJUDGE_SRC.slice(APIJUDGE_SRC.indexOf("async function resolveOpenAIKey"));
+  const envAt = body.indexOf("process.env.OPENAI_API_KEY");
+  const dbAt = body.indexOf("globalOpenaiKey");
+  assert.ok(envAt !== -1 && dbAt !== -1);
+  assert.ok(envAt < dbAt, "a host that sets the variable must keep control of the key");
+});
+
+test("a settings lookup that throws does not take the run down with it", () => {
+  const body = APIJUDGE_SRC.slice(
+    APIJUDGE_SRC.indexOf("async function resolveOpenAIKey"),
+    APIJUDGE_SRC.indexOf("async function defaultCallOpenAi"));
+  assert.match(body, /catch/, "the global key is a fallback, not a dependency");
+});
+
+test("no key anywhere is still reported as NO_OPENAI_KEY, not as a crash", () => {
+  assert.match(APIJUDGE_SRC, /NO_OPENAI_KEY/);
+});

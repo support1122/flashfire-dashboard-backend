@@ -426,3 +426,34 @@ test("a job title longer than the board's column is truncated, not rejected", as
   assert.equal(r.body.pushed, 1);
   assert.equal(created[0].jobTitle.length, 50);
 });
+
+// ── who is allowed to touch a saved search ───────────────────────────
+//
+// These shipped ungated. A saved search names the role, the location and the
+// salary floor we look for on a client's behalf, so an open GET leaks it and
+// an open PUT lets anyone who can guess an address redirect that client's
+// next run onto jobs they never asked for. The run itself was always gated;
+// the two routes that decide what it runs must be too.
+
+import { readFileSync } from "node:fs";
+
+const ROUTES_SRC = readFileSync(new URL("../../Routes.js", import.meta.url), "utf8");
+
+function routeLine(method, path) {
+  const re = new RegExp(`app\\.${method}\\("${path.replace(/[/:]/g, (c) => "\\" + c)}".*`);
+  const m = ROUTES_SRC.match(re);
+  assert.ok(m, `no ${method.toUpperCase()} route registered for ${path}`);
+  return m[0];
+}
+
+test("reading a client's saved search needs the ops key", () => {
+  assert.match(routeLine("get", "/job-api/settings/:email"), /requireOpsKey/);
+});
+
+test("overwriting a client's saved search needs the ops key", () => {
+  assert.match(routeLine("put", "/job-api/settings/:email"), /requireOpsKey/);
+});
+
+test("starting a run needs the ops key", () => {
+  assert.match(routeLine("post", "/job-api/scrape/:email"), /requireOpsKey/);
+});

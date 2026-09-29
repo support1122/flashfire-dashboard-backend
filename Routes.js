@@ -171,8 +171,12 @@ app.post("/autopilot/creds/:email/provision", requireOpsKey, provisionAutopilotC
 // Job APIs: the autopilot's "Scrape from Job APIs" mode. Settings are not
 // secrets (they are a saved search), so reading and saving them is open like
 // the other portal-facing routes; the run itself writes jobs, so it is gated.
-app.get("/job-api/settings/:email", getJobApiSettings);
-app.put("/job-api/settings/:email", putJobApiSettings);
+// A client's saved search names the role, the location and the salary floor
+// we look for on their behalf, and an unauthenticated PUT would let anyone
+// who can guess an address redirect the next run onto jobs that client never
+// asked for. Both sides of it are operator-only, like the run itself.
+app.get("/job-api/settings/:email", requireOpsKey, getJobApiSettings);
+app.put("/job-api/settings/:email", requireOpsKey, putJobApiSettings);
 app.post("/job-api/scrape/:email", requireOpsKey, runJobApiScrape);
 
 app.post("/autopilot/runs/start", requireOpsKey, startAutopilotRun);
