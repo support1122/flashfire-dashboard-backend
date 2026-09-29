@@ -136,6 +136,7 @@ For an exclusion skip, quote the list entry you matched verbatim.`;
 
 import "dotenv/config";
 import { recordAiUsage, AI_USAGE_SOURCES } from "./aiUsage.js";
+import { getAppSettings } from "../Schema_Models/AppSettings.js";
 
 const OPENAI_URL = "https://api.openai.com/v1/chat/completions";
 const MODEL = process.env.OPENAI_JUDGE_MODEL || "gpt-4o-mini";
@@ -280,8 +281,27 @@ export async function judgeJobs(
   return { ok: true, decisions };
 }
 
+/**
+ * The key, resolved the way every other AI path in this backend resolves it:
+ * the environment first, then the global key operators set from the admin
+ * page. This judge originally read process.env alone, which made it the one
+ * AI feature that could not use the global key - so rotating that key fixed
+ * the summaries, the templates and the extension while API-mode runs kept
+ * failing on their own.
+ */
+async function resolveOpenAIKey() {
+  if (process.env.OPENAI_API_KEY) return process.env.OPENAI_API_KEY.trim();
+  try {
+    const settings = await getAppSettings();
+    if (settings?.globalOpenaiKey) return String(settings.globalOpenaiKey).trim();
+  } catch (_) {
+    /* the global key is a fallback; a settings read that fails is not fatal */
+  }
+  return "";
+}
+
 async function defaultCallOpenAi({ system, user }) {
-  const apiKey = process.env.OPENAI_API_KEY;
+  const apiKey = await resolveOpenAIKey();
   if (!apiKey) return { ok: false, error: "NO_OPENAI_KEY" };
   let res;
   try {
