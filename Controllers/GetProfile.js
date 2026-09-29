@@ -1,6 +1,7 @@
 import { ProfileModel } from "../Schema_Models/ProfileModel.js";
 import { UserModel } from "../Schema_Models/UserModel.js";
 import { getAppSettings } from "../Schema_Models/AppSettings.js";
+import { ClientTrackingModel } from "../Schema_Models/ClientTrackingModel.js";
 
 function escapeRegex(s) {
   return String(s).replace(/[-/\\^$*+?.()|[\]{}]/g, "\\$&");
@@ -29,11 +30,14 @@ export default async function GetProfile(req, res) {
       return res.status(400).json({ message: "Email is required" });
     }
 
-    const [profile, user] = await Promise.all([
+    const [profile, user, tracking] = await Promise.all([
       resolveProfile(email),
       UserModel.findOne({ email: { $regex: new RegExp(`^${escapeRegex(email)}$`, "i") } })
         .select('removedJobsCount')
-        .lean()
+        .lean(),
+      ClientTrackingModel.findOne({ email: { $regex: new RegExp(`^${escapeRegex(email)}$`, "i") } })
+        .select('amountPaid')
+        .lean(),
     ]);
 
     if (!profile) {
@@ -61,6 +65,7 @@ export default async function GetProfile(req, res) {
     return res.json({
       message: "Profile retrieved successfully",
       userProfile,
+      amountPaid: tracking?.amountPaid || null,
     });
   } catch (error) {
     console.error("GetProfile error:", error);
