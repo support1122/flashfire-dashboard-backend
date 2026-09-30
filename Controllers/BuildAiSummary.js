@@ -906,6 +906,28 @@ R4. Company-name exclusions — "do NOT scrap from Acme" / "don't scrap Foo Inc"
     → NEVER list these in Strong Signals.
     NOTE: "scrap from Acme" WITHOUT a negation = apply to Acme (priority), NOT an exclusion → Strong Signals "<Company> — operator priority".
 
+R4b. EXCLUSIVE company allowlist — "only scrap from X, Y, Z" / "only these companies" /
+    "don't scrape any company not listed" / "strictly only from these companies":
+    This is the OPPOSITE of R4. R4 names companies to avoid; this names the ONLY
+    companies allowed, and everything else is out.
+    → Hard Disqualifiers: emit EXACTLY ONE bullet, in EXACTLY this shape, with the
+      full list on that one line and nothing after it:
+          "Only scrape jobs from these companies: <A>, <B>, <C>."
+    → Emit it ONCE. Do NOT restate the rule in Strong Signals, do NOT add
+      "skip companies not listed above", "do not scrape any company not on the
+      list", or any other paraphrase. The downstream scraper parses this one
+      bullet; every extra restatement is noise that has, in practice, made
+      operators write the same rule a dozen times because none of them took.
+    → Keep every company on that single line, comma-separated, exactly as the
+      operator spelled them. Never split the list across bullets, never
+      abbreviate it to "the companies listed above", never end the line with an
+      extra sentence.
+    → A company the operator ALSO said to skip (R4) stays as its own
+      "Skip <Company> jobs." bullet. An explicit skip beats allowlist membership.
+    NOTE: "prioritise Google and Meta" / "prefer FAANG" is NOT this rule — a
+    preference is R6, not an allowlist. Only exclusive wording ("only", "no
+    other", "nothing outside") triggers R4b.
+
 R5. Company / industry category exclusions — "do NOT scrap staffing" / "no staffing" / "skip consulting firms" (negation REQUIRED):
     → Hard Disqualifiers: "Skip <category> companies." — no attribution suffix.
     → NEVER as Strong Signals. NEVER as Hard Constraints "Excluded industries" — keep them as their own bullets in Hard Disqualifiers.

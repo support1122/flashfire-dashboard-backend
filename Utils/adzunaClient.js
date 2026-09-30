@@ -31,8 +31,13 @@ import "dotenv/config";
 const API_BASE = "https://api.adzuna.com/v1/api/jobs";
 const MAX_RESULTS_PER_PAGE = 50;
 const REQUEST_TIMEOUT_MS = Number(process.env.ADZUNA_TIMEOUT_MS) || 30000;
-// Adzuna 503s when requests come back to back. Measured: three rapid calls in
-// a row failed where the same calls at ~3s spacing all returned 200.
+// Adzuna limits CONCURRENCY, not requests per second. Measured 2026-09-29:
+// 5 requests issued simultaneously -> 2 answered 429; 12 simultaneously -> 6
+// answered 429; but 8 issued back to back with no added delay all returned
+// 200, because each one waits on the previous response and the round trip is
+// ~3s on its own. So the gap below costs almost nothing - Adzuna's own
+// latency already paces us - and what actually keeps us under the limit is
+// that the pacer is shared, so nothing ever has two requests in flight.
 const MIN_REQUEST_GAP_MS = Number(process.env.ADZUNA_MIN_GAP_MS) || 3000;
 const MAX_RETRIES = 3;
 
@@ -66,6 +71,72 @@ export function adzunaCredentials() {
  * rather than sent blank, because Adzuna treats an empty keyword as a filter
  * that matches nothing instead of one that matches everything.
  */
+// ── Search-term ladder ───────────────────────────────────────────────
+//
+// Adzuna's `what` requires EVERY word to appear, so a role title copied out
+// of a client brief fails silently the moment it gets specific. Measured
+// 2026-09-30 over 50 clients: "supply chain analyst" returned 39 jobs while
+// "supply chain planning analyst" returned 0, and 11 of 50 clients got
+// nothing at all for exactly this reason - not because no such jobs exist.
+//
+// Rather than make the operator guess which words to drop, try the term they
+// saved, then progressively broader forms, and stop at the first that returns
+// anything.
+
+// Written the short way in briefs, spelled out in job titles.
+const TERM_EXPANSIONS = new Map(Object.entries({
+  sr: "senior", jr: "junior", mgr: "manager", mgmt: "management",
+  eng: "engineer", dev: "developer", admin: "administrator", ops: "operations",
+  qa: "quality assurance", ba: "business analyst", pm: "project manager",
+}));
+
+// Seniority is a filter the judge applies on the title anyway, and including
+// it in `what` throws away every posting that words it differently.
+const SENIORITY_WORDS = new Set([
+  "senior", "junior", "lead", "principal", "staff", "associate", "assistant",
+  "entry", "level", "mid", "chief", "head", "director", "vp", "intern",
+]);
+
+/** The saved term reduced to lowercase words, abbreviations expanded. */
+export function normalizeTerm(what) {
+  return String(what || "")
+    .toLowerCase()
+    .replace(/\(.*?\)/g, " ")
+    .replace(/[^a-z0-9+#\s]/g, " ")
+    .split(/\s+/)
+    .filter(Boolean)
+    .flatMap((w) => (TERM_EXPANSIONS.get(w) || w).split(" "));
+}
+
+/**
+ * Progressively broader queries for one saved term, widest last.
+ *
+ * The first entry is always what the operator actually saved, so a term that
+ * already works is used verbatim and the rest is never reached.
+ */
+export function searchLadder(what) {
+  const saved = String(what || "").trim();
+  const ladder = [];
+  const push = (v) => {
+    const t = String(v || "").trim();
+    if (t && !ladder.some((x) => x.toLowerCase() === t.toLowerCase())) ladder.push(t);
+  };
+  push(saved);
+
+  const words = normalizeTerm(saved);
+  if (!words.length) return ladder;
+
+  // Without the seniority words, which `what` matches literally.
+  const core = words.filter((w) => !SENIORITY_WORDS.has(w));
+  const base = core.length ? core : words;
+  push(base.join(" "));
+
+  // Then the tail of the phrase: the head noun keeps the most meaning, and
+  // the words nearest it qualify it ("...planning analyst", "...analyst").
+  for (let n = Math.min(3, base.length - 1); n >= 1; n -= 1) push(base.slice(-n).join(" "));
+  return ladder;
+}
+
 export function buildQuery(settings = {}, { appId, appKey } = {}) {
   const q = new URLSearchParams();
   if (appId) q.set("app_id", appId);

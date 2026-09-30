@@ -3,7 +3,7 @@ import { JobApiSettings } from "../Schema_Models/JobApiSettings.js";
 import { ProfileModel } from "../Schema_Models/ProfileModel.js";
 import { JobModel } from "../Schema_Models/JobModel.js";
 import { UserModel } from "../Schema_Models/UserModel.js";
-import { fetchPage, mapJob, adzunaCredentials } from "../Utils/adzunaClient.js";
+import { fetchPage, mapJob, adzunaCredentials, searchLadder } from "../Utils/adzunaClient.js";
 import { judgeJobs } from "../Utils/apiJudge.js";
 import { checkCap } from "../Utils/dailyCapGuard.js";
 
@@ -139,18 +139,30 @@ export const runJobApiScrape = async (req, res) => {
     const seen = new Set();
     const jobs = [];
     let fetchError = null;
-    for (let page = 1; page <= maxPages; page += 1) {
-      const r = await fetchPage(settings, page);
-      if (!r.ok) { fetchError = r; break; }
-      if (!r.results.length) break;            // ran out of results
-      for (const raw of r.results) {
-        const m = mapJob(raw);
-        if (m && !seen.has(m.jobId)) { seen.add(m.jobId); jobs.push(m); }
+    let usedTerm = settings.what || "";
+
+    // Adzuna's `what` needs EVERY word to match, so a role title copied out
+    // of a brief returns nothing the moment it gets specific - measured over
+    // 50 clients, 11 got zero results for that reason alone while a term one
+    // word shorter returned hundreds. Try what the operator saved first, then
+    // progressively broader forms, and stop at the first that finds anything.
+    // A term that already works never reaches the second rung.
+    const ladder = searchLadder(settings.what);
+    for (const term of (ladder.length ? ladder : [settings.what])) {
+      for (let page = 1; page <= maxPages; page += 1) {
+        const r = await fetchPage({ ...settings, what: term }, page);
+        if (!r.ok) { fetchError = r; break; }
+        if (!r.results.length) break;            // ran out of results
+        for (const raw of r.results) {
+          const m = mapJob(raw);
+          if (m && !seen.has(m.jobId)) { seen.add(m.jobId); jobs.push(m); }
+        }
+        // No point fetching jobs the cap can never accept. Judging rejects
+        // most of what it sees, so fetch a generous multiple, not exactly
+        // `remaining`.
+        if (jobs.length >= remaining * 10) break;
       }
-      // No point fetching jobs the cap can never accept. Judging rejects
-      // most of what it sees, so fetch a generous multiple, not exactly
-      // `remaining`.
-      if (jobs.length >= remaining * 10) break;
+      if (jobs.length || fetchError) { usedTerm = term; break; }
     }
     if (!jobs.length) {
       return res.status(200).json({
@@ -226,6 +238,10 @@ export const runJobApiScrape = async (req, res) => {
       success: true,
       outcome: pushed >= remaining ? "cap-reached" : "done",
       fetched: jobs.length,
+      // Which term actually returned these. Differs from the saved one when
+      // the ladder had to broaden it, and the operator should see that.
+      searchTerm: usedTerm,
+      broadened: usedTerm !== (settings.what || ""),
       alreadyHad: jobs.length - fresh.length,
       judged: fresh.length,
       picked: picks.length,
