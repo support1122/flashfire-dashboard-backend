@@ -619,8 +619,8 @@ export const profileSchema = new mongoose.Schema({
   // Per-client scrape-source allowlist for the JR-direct extension. Values are
   // site slugs: "jobright", "indeed" (ca.indeed.com), "reed" (reed.co.uk),
   // "flexa" (flexa.careers), "hiringcafe" (hiringcafe.com), "seek" (seek.com),
-  // "jora" (jora.com), "careerone" (careerone.com.au) and/or "adzuna"
-  // (adzuna.com.au). The allowed set is enforced by VALID_SOURCES in
+  // "jora" (jora.com), "careerone" (careerone.com.au), "adzuna"
+  // (adzuna.com.au) and/or "linkedin" (linkedin.com/jobs, operator-driven only). The allowed set is enforced by VALID_SOURCES in
   // Controllers/UpdateScrapeSources.js. The extension only captures cards from sites in this list
   // for the selected client. Empty/unset
   // → defaults to ["jobright"] (JobRight-only) on the extension side, so a

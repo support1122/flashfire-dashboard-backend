@@ -1,6 +1,6 @@
 // UpdateScrapeSources: set the per-client scrape-source allowlist.
 //
-// Input  : POST /update-scrape-sources  { email, scrapeSources: ["jobright","indeed","reed","flexa","hiringcafe","seek","jora","careerone","adzuna"] }
+// Input  : POST /update-scrape-sources  { email, scrapeSources: ["jobright","indeed","reed","flexa","hiringcafe","seek","jora","careerone","adzuna","linkedin"] }
 // Output : { success, profile? } | { success:false, error, message }
 //
 // Used by the clients-tracking AI Summary admin tab ("Scrape sources" card).
@@ -14,7 +14,7 @@ import { ProfileModel } from "../Schema_Models/ProfileModel.js";
 // KNOWN_SOURCES in jr-direct-extension/background.js. A slug missing here is
 // silently filtered out of the save, so the portal shows it ticked and the
 // extension never sees it.
-const VALID_SOURCES = ["jobright", "indeed", "reed", "flexa", "hiringcafe", "seek", "jora", "careerone", "adzuna"];
+const VALID_SOURCES = ["jobright", "indeed", "reed", "flexa", "hiringcafe", "seek", "jora", "careerone", "adzuna", "linkedin"];
 
 export default async function UpdateScrapeSources(req, res) {
   try {
