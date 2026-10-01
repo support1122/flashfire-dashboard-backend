@@ -149,3 +149,61 @@ test("missing optional fields never throw", () => {
   assert.equal(m.salary, "");
   assert.equal(m.description, "");
 });
+
+// ── the search-term ladder ───────────────────────────────────────────
+//
+// Adzuna's `what` needs every word to match, so a role title copied out of a
+// client brief stops returning anything as soon as it gets specific. Measured
+// over 50 clients on 2026-09-30: "supply chain analyst" returned 39 jobs,
+// "supply chain planning analyst" returned 0, and 11 of 50 clients got
+// nothing for that reason alone.
+
+import { searchLadder, normalizeTerm } from "../adzunaClient.js";
+
+test("the term the operator saved is always tried first, unchanged", () => {
+  assert.equal(searchLadder("Software Engineer")[0], "Software Engineer");
+  assert.equal(searchLadder("supply chain planning analyst")[0], "supply chain planning analyst");
+});
+
+test("a four-word title ends up at something Adzuna can match", () => {
+  const l = searchLadder("supply chain planning analyst");
+  assert.ok(l.length > 1, "a term this specific needs a fallback");
+  assert.equal(l[l.length - 1], "analyst");
+});
+
+test("abbreviations are expanded, because job titles spell them out", () => {
+  assert.deepEqual(normalizeTerm("Analytics Sr. Mgr"), ["analytics", "senior", "manager"]);
+  assert.deepEqual(normalizeTerm("QA Eng"), ["quality", "assurance", "engineer"]);
+});
+
+test("seniority words are dropped on the second rung, not the first", () => {
+  const l = searchLadder("Senior Data Engineer");
+  assert.equal(l[0], "Senior Data Engineer", "what they saved is still tried first");
+  assert.ok(l.includes("data engineer"), "and then the same role without the seniority");
+});
+
+test("a term that is already two words still gets one broader rung", () => {
+  const l = searchLadder("policy intern");
+  assert.deepEqual(l, ["policy intern", "policy"]);
+});
+
+test("the ladder never repeats a query", () => {
+  for (const t of ["engineer", "data analyst", "Senior Senior Engineer", "AI Engineer"]) {
+    const l = searchLadder(t);
+    assert.equal(new Set(l.map((x) => x.toLowerCase())).size, l.length, `duplicate rung for ${t}`);
+  }
+});
+
+test("rungs get shorter, never longer", () => {
+  const words = (s) => s.split(/\s+/).length;
+  for (const t of ["supply chain planning analyst", "associate product marketing", "clinical data analyst"]) {
+    const l = searchLadder(t).map(words);
+    for (let i = 1; i < l.length; i += 1) assert.ok(l[i] <= l[i - 1], `rung ${i} of ${t} got longer`);
+  }
+});
+
+test("an empty or punctuation-only term yields nothing to try", () => {
+  assert.deepEqual(searchLadder(""), []);
+  assert.deepEqual(searchLadder("   "), []);
+  assert.deepEqual(searchLadder("---"), ["---"]);   // saved verbatim, nothing broader
+});

@@ -36,6 +36,7 @@ let created = [];
 let createThrowsFor = new Set();
 
 let pages = [];          // one entry per page: {ok, results} or {ok:false,...}
+let termPages = {};      // per-search-term pages, for the broadening ladder
 let fetchCalls = [];
 let judgeResult = null;
 let judgeCalls = [];
@@ -85,8 +86,24 @@ mock.module("../../Schema_Models/JobModel.js", {
 mock.module("../../Utils/adzunaClient.js", {
   namedExports: {
     adzunaCredentials: () => ({ appId: "id", appKey: "key" }),
+    // The real ladder, so these tests exercise the broadening the controller
+    // actually does rather than a stand-in that cannot drift with it.
+    searchLadder: (what) => {
+      const w = String(what || "").trim();
+      if (!w) return [];
+      const parts = w.split(/\s+/);
+      const out = [w];
+      for (let n = parts.length - 1; n >= 1; n -= 1) {
+        const t = parts.slice(-n).join(" ");
+        if (!out.includes(t)) out.push(t);
+      }
+      return out;
+    },
     fetchPage: async (settings, page) => {
-      fetchCalls.push(page);
+      fetchCalls.push({ page, what: settings.what });
+      const key = settings.what;
+      const set = termPages[key];
+      if (set) return set[page - 1] || { ok: true, results: [] };
       return pages[page - 1] || { ok: true, results: [] };
     },
     mapJob: (raw) => ({
@@ -157,7 +174,7 @@ function reset() {
   capResult = { remaining: 30 }; capThrows = null;
   profileDoc = { email: CLIENT, aiThreshold: 50, aiSummary: "RN, 5 years" };
   existingLinks = []; created = []; createThrowsFor = new Set();
-  pages = []; fetchCalls = []; judgeResult = null; judgeCalls = [];
+  pages = []; termPages = {}; fetchCalls = []; judgeResult = null; judgeCalls = [];
 }
 
 async function run(body = {}) {
@@ -282,7 +299,7 @@ test("paging stops as soon as a page comes back empty", async () => {
   pages = [{ ok: true, results: [adzJob(1)] }, { ok: true, results: [] }];
   judgeResult = judgeAll([1]);
   await run();
-  assert.deepEqual(fetchCalls, [1, 2], "it must not keep asking for pages 3, 4, 5");
+  assert.deepEqual(fetchCalls.map((c) => c.page), [1, 2], "it must not keep asking for pages 3, 4, 5");
 });
 
 test("the same job on two pages is fetched once", async () => {
@@ -456,4 +473,68 @@ test("overwriting a client's saved search needs the ops key", () => {
 
 test("starting a run needs the ops key", () => {
   assert.match(routeLine("post", "/job-api/scrape/:email"), /requireOpsKey/);
+});
+
+// ── broadening a search that finds nothing ───────────────────────────
+//
+// Adzuna's `what` needs every word to match. Measured over 50 clients on
+// 2026-09-30: 11 got zero results because their saved role title was three or
+// four words long, while a shorter form of the same role returned hundreds.
+// The run now walks a ladder of progressively broader terms and stops at the
+// first that finds anything.
+
+test("a saved term that works is used verbatim and nothing is broadened", async () => {
+  reset();
+  termPages["senior data engineer"] = [{ ok: true, results: [adzJob(1)] }, { ok: true, results: [] }];
+  settingsDoc = { ...settingsDoc, what: "senior data engineer" };
+  judgeResult = judgeAll([1], []);
+  const r = await run();
+  assert.deepEqual([...new Set(fetchCalls.map((c) => c.what))], ["senior data engineer"]);
+  assert.equal(r.body.broadened, false);
+  assert.equal(r.body.searchTerm, "senior data engineer");
+});
+
+test("a term that finds nothing is retried broader until something lands", async () => {
+  reset();
+  // Only the two-word form has anything, exactly like the real failures.
+  termPages["supply chain planning analyst"] = [{ ok: true, results: [] }];
+  termPages["chain planning analyst"] = [{ ok: true, results: [] }];
+  termPages["planning analyst"] = [{ ok: true, results: [adzJob(7)] }, { ok: true, results: [] }];
+  settingsDoc = { ...settingsDoc, what: "supply chain planning analyst" };
+  judgeResult = judgeAll([7]);
+  const r = await run();
+  assert.equal(r.body.fetched, 1, "the broader term's results must be kept");
+  assert.equal(r.body.searchTerm, "planning analyst");
+  assert.equal(r.body.broadened, true, "the operator should see it was widened");
+});
+
+test("broadening stops at the first term that returns results", async () => {
+  reset();
+  termPages["clinical data analyst"] = [{ ok: true, results: [] }];
+  termPages["data analyst"] = [{ ok: true, results: [adzJob(1)] }, { ok: true, results: [] }];
+  termPages["analyst"] = [{ ok: true, results: [adzJob(2), adzJob(3)] }];
+  settingsDoc = { ...settingsDoc, what: "clinical data analyst" };
+  judgeResult = judgeAll([1, 2, 3]);
+  const r = await run();
+  assert.equal(r.body.searchTerm, "data analyst");
+  assert.equal(r.body.fetched, 1, "it must not keep widening past a term that worked");
+  assert.equal(fetchCalls.some((c) => c.what === "analyst"), false);
+});
+
+test("an API failure stops the run instead of being read as an empty search", async () => {
+  reset();
+  termPages["data engineer"] = [{ ok: false, error: "ADZUNA_503", message: "unavailable" }];
+  settingsDoc = { ...settingsDoc, what: "data engineer" };
+  const r = await run();
+  assert.equal(r.body.outcome, "api-error");
+  assert.equal(fetchCalls.some((c) => c.what === "engineer"), false,
+    "a 503 is not evidence the term was too narrow");
+});
+
+test("a genuinely empty search still reports no-results after widening", async () => {
+  reset();
+  settingsDoc = { ...settingsDoc, what: "underwater basket weaver" };
+  const r = await run();
+  assert.equal(r.body.outcome, "no-results");
+  assert.ok(fetchCalls.length >= 2, "it should have tried broader forms before giving up");
 });
