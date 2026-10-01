@@ -334,7 +334,7 @@ export const profileSchema = new mongoose.Schema({
   },
   currency: {
     type: String,
-    enum: ["USD", "GBP", "CAD", "INR"],
+    enum: ["USD", "GBP", "CAD", "AUD", "INR"],
     default: "USD",
   },
   preferredLocations: {
