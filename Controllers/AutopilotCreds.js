@@ -8,6 +8,23 @@ import { checkCap, DEFAULT_DAILY_CAP, startOfTodayIST, CAP_WINDOW_LABEL } from "
 // password always wins over it.
 const DEFAULT_JR_PASSWORD = "Jobhunt@2026";
 
+// The JobRight login belongs to the CLIENT, never to the operator setting it
+// up. An operator's own address here is silent and expensive: every run for
+// that client signs into the OPERATOR's JobRight account and scrapes someone
+// else's recommendations, and nothing in the UI shows it. Found on
+// 2026-10-03 on two live rows, both saved as sohith@flashfirehq.com.
+//
+// Only FlashFire's own domains are refused, not "anything that is not the
+// client's email" - a client who signed up to JobRight with a second personal
+// address is legitimate and must still be allowed.
+const OPERATOR_EMAIL_DOMAINS = ["flashfirehq.com", "flashfirehq", "flashfirejobs.com", "flashfire.com"];
+
+export function isOperatorEmail(addr) {
+  const domain = String(addr || "").toLowerCase().trim().split("@")[1] || "";
+  if (!domain) return false;
+  return OPERATOR_EMAIL_DOMAINS.some((d) => domain === d || domain.endsWith(`.${d}`));
+}
+
 // Autopilot credential store - see Schema_Models/AutopilotCreds.js for what
 // lives here and why it is plaintext. Every route below is mounted behind
 // requireOpsKey (x-ops-key header); the list route still never returns secrets.
@@ -188,9 +205,20 @@ export const provisionAutopilotCreds = async (req, res) => {
       .select("jrEmail jrPassword")
       .lean();
 
+    // An operator's own address saved as the client's JobRight login is worse
+    // than a blank one: the run signs in successfully, to the wrong account,
+    // and scrapes somebody else's recommendations. So it is treated as a
+    // blank and corrected here, which makes pressing "Yes" in Client Job
+    // Analysis self-healing rather than a no-op on an already-broken row.
+    //
+    // The password goes with it. A password paired with the operator's
+    // account cannot open the client's, so keeping it would just swap a
+    // wrong-account login for a failed one.
+    const wrongOwner = isOperatorEmail(existing?.jrEmail);
+
     const set = {};
-    if (!String(existing?.jrEmail || "").trim()) set.jrEmail = email;
-    if (!String(existing?.jrPassword || "").trim()) set.jrPassword = DEFAULT_JR_PASSWORD;
+    if (wrongOwner || !String(existing?.jrEmail || "").trim()) set.jrEmail = email;
+    if (wrongOwner || !String(existing?.jrPassword || "").trim()) set.jrPassword = DEFAULT_JR_PASSWORD;
     if (updatedBy) set.updatedBy = updatedBy;
 
     // Nothing to fill and no row to create: say so rather than writing an
@@ -211,6 +239,11 @@ export const provisionAutopilotCreds = async (req, res) => {
       clientEmail: email,
       created,
       filled,                       // which blanks this call populated
+      // True when this call replaced an operator's address with the client's.
+      // Worth surfacing: it means the client had been scraping the wrong
+      // JobRight account until now.
+      correctedOwner: wrongOwner,
+      previousJrEmail: wrongOwner ? existing.jrEmail : undefined,
       jrEmail: after?.jrEmail || "",
       // Never echo the password. The autopilot reads it from GET
       // /autopilot/creds/:email, which is behind the same ops key; this route
@@ -235,6 +268,19 @@ export const putAutopilotCreds = async (req, res) => {
     const set = {};
     for (const k of allowed) {
       if (typeof req.body?.[k] === "string") set[k] = req.body[k].trim();
+    }
+
+    // Refuse an operator's own address as the client's JobRight login. The
+    // Creds dialog is a free text box, and once saved this mistake is
+    // invisible - the run just quietly scrapes the wrong account.
+    if (set.jrEmail && isOperatorEmail(set.jrEmail)) {
+      return res.status(400).json({
+        success: false,
+        error: "OPERATOR_EMAIL_NOT_ALLOWED",
+        message: `${set.jrEmail} is a FlashFire address. The JobRight login must be the `
+          + `client's own account, or every run for ${email} signs into yours. `
+          + `Leave it blank to use ${email} with the standard password.`,
+      });
     }
 
     // dailyCap is the name that means what it does; maxJobs is accepted so an

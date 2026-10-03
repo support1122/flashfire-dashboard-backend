@@ -206,3 +206,131 @@ test("a database failure is a 500, not a half-done write reported as success", a
   assert.equal(res.statusCode, 500);
   assert.equal(res.body.success, false);
 });
+
+// ── the JobRight login must be the client's, never an operator's ─────
+//
+// Found live on 2026-10-03: two clients had jrEmail sohith@flashfirehq.com
+// with a hand-typed password. Every run for them signed into the operator's
+// JobRight account and scraped his recommendations instead of theirs, and
+// nothing anywhere showed it - the row looked fully provisioned.
+
+import { isOperatorEmail } from "../../Controllers/AutopilotCreds.js";
+
+test("a FlashFire address is recognised as an operator's", () => {
+  for (const a of ["sohith@flashfirehq.com", "sarah@flashfirehq", "ops@flashfirejobs.com",
+                   "SOHITH@FlashFireHQ.com", "  admin@flashfirehq.com  "]) {
+    assert.equal(isOperatorEmail(a), true, `should have been refused: ${a}`);
+  }
+});
+
+test("a client's own address is not", () => {
+  for (const a of ["rijuljain17@gmail.com", "manasahegde225@gmail.com",
+                   "someone@outlook.com", "a.b@university.edu"]) {
+    assert.equal(isOperatorEmail(a), false, `should have been allowed: ${a}`);
+  }
+});
+
+test("a lookalike domain is not mistaken for ours", () => {
+  // Refusing these would block a real client for no reason.
+  assert.equal(isOperatorEmail("someone@notflashfirehq.com.evil.com"), false);
+  assert.equal(isOperatorEmail("someone@flashfirehq.com.co"), false);
+});
+
+test("a subdomain of ours still counts as ours", () => {
+  assert.equal(isOperatorEmail("bot@mail.flashfirehq.com"), true);
+});
+
+test("blank and malformed input is not treated as an operator address", () => {
+  for (const a of ["", null, undefined, "not-an-email", "@", "no-domain@"]) {
+    assert.equal(isOperatorEmail(a), false);
+  }
+});
+
+// ── pressing "Yes" heals a row that has the wrong owner ──────────────
+//
+// "Fill blanks only" is right for a client's own custom password, and wrong
+// for an operator's address: that row is not incomplete, it is pointing at
+// the wrong account, and leaving it alone means pressing Yes does nothing
+// while the client keeps scraping somebody else's recommendations. Two live
+// rows sat like that until 2026-10-03.
+
+test("an operator's address is replaced with the client's own", async () => {
+  const { res, store } = await provision({
+    clientEmail: "client@example.com",
+    jrEmail: "sohith@flashfirehq.com",
+    jrPassword: "Ls..U33Ey#2qhDU",
+  });
+  assert.equal(res.statusCode, 200);
+  assert.equal(store.doc.jrEmail, "client@example.com");
+  assert.equal(res.body.correctedOwner, true);
+  assert.equal(res.body.previousJrEmail, "sohith@flashfirehq.com");
+});
+
+test("the password paired with that wrong account is reset too", async () => {
+  // Keeping it would swap a wrong-account login for a failed one.
+  const { store } = await provision({
+    clientEmail: "client@example.com",
+    jrEmail: "sohith@flashfirehq.com",
+    jrPassword: "Ls..U33Ey#2qhDU",
+  });
+  assert.equal(store.doc.jrPassword, DEFAULT_JR_PASSWORD);
+});
+
+test("a client's own custom password is still never overwritten", async () => {
+  // The whole point of "fill blanks only" - this must not regress.
+  const { res, store } = await provision({
+    clientEmail: "client@example.com",
+    jrEmail: "client@example.com",
+    jrPassword: "theirOwnPassword123",
+  });
+  assert.equal(store.doc.jrPassword, "theirOwnPassword123");
+  assert.equal(res.body.correctedOwner, false);
+  assert.deepEqual(res.body.filled, []);
+});
+
+test("a client using a second personal address keeps it", async () => {
+  // Only FlashFire domains are wrong. A different gmail is a real choice.
+  const { res, store } = await provision({
+    clientEmail: "client@example.com",
+    jrEmail: "client.alt@gmail.com",
+    jrPassword: DEFAULT_JR_PASSWORD,
+  });
+  assert.equal(store.doc.jrEmail, "client.alt@gmail.com");
+  assert.equal(res.body.correctedOwner, false);
+});
+
+test("pressing Yes twice on a healed row changes nothing the second time", async () => {
+  const { store } = await provision({
+    clientEmail: "client@example.com",
+    jrEmail: "sohith@flashfirehq.com",
+    jrPassword: "whatever",
+  });
+  const healed = { ...store.doc };
+  const again = await provision(healed);
+  assert.equal(again.res.body.correctedOwner, false);
+  assert.deepEqual(again.res.body.filled, []);
+  assert.equal(again.store.doc.jrEmail, "client@example.com");
+  assert.equal(again.store.doc.jrPassword, DEFAULT_JR_PASSWORD);
+});
+
+test("the corrected row is auto-login ready", async () => {
+  const { res } = await provision({
+    clientEmail: "client@example.com",
+    jrEmail: "ops@flashfirejobs.com",
+    jrPassword: "x",
+  });
+  assert.equal(res.body.autoLoginReady, true);
+  assert.equal(res.body.jrEmail, "client@example.com");
+  assert.equal(res.body.hasJrPassword, true);
+});
+
+test("the response never echoes the password", async () => {
+  const { res } = await provision({
+    clientEmail: "client@example.com",
+    jrEmail: "sohith@flashfirehq.com",
+    jrPassword: "Ls..U33Ey#2qhDU",
+  });
+  const body = JSON.stringify(res.body);
+  assert.equal(body.includes("Ls..U33Ey"), false, "the old password must not leak back");
+  assert.equal(body.includes(DEFAULT_JR_PASSWORD), false, "nor the new one");
+});
