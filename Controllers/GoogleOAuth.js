@@ -61,7 +61,7 @@ import { UserModel } from "../Schema_Models/UserModel.js";
 import { ProfileModel } from "../Schema_Models/ProfileModel.js";
 import Operations from "../Schema_Models/Operations.js";
 import { OAuth2Client } from "google-auth-library";
-import { signAuthToken, normalizeEmail } from "../Utils/AuthToken.js";
+import { signAuthToken, normalizeEmail, CLIENT_SESSION_EXPIRY } from "../Utils/AuthToken.js";
 import dotenv from 'dotenv';
 dotenv.config();
 
@@ -176,7 +176,7 @@ const GoogleOAuth = async (req, res) => {
           let profileLookUp = await findByEmail(ProfileModel, canonicalEmail);
           const hasProfile = profileLookUp && profileLookUp.email && profileLookUp.email.length > 0;
 
-          const tokenNew = signAuthToken({ email: canonicalEmail, name: userDetails?.name });
+          const tokenNew = signAuthToken({ email: canonicalEmail, name: userDetails?.name }, { expiresIn: CLIENT_SESSION_EXPIRY });
 
           return res.status(200).json({
                message: 'Login Success..!',
