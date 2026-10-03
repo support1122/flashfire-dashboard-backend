@@ -1,6 +1,6 @@
 import dotenv from 'dotenv'
 import { UserModel } from '../Schema_Models/UserModel.js';
-import { signAuthToken } from '../Utils/AuthToken.js';
+import { signAuthToken, CLIENT_SESSION_EXPIRY } from '../Utils/AuthToken.js';
 import { encrypt } from '../Utils/CryptoHelper.js';
 dotenv.config();
 export default async function Register(req, res) {
@@ -31,7 +31,7 @@ export default async function Register(req, res) {
         // Generate JWT token
         // Same secret every other login path signs with, so this token is
         // accepted by LocalTokenValidator like any other session.
-        const token = signAuthToken({ email, name: newUserDetails.name });
+        const token = signAuthToken({ email, name: newUserDetails.name }, { expiresIn: CLIENT_SESSION_EXPIRY });
         
         res.status(200).json({
             message: 'User registered successfully',

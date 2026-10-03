@@ -12,6 +12,26 @@ const LEGACY_SECRET = process.env.JWT_SECRET_KEY || 'FLASHFIRE';
 
 export const normalizeEmail = (email) => String(email || "").trim().toLowerCase();
 
+/**
+ * How long a CLIENT stays signed in on the portal.
+ *
+ * Clients open portal.flashfirejobs.com every week or two to look at their
+ * applications, not every day, so a 7-day token logged most of them out between
+ * visits. The browser keeps the session in localStorage indefinitely; the JWT
+ * expiry is the thing that actually ends it, so this is the number that matters.
+ *
+ * It is a sliding window, not a hard 30 days. The portal refreshes the token on
+ * load and every five minutes (UserContext), so anyone who visits inside the
+ * window rolls forward and only 30 days of genuine absence signs them out.
+ */
+export const CLIENT_SESSION_EXPIRY = '30d';
+
+/**
+ * Operators are deliberately NOT on CLIENT_SESSION_EXPIRY. Their session reaches
+ * every client's data from a shared office machine, so it keeps the shorter
+ * default. Operator-minted client tokens (Controllers/operations/GetUserDetails)
+ * pass an even shorter explicit 24h and are unaffected by either.
+ */
 export function signAuthToken(payload, options = {}) {
      return jwt.sign(payload, PRIMARY_SECRET, { expiresIn: '7d', ...options });
 }

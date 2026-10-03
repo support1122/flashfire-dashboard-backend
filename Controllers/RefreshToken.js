@@ -1,6 +1,6 @@
 import { UserModel } from "../Schema_Models/UserModel.js";
 import Operations from "../Schema_Models/Operations.js";
-import { signAuthToken, verifyAuthToken, extractToken, normalizeEmail } from "../Utils/AuthToken.js";
+import { signAuthToken, verifyAuthToken, extractToken, normalizeEmail, CLIENT_SESSION_EXPIRY } from "../Utils/AuthToken.js";
 import dotenv from 'dotenv';
 dotenv.config();
 
@@ -59,7 +59,7 @@ export default async function RefreshToken(req, res) {
 
         return res.status(200).json({
             message: 'Token refreshed successfully',
-            token: signAuthToken({ email: user.email, name: user.name }),
+            token: signAuthToken({ email: user.email, name: user.name }, { expiresIn: CLIENT_SESSION_EXPIRY }),
             userDetails: {
                 name: user.name,
                 email: user.email,
