@@ -15,6 +15,11 @@ const InboxThreadSchema = new mongoose.Schema(
     unreadCount: { type: Number, default: 0 },
     labels: { type: [String], default: [] },
     hasAttachments: { type: Boolean, default: false },
+    // Flashfire-only state (read/star/archive/trash). Never written to Gmail:
+    // the app holds no gmail.modify scope. Applied on top of Gmail's labels at sync.
+    localAdd: { type: [String], default: [] },
+    localRemove: { type: [String], default: [] },
+    localReadMessageCount: { type: Number, default: 0 },
     lastSyncedAt: { type: Date, default: () => new Date() }
   },
   { timestamps: true }
