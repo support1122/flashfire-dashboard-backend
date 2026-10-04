@@ -229,6 +229,21 @@ async function gmailPost(accessToken, path, body = {}) {
   return res.json();
 }
 
+// Flashfire holds only gmail.readonly + gmail.send, so read/star/archive/trash
+// are stored locally and layered over Gmail's labels. Nothing here writes to Gmail.
+function applyLocalState(gmailLabels, existing, messageCount) {
+  const add = new Set(existing?.localAdd || []);
+  const remove = new Set(existing?.localRemove || []);
+  // New mail arrived after the thread was marked read -> unread again.
+  if (remove.has("UNREAD") && messageCount > (existing?.localReadMessageCount || 0)) {
+    remove.delete("UNREAD");
+  }
+  const labels = new Set(gmailLabels);
+  add.forEach((l) => labels.add(l));
+  remove.forEach((l) => labels.delete(l));
+  return { labels: Array.from(labels), localAdd: Array.from(add), localRemove: Array.from(remove) };
+}
+
 async function listAndCacheThreads({ user, ownerEmail, q, labelIds, pageToken, maxResults = 25 }) {
   const accessToken = await getAccessToken(user.refreshToken);
   const listParams = { maxResults };
@@ -274,6 +289,10 @@ async function listAndCacheThreads({ user, ownerEmail, q, labelIds, pageToken, m
 
     const lastDate = last.internalDate ? new Date(Number(last.internalDate)) : null;
 
+    const existingThread = await InboxThread.findOne({ ownerEmail, gmailEmail: user.email, threadId: t.id });
+    const local = applyLocalState(Array.from(allLabels), existingThread, msgs.length);
+    if (!local.labels.includes("UNREAD")) unread = 0;
+
     const upserted = await InboxThread.findOneAndUpdate(
       { ownerEmail, gmailEmail: user.email, threadId: t.id },
       {
@@ -288,7 +307,9 @@ async function listAndCacheThreads({ user, ownerEmail, q, labelIds, pageToken, m
         lastMessageAt: lastDate,
         messageCount: msgs.length,
         unreadCount: unread,
-        labels: Array.from(allLabels),
+        labels: local.labels,
+        localAdd: local.localAdd,
+        localRemove: local.localRemove,
         hasAttachments: hasAttach,
         lastSyncedAt: new Date()
       },
@@ -409,11 +430,19 @@ router.post("/threads", async (req, res) => {
       maxResults: Math.min(50, Number(maxResults) || 25)
     });
 
+    // Local archive/trash/etc. change labels after Gmail ran the label query.
+    const wanted = Array.isArray(labelIds) ? labelIds : [];
+    const visible = result.threads.filter(
+      (t) =>
+        wanted.every((l) => t.labels.includes(l)) &&
+        (wanted.includes("TRASH") || !t.labels.includes("TRASH"))
+    );
+
     res.json({
       gmailEmail: user.email,
       nextPageToken: result.nextPageToken,
       resultSizeEstimate: result.resultSizeEstimate,
-      threads: result.threads.map((t) => ({
+      threads: visible.map((t) => ({
         threadId: t.threadId,
         subject: t.subject,
         snippet: t.snippet,
@@ -533,13 +562,14 @@ router.post("/message/:messageId/attachment/:attachmentId", async (req, res) => 
   }
 });
 
+// Read / unread / archive / trash / label changes are Flashfire-local: they update
+// our own cache only and are never sent to Gmail (no gmail.modify scope).
 router.post("/modify", async (req, res) => {
   try {
     const { ownerEmail, gmailEmail, messageIds, threadIds, addLabelIds, removeLabelIds, action } =
       req.body || {};
     const user = await resolveGmailUser(ownerEmail, gmailEmail);
     if (!user) return res.status(404).json({ error: "no_connected_gmail" });
-    const accessToken = await getAccessToken(user.refreshToken);
 
     let add = Array.isArray(addLabelIds) ? [...addLabelIds] : [];
     let remove = Array.isArray(removeLabelIds) ? [...removeLabelIds] : [];
@@ -547,68 +577,55 @@ router.post("/modify", async (req, res) => {
     if (action === "markRead") remove.push("UNREAD");
     else if (action === "markUnread") add.push("UNREAD");
     else if (action === "archive") remove.push("INBOX");
-    else if (action === "trash") {
-      // Trash requires special endpoint
-      const ids = messageIds || threadIds || [];
-      for (const id of ids) {
-        if (messageIds) await gmailPost(accessToken, `messages/${id}/trash`);
-        else await gmailPost(accessToken, `threads/${id}/trash`);
-      }
-      // Update local cache
-      if (messageIds?.length) {
-        await InboxMessage.updateMany(
-          { ownerEmail: user.ownerEmail, gmailEmail: user.email, messageId: { $in: messageIds } },
-          { $addToSet: { labels: "TRASH" } }
-        );
-      }
-      return res.json({ ok: true, trashed: ids.length });
-    }
+    else if (action === "trash") add.push("TRASH");
 
     add = Array.from(new Set(add));
     remove = Array.from(new Set(remove));
+    // add wins if a label was in both lists
+    remove = remove.filter((l) => !add.includes(l));
 
     if (Array.isArray(messageIds) && messageIds.length) {
-      for (const id of messageIds) {
-        await gmailPost(accessToken, `messages/${id}/modify`, { addLabelIds: add, removeLabelIds: remove });
-      }
-      // Update local cache
       const setOps = {};
       if (remove.includes("UNREAD")) setOps.isUnread = false;
       if (add.includes("UNREAD")) setOps.isUnread = true;
-      await InboxMessage.updateMany(
-        { ownerEmail: user.ownerEmail, gmailEmail: user.email, messageId: { $in: messageIds } },
-        {
-          ...(Object.keys(setOps).length ? { $set: setOps } : {}),
-          ...(add.length ? { $addToSet: { labels: { $each: add } } } : {}),
-          ...(remove.length ? { $pull: { labels: { $in: remove } } } : {})
-        }
-      );
+      // $addToSet and $pull on the same field conflict, so apply in two steps.
+      const base = { ownerEmail: user.ownerEmail, gmailEmail: user.email, messageId: { $in: messageIds } };
+      if (Object.keys(setOps).length) await InboxMessage.updateMany(base, { $set: setOps });
+      if (add.length) await InboxMessage.updateMany(base, { $addToSet: { labels: { $each: add } } });
+      if (remove.length) await InboxMessage.updateMany(base, { $pull: { labels: { $in: remove } } });
     }
 
     if (Array.isArray(threadIds) && threadIds.length) {
-      for (const id of threadIds) {
-        await gmailPost(accessToken, `threads/${id}/modify`, { addLabelIds: add, removeLabelIds: remove });
+      const base = { ownerEmail: user.ownerEmail, gmailEmail: user.email, threadId: { $in: threadIds } };
+      if (add.length) {
+        await InboxThread.updateMany(base, {
+          $addToSet: { labels: { $each: add }, localAdd: { $each: add } },
+          $pull: { localRemove: { $in: add } }
+        });
       }
-      // Update local thread cache
-      const incUnread = remove.includes("UNREAD") ? { unreadCount: 0 } : null;
-      await InboxThread.updateMany(
-        { ownerEmail: user.ownerEmail, gmailEmail: user.email, threadId: { $in: threadIds } },
-        {
-          ...(incUnread ? { $set: incUnread } : {}),
-          ...(add.length ? { $addToSet: { labels: { $each: add } } } : {}),
-          ...(remove.length ? { $pull: { labels: { $in: remove } } } : {})
-        }
-      );
+      if (remove.length) {
+        await InboxThread.updateMany(base, {
+          $pull: { labels: { $in: remove }, localAdd: { $in: remove } }
+        });
+        await InboxThread.updateMany(base, { $addToSet: { localRemove: { $each: remove } } });
+      }
+      if (remove.includes("UNREAD")) {
+        await InboxThread.updateMany(base, [
+          { $set: { unreadCount: 0, localReadMessageCount: "$messageCount" } }
+        ]);
+      }
+      if (add.includes("UNREAD")) {
+        await InboxThread.updateMany(base, [{ $set: { unreadCount: { $max: ["$unreadCount", 1] } } }]);
+      }
     }
 
-    res.json({ ok: true });
+    res.json({ ok: true, trashed: action === "trash" ? (threadIds || messageIds || []).length : undefined });
   } catch (err) {
     console.error("[Inbox] modify error:", err?.response?.data || err.message);
     res.status(500).json({ error: err?.message || "modify_failed" });
   }
 });
 
-// Send a reply (uses threadId + In-Reply-To/References for proper threading).
 router.post("/reply", async (req, res) => {
   try {
     const { ownerEmail, gmailEmail, threadId, inReplyTo, references, to, cc, subject, html, text } =
@@ -714,31 +731,40 @@ router.post("/unread-count", async (req, res) => {
     const { ownerEmail, gmailEmail } = req.body || {};
     const user = await resolveGmailUser(ownerEmail, gmailEmail);
     if (!user) return res.status(404).json({ error: "no_connected_gmail" });
-    const accessToken = await getAccessToken(user.refreshToken);
-    const r = await gmailGet(accessToken, "labels/INBOX");
-    const inboxUnread = r.messagesUnread || 0;
+    // Reads happen only inside Flashfire, so count from the local cache
+    // rather than Gmail's label total (which never sees those reads).
+    const inboxUnread = await InboxThread.countDocuments({
+      ownerEmail: user.ownerEmail,
+      gmailEmail: user.email,
+      labels: { $all: ["INBOX", "UNREAD"], $ne: "TRASH" }
+    });
     res.json({ unread: inboxUnread, gmailEmail: user.email });
   } catch (err) {
     res.status(500).json({ error: err?.message || "unread_failed" });
   }
 });
 
-// Star / unstar (helper wrapper around modify).
+// Star / unstar: Flashfire-local, same as /modify.
 router.post("/star", async (req, res) => {
   try {
     const { ownerEmail, gmailEmail, threadIds, messageIds, star } = req.body || {};
     const user = await resolveGmailUser(ownerEmail, gmailEmail);
     if (!user) return res.status(404).json({ error: "no_connected_gmail" });
-    const accessToken = await getAccessToken(user.refreshToken);
-    const ids = threadIds || messageIds || [];
-    for (const id of ids) {
-      const body = star ? { addLabelIds: ["STARRED"] } : { removeLabelIds: ["STARRED"] };
-      if (threadIds) await gmailPost(accessToken, `threads/${id}/modify`, body);
-      else await gmailPost(accessToken, `messages/${id}/modify`, body);
-    }
     if (threadIds?.length) {
-      await InboxThread.updateMany(
-        { ownerEmail: user.ownerEmail, gmailEmail: user.email, threadId: { $in: threadIds } },
+      const base = { ownerEmail: user.ownerEmail, gmailEmail: user.email, threadId: { $in: threadIds } };
+      if (star) {
+        await InboxThread.updateMany(base, {
+          $addToSet: { labels: "STARRED", localAdd: "STARRED" },
+          $pull: { localRemove: "STARRED" }
+        });
+      } else {
+        await InboxThread.updateMany(base, { $pull: { labels: "STARRED", localAdd: "STARRED" } });
+        await InboxThread.updateMany(base, { $addToSet: { localRemove: "STARRED" } });
+      }
+    }
+    if (messageIds?.length) {
+      await InboxMessage.updateMany(
+        { ownerEmail: user.ownerEmail, gmailEmail: user.email, messageId: { $in: messageIds } },
         star ? { $addToSet: { labels: "STARRED" } } : { $pull: { labels: "STARRED" } }
       );
     }
