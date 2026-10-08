@@ -68,3 +68,23 @@ export async function listExtensionCodes(req, res) {
     return res.status(500).json({ error: 'Internal server error' });
   }
 }
+
+export async function deleteExtensionCode(req, res) {
+  try {
+    const { code } = req.params;
+    const trimmedCode = String(code || req.body?.code || '').trim();
+    if (!trimmedCode || !/^\d{5}$/.test(trimmedCode)) {
+      return res.status(400).json({ error: 'Invalid code format' });
+    }
+
+    const result = await ExtensionCode.deleteOne({ code: trimmedCode });
+    if (result.deletedCount === 0) {
+      return res.status(404).json({ error: 'Extension code not found' });
+    }
+
+    return res.json({ success: true, message: 'Extension code deleted successfully' });
+  } catch (error) {
+    console.error('[ExtensionCodes] delete error:', error.message);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+}

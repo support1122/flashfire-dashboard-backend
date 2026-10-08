@@ -134,7 +134,7 @@ import gmailInboxRouter from "./Controllers/GmailInboxRouter.js";
 import { listGroups, createGroup, getGroup, updateGroup } from "./Controllers/RecruiterAutomation.js";
 import { aiGenerateTemplateHandler } from "./Controllers/RecruiterAiTemplate.js";
 import { getWhatsAppGroups, linkUserToGroup, getUserGroupMapping, sendCustomNotification, checkNotificationCooldown } from "./Controllers/whatsapp/WhatsAppController.js";
-import { generateExtensionCode, verifyExtensionCode, listExtensionCodes } from "./Controllers/operations/ExtensionCodes.js";
+import { generateExtensionCode, verifyExtensionCode, listExtensionCodes, deleteExtensionCode } from "./Controllers/operations/ExtensionCodes.js";
 import { fixAppliedDates } from "./Controllers/FixAppliedDates.js";
 
 
@@ -743,6 +743,8 @@ app.post('/api/sessions/revoke-user-sessions', revokeUserSessions);
 app.post('/api/extension-codes/generate', generateExtensionCode);
 app.post('/api/extension-codes/verify', verifyExtensionCode);
 app.get('/api/extension-codes', listExtensionCodes);
+app.delete('/api/extension-codes/:code', deleteExtensionCode);
+app.post('/api/extension-codes/delete', deleteExtensionCode);
 
 app.get("/admin/recruiter-groups", listGroups);
 app.post("/admin/recruiter-groups", createGroup);
