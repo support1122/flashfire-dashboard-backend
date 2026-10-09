@@ -282,11 +282,21 @@ disqualifiers above). Examples: "Role family trumps title cosmetics — pick
 management both work; pure software engineering does not." Never write a
 sentence about seniority or location — both are scoring hints at most, and a
 sentence here becomes an enforced rule downstream.
-If the operator gave a geographic/region/language directive (R9), include the
-one sentence it requires: treat an unconfirmed or out-of-home-country location
-on a country/region/language-keyed title as a skip; keep it only when the
-posting confirms a home-country (US or Canada, per the profile) location. Be
-specific to THIS candidate — no generic guidance.
+ONLY if you also emitted R9's Hard Disqualifier bullet, include the one
+sentence R9 requires: treat an unconfirmed or out-of-home-country location on a
+country/region/language-keyed title as a skip; keep it only when the posting
+confirms a home-country (US or Canada, per the profile) location. Be specific
+to THIS candidate — no generic guidance.
+That sentence is the PARTNER of the R9 bullet and may never appear alone. No
+R9 bullet in Hard Disqualifiers → no location sentence here. It is not a
+default, not a safety net, and not something to add because work authorisation
+looks restrictive — a visa or Green Card says nothing about which postings to
+skip on location.
+If the operator said the candidate is open to all locations, or never to skip
+on location, write NO sentence about location at all, even when a title carries
+a country or region word. Downstream this is an enforced gate: one stray
+sentence makes the grader skip every posting that does not spell its location
+out, and some of those come back tagged as a work-authorisation mismatch.
 ALWAYS include this exact sentence, for every candidate, no exceptions:
 "Co-op (also written 'co op', 'coop', or 'cooperative education') in a job
 title means an internship — apply the candidate's internship rule to co-op
@@ -945,7 +955,9 @@ R9. GEOGRAPHIC / REGION / LANGUAGE market skips — directives saying to skip ro
     → Hard Disqualifiers: emit EXACTLY ONE consolidated bullet in this shape (substitute the client's actual home country — US or Canada — for <COUNTRY>):
       "Skip roles whose title signals a country, region, or language market outside <COUNTRY> (e.g. <verbatim example titles/keywords from the note>) unless the posting clearly confirms a <COUNTRY> location."
       List the operator's example tokens/titles verbatim inside the parentheses, comma-separated.
-    → Notes for Grader: add ONE sentence: treat an unconfirmed or out-of-home-country location on such titles as a SKIP; keep the role only when the posting confirms a <COUNTRY> (or Remote-<COUNTRY>) location.
+    → Notes for Grader: add ONE sentence: treat an unconfirmed or out-of-home-country location on such titles as a SKIP; keep the role only when the posting confirms a <COUNTRY> (or Remote-<COUNTRY>) location. Emit it ONLY alongside the bullet above — never on its own.
+    → R9 does NOT fire just because the candidate holds a visa, a Green Card, or needs sponsorship. Work authorisation is not a geographic directive. It fires only on an explicit operator instruction to skip country/region/language-keyed TITLES.
+    → If the operator said the candidate is open to all locations (or never to skip on location), R9 does NOT fire: emit no geographic bullet and no location sentence.
     → NEVER place these titles in Strong Signals or Target Roles. NEVER omit the bullet — a missed geographic directive is a CRITICAL FAILURE just like a missed exclusion.
 
 R8. The "Notes for Grader" section gets ONLY meta-guidance on how to WEIGH conflicts. NEVER restates the routed directives (except the single geographic-policy sentence required by R9).
@@ -1646,6 +1658,91 @@ export function ensureRequiredSections(text) {
 // # Hard Disqualifiers — regardless of what the model emitted. This is what
 // makes company rejection 100% reliable; the prompt handles the softer
 // pattern-level signals (role family, seniority, location, salary).
+// enforceGeographicNote — strip a location gate from "# Notes for Grader"
+// unless R9 actually fired, and always strip it when the operator said the
+// candidate is open to all locations.
+//
+// Why this is deterministic and not left to the prompt (2026-10-09): Ahaan's
+// brief shipped with "treat an unconfirmed or out-of-home-country location on
+// such titles as a skip; keep the role only when the posting confirms a US
+// location" even though his operator notes say the opposite - "Ahaan is open
+// to all locations. Never skip a relevant job based on location." - and no R9
+// disqualifier bullet existed to partner it. The model emitted R9's Notes
+// sentence on its own.
+//
+// Downstream that sentence is not a hint, it is a gate. The judge skipped
+// every posting whose location was not spelled out, and tagged some of them
+// "auth-mismatch" ("lacks a confirmed US location; this candidate needs a US
+// location") because the extension's reason code for a citizenship/clearance
+// demand is the closest bucket it has. That is why a Green Card holder who is
+// open to all locations was getting WORK-AUTH MISMATCH on US finance
+// internships. The extension is not wrong; the brief lied to it.
+//
+// The invariant: R9's Notes sentence is only ever legitimate as the partner of
+// R9's Hard Disqualifier bullet. No bullet, no sentence.
+
+// The R9 partner bullet, e.g. "Skip roles whose title signals a country,
+// region, or language market outside US (e.g. APAC Analyst) unless the posting
+// clearly confirms a US location."
+const R9_BULLET_RX = /^\s*[-*]\s*skip\s+roles?\s+whose\s+title\s+signals?\b.*\b(?:country|region|language)\b/im;
+
+// Operator saying location must never gate a job.
+const OPEN_TO_ALL_LOCATIONS_RX =
+  /\bopen\s+to\s+(?:all|any)\s+locations?\b|\bnever\s+skip\b[^.]{0,60}\bbased\s+on\s+location\b|\bdo\s+not\s+(?:restrict|skip)\b[^.]{0,60}\blocation\b|\blocation\s+is\s+not\s+a\s+(?:constraint|factor)\b/i;
+
+// A sentence that gates on where the job is. Needs "location" AND a
+// confirmation/absence word, so ordinary prose mentioning a location survives.
+function isLocationGateSentence(sentence) {
+  const t = String(sentence || "");
+  if (!/\blocations?\b/i.test(t)) return false;
+  return /\bunconfirmed\b|\bnot\s+specified\b|\bunspecified\b|\blacks?\s+a\s+confirmed\b|\bconfirms?\b|\bconfirmed\b|\bout-of-home-country\b|\bnon-US\b|\boutside\b/i.test(t);
+}
+
+function enforceGeographicNote(summary, notesText, profile, lockedSections = []) {
+  const text = String(summary || "");
+  if (!text) return text;
+  // An operator-locked Notes section is the operator's call, not ours.
+  if ((lockedSections || []).some((l) => /notes for grader/i.test(String(l)))) return text;
+
+  const haystack = [
+    String(notesText || ""),
+    String(profile?.preferredLocations || ""),
+    Array.isArray(profile?.preferredLocations) ? profile.preferredLocations.join(" ") : "",
+  ].join(" \n ");
+  const openToAll = OPEN_TO_ALL_LOCATIONS_RX.test(haystack) || OPEN_TO_ALL_LOCATIONS_RX.test(text);
+  const r9Fired = R9_BULLET_RX.test(text);
+  // Legitimate R9 with no contradicting directive: leave the brief alone.
+  if (r9Fired && !openToAll) return text;
+
+  const lines = text.split("\n");
+  let inNotes = false;
+  let removed = 0;
+  const out = lines.map((line) => {
+    if (/^\s*#\s/.test(line)) {
+      inNotes = /^\s*#+\s*notes for grader/i.test(line);
+      return line;
+    }
+    if (!inNotes || !line.trim()) return line;
+    // Keep the rest of the line; drop only the offending sentence(s).
+    const sentences = line.match(/[^.!?]+[.!?]*/g) || [line];
+    const kept = sentences.filter((sn) => {
+      if (!isLocationGateSentence(sn)) return true;
+      removed += 1;
+      return false;
+    });
+    const rebuilt = kept.join("").trim();
+    // A bullet emptied of everything disappears; prose keeps its indent.
+    if (!rebuilt || /^[-*]$/.test(rebuilt)) return null;
+    return line.startsWith("-") || line.startsWith("*") ? rebuilt : rebuilt;
+  }).filter((l) => l !== null);
+
+  if (!removed) return text;
+  console.log(
+    `[BuildAiSummary] stripped ${removed} location-gate sentence(s) from Notes for Grader email=${profile?.email || "?"} reason=${openToAll ? "operator says open to all locations" : "no R9 disqualifier bullet to partner it"}`,
+  );
+  return out.join("\n");
+}
+
 function enforceRemovalDirectives(summary, profile, lockedSections = []) {
   const bullets = deterministicRemovalBullets(profile);
   if (!bullets.length) return summary;
@@ -2075,6 +2172,10 @@ async function runForProfileCore(profile, apiKey, reasonTag = "manual", deadline
   // produced its "Skip all roles other than X." catch-all, and strip any
   // flipped-polarity bullet that wrongly excludes a whitelisted role.
   summary = enforceWhitelistDirective(summary, (profile?.aiNotes?.text || "").trim(), activeLocks, profile?.preferredRoles).slice(0, MAX_SUMMARY_CHARS);
+  // Round 5 (deterministic): a "# Notes for Grader" location gate is an
+  // enforced skip downstream, so it may only survive when R9 actually fired
+  // and the operator did not say the candidate is open to all locations.
+  summary = enforceGeographicNote(summary, (profile?.aiNotes?.text || "").trim(), profile, activeLocks).slice(0, MAX_SUMMARY_CHARS);
   // Final structural check — the overlay merge can drop a section too (a saved
   // overlay from an older prompt version, a lock whose body was emptied).
   const missingFinal = missingSections(summary);
