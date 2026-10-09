@@ -77,8 +77,14 @@ export async function deleteExtensionCode(req, res) {
       return res.status(400).json({ error: 'Invalid code format' });
     }
 
-    const result = await ExtensionCode.deleteOne({ code: trimmedCode });
-    if (result.deletedCount === 0) {
+    // Soft delete: keep the row so the code stays reserved. generateExtensionCode
+    // checks every row (active or not), so a deleted code is never re-issued to a
+    // different operator, and old jobs tagged with it keep their attribution.
+    const result = await ExtensionCode.updateOne(
+      { code: trimmedCode, isActive: true },
+      { $set: { isActive: false, deactivatedAt: new Date() } }
+    );
+    if (result.matchedCount === 0) {
       return res.status(404).json({ error: 'Extension code not found' });
     }
 

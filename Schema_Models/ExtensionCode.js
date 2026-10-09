@@ -20,6 +20,10 @@ const ExtensionCodeSchema = new Schema({
     type: Date,
     default: Date.now,
   },
+  deactivatedAt: {
+    type: Date,
+    default: null,
+  },
 });
 
 const ExtensionCode = model('ExtensionCode', ExtensionCodeSchema);
