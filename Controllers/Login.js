@@ -6,6 +6,7 @@ import { signAuthToken, normalizeEmail, CLIENT_SESSION_EXPIRY } from "../Utils/A
 import { decrypt } from "../Utils/CryptoHelper.js";
 import { logActivity } from "../Utils/activityLogger.js";
 import { arePerksDisabled } from "../Utils/clientPerks.js";
+import { hasOpsTools } from "../Utils/opsToolsAccess.js";
 dotenv.config();
 const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
@@ -64,6 +65,7 @@ export default async function Login(req, res) {
                          name: existanceOfUser.name,
                          email: canonicalEmail,
                          perksDisabled,
+                         opsTools: hasOpsTools(canonicalEmail),
                          planType: existanceOfUser.planType,
                          userType: existanceOfUser.userType,
                          planLimit: existanceOfUser.planLimit,

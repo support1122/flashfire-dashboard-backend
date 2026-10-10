@@ -1,6 +1,7 @@
 import { UserModel } from "../Schema_Models/UserModel.js";
 import Operations from "../Schema_Models/Operations.js";
 import { signAuthToken, verifyAuthToken, extractToken, normalizeEmail, CLIENT_SESSION_EXPIRY } from "../Utils/AuthToken.js";
+import { hasOpsTools } from "../Utils/opsToolsAccess.js";
 import dotenv from 'dotenv';
 dotenv.config();
 
@@ -63,6 +64,7 @@ export default async function RefreshToken(req, res) {
             userDetails: {
                 name: user.name,
                 email: user.email,
+                opsTools: hasOpsTools(user.email),
                 planType: user.planType,
                 userType: user.userType,
                 planLimit: user.planLimit,
