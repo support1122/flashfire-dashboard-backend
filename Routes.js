@@ -44,6 +44,7 @@ import GetAiRemovedJobs from "./Controllers/GetAiRemovedJobs.js";
 import ResolveSecondJudgeFlag from "./Controllers/ResolveSecondJudgeFlag.js";
 import PlanSelect from "./Controllers/PlanSelect.js";
 import { arePerksDisabled } from "./Utils/clientPerks.js";
+import { hasOpsTools } from "./Utils/opsToolsAccess.js";
 import { uploadProfileFile, upload } from "./Controllers/UploadProfileFile.js";
 import { uploadSingleFile, uploadBase64File, uploadOnboardingAttachment, upload as uploadMiddleware } from "./Controllers/UploadFile.js";
 import { uploadClientDocument, getClientDocuments, updateClientOptimizationStatus, upload as internalUpload } from "./Controllers/InternalClientUpload.js";
@@ -261,6 +262,7 @@ app.post('/get-updated-user', async (req, res) => {
       addons: existanceOfUser.addons || [],
       amountPaid: existanceOfUser.amountPaid || "0",
       perksDisabled,
+      opsTools: hasOpsTools(existanceOfUser.email),
     })
   } catch (error) {
     // This used to log and never respond, hanging the request until timeout.

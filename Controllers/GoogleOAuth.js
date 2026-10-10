@@ -62,6 +62,7 @@ import { ProfileModel } from "../Schema_Models/ProfileModel.js";
 import Operations from "../Schema_Models/Operations.js";
 import { OAuth2Client } from "google-auth-library";
 import { signAuthToken, normalizeEmail, CLIENT_SESSION_EXPIRY } from "../Utils/AuthToken.js";
+import { hasOpsTools } from "../Utils/opsToolsAccess.js";
 import dotenv from 'dotenv';
 dotenv.config();
 
@@ -183,6 +184,7 @@ const GoogleOAuth = async (req, res) => {
                userDetails: {
                     name: userDetails.name,
                     email: canonicalEmail,
+                    opsTools: hasOpsTools(canonicalEmail),
                     planType: userDetails.planType,
                     userType: userDetails.userType,
                     planLimit: userDetails.planLimit,
