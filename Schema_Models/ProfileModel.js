@@ -470,17 +470,17 @@ export const profileSchema = new mongoose.Schema({
   // cap with TARGET_REACHED so we don't over-fill the tracker. Set in
   // CT RegisterClient or the AI Summary admin tab.
   //
-  // Defaults to 30 so every new client is capped at the standard daily
-  // target out of the box. NOTE: this default only stamps NEWLY created
-  // profiles — pre-existing rows with a null value are not migrated, but
-  // dailyCapGuard.readCap already treats null/0 as the same 30 (its
-  // DEFAULT_DAILY_CAP), so uncapped legacy clients are enforced at 30 too.
-  // There is no "unlimited" value: a positive number sets an explicit cap,
-  // anything else resolves to the 30 default.
+  // Defaults to 25 so every new client is capped at the standard daily
+  // target out of the box (was 30 until 2026-10-13). NOTE: this default only
+  // stamps NEWLY created profiles — pre-existing rows with a null value are
+  // not migrated, but dailyCapGuard.readCap already treats null/0 as the same
+  // 25 (its DEFAULT_DAILY_CAP), so uncapped legacy clients are enforced at 25
+  // too. There is no "unlimited" value: a positive number sets an explicit
+  // cap, anything else resolves to the 25 default.
   targetJobCount: {
     type: Number,
     required: false,
-    default: 30,
+    default: 25,
     min: 0,
     max: 10000,
   },
