@@ -216,6 +216,15 @@ export const JobSchema = new mongoose.Schema({
       type: Number,
       default: 0
     },
+    // Renamed section headings, e.g. { leadership: "ADDITIONAL INFORMATION" }.
+    // Sparse: a section missing here renders with its default heading. Without
+    // this field Mongoose dropped the map on save, so the client's job card and
+    // PDF showed the default heading while the admin editor showed the rename.
+    // Written through Utils/sectionTitles.js.
+    sectionTitles: {
+      type: Object,
+      default: {}
+    },
     createdAt: {
       type: String,
       default: () => new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })
