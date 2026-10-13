@@ -45,6 +45,8 @@ import ResolveSecondJudgeFlag from "./Controllers/ResolveSecondJudgeFlag.js";
 import PlanSelect from "./Controllers/PlanSelect.js";
 import { arePerksDisabled } from "./Utils/clientPerks.js";
 import { hasOpsTools } from "./Utils/opsToolsAccess.js";
+import mongoose from "mongoose";
+import { backfillSectionTitles, resumeServiceTitleReader } from "./Utils/backfillSectionTitles.js";
 import { uploadProfileFile, upload } from "./Controllers/UploadProfileFile.js";
 import { uploadSingleFile, uploadBase64File, uploadOnboardingAttachment, upload as uploadMiddleware } from "./Controllers/UploadFile.js";
 import { uploadClientDocument, getClientDocuments, updateClientOptimizationStatus, upload as internalUpload } from "./Controllers/InternalClientUpload.js";
@@ -682,6 +684,49 @@ app.post('/operations/auto-optimize-saved', queueAutoOptimizeSavedJobs);
 // with no session, and the HMAC in it is the authorisation. GET serves a page
 // for a human; POST is the one-click action Gmail and Yahoo perform on the
 // user's behalf (RFC 8058). See Utils/unsubscribe.js.
+// TEMPORARY - remove once production has been backfilled.
+//
+// GET /maintenance/backfill-section-titles copies each client's renamed resume
+// headings (e.g. "ADDITIONAL INFORMATION") onto the job resumes that lost them.
+// Logic and safety notes live in Utils/backfillSectionTitles.js.
+//
+// NO AUTH, deliberately and only for this one-off. That is tolerable because the
+// operation is idempotent and narrow: it only fills a missing
+// optimizedResume.sectionTitles from the client's own base resume, never
+// overwrites, and a repeat call finds nothing to do. A lock stops two calls from
+// running at once.
+//
+//   ?dryRun=1        report what would change, write nothing
+//   ?email=a@b.com   limit to one client
+let sectionTitlesBackfillRunning = false;
+app.get('/maintenance/backfill-section-titles', async (req, res) => {
+  if (sectionTitlesBackfillRunning) {
+    return res.status(409).json({ error: 'A backfill is already running. Try again when it finishes.' });
+  }
+  const email = String(req.query.email || '').trim().toLowerCase();
+  if (email && !email.includes('@')) {
+    return res.status(400).json({ error: 'email must be an address' });
+  }
+  const apply = !['1', 'true', 'yes'].includes(String(req.query.dryRun || '').toLowerCase());
+
+  sectionTitlesBackfillRunning = true;
+  try {
+    const summary = await backfillSectionTitles({
+      jobs: mongoose.connection.db.collection('jobdbs'),
+      readTitles: resumeServiceTitleReader(process.env.RESUME_API_URL || 'http://localhost:5000'),
+      apply,
+      email,
+      log: (line) => console.log(`[backfill-section-titles]${line}`),
+    });
+    return res.status(200).json(summary);
+  } catch (error) {
+    console.error('[backfill-section-titles] failed:', error);
+    return res.status(500).json({ error: 'Backfill failed', details: error.message });
+  } finally {
+    sectionTitlesBackfillRunning = false;
+  }
+});
+
 app.get('/unsubscribe', Unsubscribe);
 app.post('/unsubscribe', Unsubscribe);
 

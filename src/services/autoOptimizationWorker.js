@@ -1,6 +1,7 @@
 import axios from 'axios';
 import { JobModel } from '../../Schema_Models/JobModel.js';
 import { uploadJSONToR2 } from '../../Utils/r2Storage.js';
+import { sanitizeSectionTitles } from '../../Utils/sectionTitles.js';
 import { DiscordConnect } from '../../Utils/DiscordConnect.js';
 import { buildResumeOptimizationInstructionPrompt } from '../../Utils/resumeOptimizationPrompt.js';
 
@@ -529,6 +530,8 @@ async function processJob(job) {
         version: (job.optimizedResume?.version || 0) + 1,
         createdAt: new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }),
         sectionOrder,
+        // The client's renamed headings, from their base resume.
+        sectionTitles: sanitizeSectionTitles(resumePayload.sectionTitles),
         storageType: 'r2'
       },
       optimizedResumeSeen: false,

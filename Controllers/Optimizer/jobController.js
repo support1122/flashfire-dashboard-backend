@@ -1,5 +1,6 @@
 import { JobModel } from "../../Schema_Models/JobModel.js";
 import { uploadJSONToR2, getJSONFromR2, extractR2Key, isR2Url } from "../../Utils/r2Storage.js";
+import { sectionTitlesFrom } from "../../Utils/sectionTitles.js";
 
 // Test endpoint to verify the controller is working
 export const testJobController = async (req, res) => {
@@ -130,6 +131,9 @@ export const saveChangedSession = async (req, res) => {
                          showPublications: optimizedResume.showPublications ?? false,
                          showTherapeuticAreas: optimizedResume.showTherapeuticAreas ?? false,
                          version: (job.optimizedResume?.version || 0) + 1, // Increment version
+                         // Renamed headings travel with the resume, or the job
+                         // card falls back to "LEADERSHIP & VOLUNTEERING".
+                         sectionTitles: sectionTitlesFrom(optimizedResume),
                          createdAt: new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }),
                          sectionOrder: optimizedResume.sectionOrder || [
                               "personalInfo",
@@ -566,6 +570,7 @@ export const getOptimizedResumesForDocuments = async (req, res) => {
                     showProjects: job.optimizedResume.showProjects,
                     showLeadership: job.optimizedResume.showLeadership,
                     showPublications: job.optimizedResume.showPublications,
+                    sectionTitles: job.optimizedResume.sectionTitles || {},
                     storageType: storageType,
                     sectionOrder: job.optimizedResume.sectionOrder || [
                          "personalInfo",
