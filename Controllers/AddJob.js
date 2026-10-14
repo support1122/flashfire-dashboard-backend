@@ -6,6 +6,7 @@ import { getExclusionBlockReason } from '../Utils/exclusionGuard.js';
 import { sanitizeJobTitle } from '../Utils/jobTitle.js';
 import { checkCap, detectOvershoot, checkPlanCap, enforcePlanCapPostInsert } from '../Utils/dailyCapGuard.js';
 import { jobLinkKey, inspectJobLink, SHARED_FORM_COMPANY_LIMIT } from '../Utils/jobLinkKey.js';
+import { ukSponsorPushBlock } from '../Utils/ukVisaSponsor.js';
 
 // Clamp the judge's verdict into the shape JobModel.aiDecision expects.
 // Returns null when there is nothing worth storing, so a push from an older
@@ -309,7 +310,44 @@ export default async function AddJob(req, res) {
                 });
             }
         }
-        
+
+        // "UK visa sponsors only" (Utils/ukVisaSponsor.js). Operator pushes
+        // only: a client adding a job to their own board is never second-
+        // guessed. The extension files this 403 under "blocked" and moves on,
+        // and it never spends a slot of the daily cap.
+        if (isOpsRole && clientForExclusions) {
+            let sponsorBlock;
+            try {
+                sponsorBlock = await ukSponsorPushBlock({
+                    email: clientForExclusions,
+                    companyName: jobDetails?.companyName,
+                });
+            } catch (e) {
+                console.error('ukSponsorPushBlock failed:', e.message);
+                return res.status(503).json({
+                    success: false,
+                    error: e.code === 'SPONSOR_REGISTER_EMPTY' ? 'SPONSOR_REGISTER_EMPTY' : 'SPONSOR_CHECK_FAILED',
+                    message: e.code === 'SPONSOR_REGISTER_EMPTY'
+                        ? e.message
+                        : 'Could not check the UK sponsor register (DB unavailable). Push refused, try again shortly.',
+                });
+            }
+            if (sponsorBlock) {
+                console.log(JSON.stringify({
+                    event: 'uk.sponsor.block',
+                    client: clientForExclusions,
+                    company: jobDetails?.companyName || '',
+                    reason: sponsorBlock.sponsor?.reason || null,
+                    ts: new Date().toISOString(),
+                }));
+                return res.status(sponsorBlock.status).json({
+                    success: false,
+                    error: sponsorBlock.error,
+                    message: sponsorBlock.message,
+                });
+            }
+        }
+
         // Always set an explicit auto-optimization state so ops can see what happened.
         if (jobDetails.jobDescription?.trim()) {
             jobDetails.autoOptimization = { status: 'pending', attempts: 0 };

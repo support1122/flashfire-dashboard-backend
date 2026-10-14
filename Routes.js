@@ -121,6 +121,7 @@ import {
 import { SaveAiNotes, GetAiNotes } from "./Controllers/SaveAiNotes.js";
 import UpdateTargetJobs from "./Controllers/UpdateTargetJobs.js";
 import UpdateScrapeSources from "./Controllers/UpdateScrapeSources.js";
+import { GetUkSponsorOnly, UpdateUkSponsorOnly, LookupUkSponsor } from "./Controllers/UkVisaSponsors.js";
 import UpdateOpenaiKey from "./Controllers/UpdateOpenaiKey.js";
 import { GetGlobalOpenaiKey, SetGlobalOpenaiKey } from "./Controllers/GlobalOpenaiKey.js";
 import PushHistory from "./Controllers/PushHistory.js";
@@ -518,6 +519,11 @@ app.post("/get-base-resume-data", GetBaseResumeData);
 // Per-client target job count — enforced by /addjob.
 app.post("/update-target-jobs", UpdateTargetJobs);
 app.post("/update-scrape-sources", UpdateScrapeSources);
+// "UK visa sponsors only" switch for UK clients (enforced by /addjob, the
+// Job API run and saveToDashboard via Utils/ukVisaSponsor.js).
+app.get("/uk-sponsor-only", GetUkSponsorOnly);
+app.post("/update-uk-sponsor-only", UpdateUkSponsorOnly);
+app.get("/uk-visa-sponsors/lookup", LookupUkSponsor);
 app.post("/update-openai-key", UpdateOpenaiKey);
 app.get("/admin/global-openai-key", GetGlobalOpenaiKey);
 app.post("/admin/global-openai-key", SetGlobalOpenaiKey);

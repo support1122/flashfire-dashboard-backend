@@ -6,6 +6,7 @@ import { UserModel } from "../Schema_Models/UserModel.js";
 import { fetchPage, mapJob, adzunaCredentials, searchLadder } from "../Utils/adzunaClient.js";
 import { judgeJobs } from "../Utils/apiJudge.js";
 import { checkCap } from "../Utils/dailyCapGuard.js";
+import { ukSponsorGate } from "../Utils/ukVisaSponsor.js";
 
 // "Scrape from Job APIs" - the server-side half of the autopilot's second mode.
 //
@@ -182,7 +183,40 @@ export const runJobApiScrape = async (req, res) => {
       (await JobModel.find({ userID: clientEmail, joblink: { $in: links } }).select("joblink").lean())
         .map((d) => d.joblink),
     );
-    const fresh = jobs.filter((j) => !already.has(j.applyUrl));
+    let fresh = jobs.filter((j) => !already.has(j.applyUrl));
+    const alreadyHad = jobs.length - fresh.length;
+
+    // ---- UK visa sponsors only -------------------------------------
+    // Filtered BEFORE judging, so the judge never spends tokens on a job the
+    // push would refuse anyway. Same rule /addjob applies (Utils/ukVisaSponsor.js).
+    let notSponsor = 0;
+    try {
+      const gate = await ukSponsorGate({ email: clientEmail, profile });
+      if (gate) {
+        const kept = [];
+        // Ten at a time: a page of results can name 250 employers and each
+        // uncached lookup is a query; this keeps the pool free for the app.
+        for (let i = 0; i < fresh.length; i += 10) {
+          const slice = fresh.slice(i, i + 10);
+          const verdicts = await Promise.all(slice.map((j) => gate.check(j.company)));
+          slice.forEach((j, k) => { if (!verdicts[k]) kept.push(j); });
+        }
+        notSponsor = fresh.length - kept.length;
+        fresh = kept;
+      }
+    } catch (e) {
+      // Fail closed, like the cap: pushing unchecked jobs for a sponsor-only
+      // client is the one outcome this switch exists to prevent.
+      return res.status(503).json({ success: false, outcome: "sponsor-check-failed",
+        error: e.code || "SPONSOR_CHECK_FAILED", message: e.message,
+        fetched: jobs.length, judged: 0, picked: 0, pushed: 0 });
+    }
+    if (notSponsor && !fresh.length) {
+      return res.status(200).json({ success: true, outcome: "no-sponsors",
+        message: `None of the ${notSponsor} new jobs are from UK visa sponsors.`,
+        fetched: jobs.length, alreadyHad, notSponsor,
+        judged: 0, picked: 0, pushed: 0 });
+    }
 
     // ---- judge ------------------------------------------------------
     const threshold = Number(profile.aiThreshold) || 50;
@@ -242,7 +276,9 @@ export const runJobApiScrape = async (req, res) => {
       // the ladder had to broaden it, and the operator should see that.
       searchTerm: usedTerm,
       broadened: usedTerm !== (settings.what || ""),
-      alreadyHad: jobs.length - fresh.length,
+      alreadyHad,
+      // Dropped by "UK visa sponsors only" before judging. 0 when the switch is off.
+      notSponsor,
       judged: fresh.length,
       picked: picks.length,
       pushed,

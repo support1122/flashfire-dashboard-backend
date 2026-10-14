@@ -11,6 +11,7 @@ import {
 import { sanitizeJobTitle } from "../Utils/jobTitle.js";
 import { checkCap, detectOvershoot, checkPlanCap, enforcePlanCapPostInsert } from "../Utils/dailyCapGuard.js";
 import { jobLinkKey, inspectJobLink, SHARED_FORM_COMPANY_LIMIT } from "../Utils/jobLinkKey.js";
+import { ukSponsorPushBlock } from "../Utils/ukVisaSponsor.js";
 
 /**
  * Normalize job title/company for duplicate check: trim and collapse multiple spaces.
@@ -299,6 +300,33 @@ export async function saveToDashboard(req, res) {
                         status: "failed",
                         error: "BLOCKED_LOCATION",
                         reason: "Location is blocked for this client.",
+                    });
+                    continue;
+                }
+
+                // "UK visa sponsors only" - same rule /addjob applies
+                // (Utils/ukVisaSponsor.js). Fails closed per client.
+                let sponsorBlock;
+                try {
+                    sponsorBlock = await ukSponsorPushBlock({ email: userEmail, companyName: company });
+                } catch (e) {
+                    console.error("ukSponsorPushBlock failed (saveToDashboard):", e.message);
+                    summary.failedWithError++;
+                    summary.details.push({
+                        user: userEmail,
+                        status: "failed",
+                        error: e.code === "SPONSOR_REGISTER_EMPTY" ? "SPONSOR_REGISTER_EMPTY" : "SPONSOR_CHECK_FAILED",
+                        reason: "Could not check the UK sponsor register. Try again shortly.",
+                    });
+                    continue;
+                }
+                if (sponsorBlock) {
+                    summary.failedWithError++;
+                    summary.details.push({
+                        user: userEmail,
+                        status: "failed",
+                        error: sponsorBlock.error,
+                        reason: sponsorBlock.message,
                     });
                     continue;
                 }

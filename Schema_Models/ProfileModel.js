@@ -639,6 +639,22 @@ export const profileSchema = new mongoose.Schema({
     required: false,
     default: ["jobright"],
   },
+  // "UK visa sponsors only". When true AND the client is a UK client
+  // (dashboardtrackings.clientCountry "UK", or a "£" amountPaid), every
+  // operator push must come from an employer on the Home Office sponsor
+  // register with a Skilled Worker licence; anything else is refused with 403
+  // NOT_UK_VISA_SPONSOR. Enforced server-side in Utils/ukVisaSponsor.js, set in
+  // clients-tracking -> AI Summary tab -> "UK visa sponsors only" (shown for UK
+  // clients only) via POST /update-uk-sponsor-only.
+  ukSponsorOnly: {
+    type: Boolean,
+    required: false,
+    default: false,
+  },
+  ukSponsorOnlyMeta: {
+    updatedAt: { type: Date, required: false, default: null },
+    updatedBy: { type: String, required: false, default: "" },
+  },
   // Operator's per-client OpenAI API key. Used by the JR-direct extension's
   // SW to call api.openai.com directly for the auto-judge step. Stored as
   // plain text per ops decision — extension fetches it on /extension/clientLogin

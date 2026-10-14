@@ -129,6 +129,20 @@ mock.module("../../Utils/dailyCapGuard.js", {
   },
 });
 
+// "UK visa sponsors only". null = gate off for this client (the default);
+// otherwise the set of employers the register accepts.
+let sponsorSet = null;
+let sponsorThrows = null;
+mock.module("../../Utils/ukVisaSponsor.js", {
+  namedExports: {
+    ukSponsorGate: async () => {
+      if (sponsorThrows) throw sponsorThrows;
+      if (!sponsorSet) return null;
+      return { check: async (company) => (sponsorSet.has(company) ? null : { error: "NOT_UK_VISA_SPONSOR" }) };
+    },
+  },
+});
+
 const { getJobApiSettings, putJobApiSettings, runJobApiScrape } =
   await import("../../Controllers/JobApiScrape.js");
 
@@ -175,6 +189,7 @@ function reset() {
   profileDoc = { email: CLIENT, aiThreshold: 50, aiSummary: "RN, 5 years" };
   existingLinks = []; created = []; createThrowsFor = new Set();
   pages = []; termPages = {}; fetchCalls = []; judgeResult = null; judgeCalls = [];
+  sponsorSet = null; sponsorThrows = null;
 }
 
 async function run(body = {}) {
@@ -537,4 +552,45 @@ test("a genuinely empty search still reports no-results after widening", async (
   const r = await run();
   assert.equal(r.body.outcome, "no-results");
   assert.ok(fetchCalls.length >= 2, "it should have tried broader forms before giving up");
+});
+
+// ── UK visa sponsors only ────────────────────────────────────────────
+
+test("sponsor-only client: non-sponsors are dropped before the judge sees them", async () => {
+  reset();
+  sponsorSet = new Set(["Barclays"]);
+  pages = [{ ok: true, results: [
+    adzJob(1, { company: "Barclays" }),
+    adzJob(2, { company: "Tiny Agency" }),
+    adzJob(3, { company: "Barclays" }),
+  ] }];
+  judgeResult = judgeAll(["1", "3"]);
+  const r = await run();
+  assert.equal(r.code, 200);
+  assert.deepEqual(judgeCalls[0].jobs.map((j) => j.jobId), ["adz-1", "adz-3"]);
+  assert.equal(r.body.notSponsor, 1);
+  assert.equal(r.body.pushed, 2);
+  assert.ok(created.every((d) => d.companyName === "Barclays"));
+});
+
+test("sponsor-only client with no sponsors in the batch: nothing judged, nothing pushed", async () => {
+  reset();
+  sponsorSet = new Set();
+  pages = [{ ok: true, results: [adzJob(1, { company: "Tiny Agency" })] }];
+  const r = await run();
+  assert.equal(r.code, 200);
+  assert.equal(r.body.outcome, "no-sponsors");
+  assert.equal(judgeCalls.length, 0);
+  assert.equal(created.length, 0);
+});
+
+test("sponsor check failing refuses the run rather than pushing unchecked jobs", async () => {
+  reset();
+  sponsorThrows = Object.assign(new Error("register empty"), { code: "SPONSOR_REGISTER_EMPTY" });
+  pages = [{ ok: true, results: [adzJob(1)] }];
+  const r = await run();
+  assert.equal(r.code, 503);
+  assert.equal(r.body.error, "SPONSOR_REGISTER_EMPTY");
+  assert.equal(judgeCalls.length, 0);
+  assert.equal(created.length, 0);
 });
