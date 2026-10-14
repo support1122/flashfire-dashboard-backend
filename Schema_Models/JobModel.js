@@ -162,6 +162,22 @@ export const JobSchema = new mongoose.Schema({
     required: false,
     default: null
   },
+  // The written reason an operator gave for moving this card to Removed.
+  // OPERATOR-ONLY: select:false keeps it out of every query (and so out of
+  // every response a client receives) unless a query asks for
+  // "+operatorRemoval". Only /operations/job-removal-note does. Kept apart
+  // from removalReason, which is the client's own reason and is shown to them.
+  // See Utils/operatorRemovalReason.js.
+  operatorRemoval: {
+    type: new mongoose.Schema({
+      reason: { type: String, default: "" },
+      by: { type: String, default: "" },
+      byEmail: { type: String, default: "" },
+      at: { type: Date, default: null },
+    }, { _id: false }),
+    select: false,
+    default: undefined,
+  },
   optimizedResume: {
     // R2 storage key for resume data (replaces heavy resumeData field)
     resumeDataKey: {

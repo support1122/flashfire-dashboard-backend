@@ -35,6 +35,7 @@ import Add_Update_Profile from "./Controllers/Add_Update_Profile.js";
 import AddJob from "./Controllers/AddJob.js";
 import GetAllJobs from "./Controllers/GetAllJobs.js";
 import GetJobAiDecision from "./Controllers/GetJobAiDecision.js";
+import GetJobRemovalNote from "./Controllers/operations/GetJobRemovalNote.js";
 import Unsubscribe from "./Controllers/Unsubscribe.js";
 import Get24HourJobs from "./Controllers/Get24HourJobs.js";
 import StoreJobAndUserDetails, { saveToDashboard } from "./Controllers/StoreJobAndUserDetails.js";
@@ -650,6 +651,8 @@ app.post("/operations/getalljobs", GetAllJobs);
 // Why the extension picked one job. Kept off the list response on purpose -
 // see the projection note in GetAllJobs.js.
 app.post("/operations/job-ai-decision", GetJobAiDecision);
+// Operator-only removal reason (operatorRemoval is select:false everywhere else).
+app.post("/operations/job-removal-note", GetJobRemovalNote);
 // Operator-only: does this client still need their JobRight login saved?
 // Re-verifies the operator against the database - see the controller for why.
 app.post("/operations/jr-creds-status", JrCredsStatus);
