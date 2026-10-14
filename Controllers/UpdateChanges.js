@@ -3,6 +3,7 @@ import { JobModel } from "../Schema_Models/JobModel.js";
 import { UserModel } from "../Schema_Models/UserModel.js";
 import { ProfileModel } from "../Schema_Models/ProfileModel.js";
 import { DiscordConnect } from "../Utils/DiscordConnect.js";
+import { validateOperatorRemovalReason } from "../Utils/operatorRemovalReason.js";
 // isPureLogisticalReason: duplicate/already-applied/posting-closed reasons
 // carry zero preference signal — they still land on the job + Discord, but
 // never enter removalFeedback or trigger a rebuild. Duplicates are already
@@ -259,6 +260,20 @@ const handleUpdateStatus = async (req, res, jobID, userEmail, userDetails) => {
   const { status: baseStatus = '', role, removalReason } = req.body;
   const trimmedStatus = String(baseStatus).trim();
 
+  // An operator moving a card to Removed must say why, in writing. Checked
+  // here, before anything is read or written, so no client can end up with a
+  // removed card and no explanation behind it. The note is operator-only and
+  // is stored apart from the client's removalReason (see below).
+  const isOperatorRemoval = isRemovalStatus(trimmedStatus) && isOperationsUser(role);
+  let operatorReason = null;
+  if (isOperatorRemoval) {
+    const check = validateOperatorRemovalReason(removalReason);
+    if (!check.ok) {
+      throw { status: 422, message: check.message, error: "REMOVAL_REASON_REQUIRED" };
+    }
+    operatorReason = check.reason;
+  }
+
   // Parallelize validation and job fetch
   const [_, currentJob] = await Promise.all([
     checkRemovalLimit(userEmail, trimmedStatus, role),
@@ -286,8 +301,21 @@ const handleUpdateStatus = async (req, res, jobID, userEmail, userDetails) => {
     updateFields.appliedDate = getCurrentISTTime();
   }
 
-  // Save removal reason if job is being moved to deleted
-  const isReasonedRemoval = isRemovalStatus(trimmedStatus) && !!removalReason;
+  // The operator's reason goes to operatorRemoval, never to removalReason:
+  // removalReason is what the client sees when they long-press the card, and
+  // what feeds the AI summary on their profile. Neither should carry an
+  // internal note.
+  if (isOperatorRemoval) {
+    updateFields.operatorRemoval = {
+      reason: operatorReason,
+      by: req.body?.operationsName || 'operations',
+      byEmail: req.body?.operationsEmail || '',
+      at: new Date(),
+    };
+  }
+
+  // Save the CLIENT's removal reason if they are moving the job to deleted.
+  const isReasonedRemoval = isRemovalStatus(trimmedStatus) && !!removalReason && !isOperatorRemoval;
   if (isReasonedRemoval) {
     const removedByName = isOperationsUser(role)
       ? (req.body?.operationsName  || 'operations')
@@ -363,6 +391,28 @@ const handleEdit = async (req, res, jobID, userEmail, userDetails) => {
     currentStatus: nextStatus,
     ...buildOperatorFields(role, req.body, userDetails)
   };
+
+  // Same rule as handleUpdateStatus: an operator cannot move a card INTO
+  // Removed through an edit without a written reason. The portal never sends a
+  // status with an edit today, so this only closes the door on direct calls.
+  // A card that is already Removed (an operator adding an image to it) needs
+  // no new reason, because it is not moving.
+  if (
+    isOperationsUser(role) &&
+    isRemovalStatus(status) &&
+    !isRemovalStatus(existingJob.currentStatus)
+  ) {
+    const check = validateOperatorRemovalReason(req.body?.removalReason);
+    if (!check.ok) {
+      throw { status: 422, message: check.message, error: "REMOVAL_REASON_REQUIRED" };
+    }
+    updateFields.operatorRemoval = {
+      reason: check.reason,
+      by: req.body?.operationsName || 'operations',
+      byEmail: req.body?.operationsEmail || '',
+      at: new Date(),
+    };
+  }
 
   // Set appliedDate only on the first transition to applied (never overwrite once set)
   if (shouldSetAppliedDate(existingJob.currentStatus, nextStatus) && !existingJob.appliedDate) {
