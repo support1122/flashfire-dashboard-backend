@@ -50,6 +50,13 @@ const ClientOperationsSchema = new mongoose.Schema({
     type: [String],
     default: []
   },
+  /** "Only these companies". Display spelling kept. Non-empty = every operator
+   *  push from an employer not on it is refused (Utils/companyAllowlist.js),
+   *  and the AI summary carries it as one "Only scrape jobs from..." bullet. */
+  includedCompanies: {
+    type: [String],
+    default: []
+  },
   /** Items dropped from active lists (invalid / escaped / too long) — audit only */
   exclusionSanitizeAudit: [{
     text: { type: String, default: "" },

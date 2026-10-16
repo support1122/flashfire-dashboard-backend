@@ -7,6 +7,7 @@ import { fetchPage, mapJob, adzunaCredentials, searchLadder } from "../Utils/adz
 import { judgeJobs } from "../Utils/apiJudge.js";
 import { checkCap } from "../Utils/dailyCapGuard.js";
 import { ukSponsorGate } from "../Utils/ukVisaSponsor.js";
+import { companyAllowlistGate } from "../Utils/companyAllowlist.js";
 
 // "Scrape from Job APIs" - the server-side half of the autopilot's second mode.
 //
@@ -186,6 +187,30 @@ export const runJobApiScrape = async (req, res) => {
     let fresh = jobs.filter((j) => !already.has(j.applyUrl));
     const alreadyHad = jobs.length - fresh.length;
 
+    // ---- only these companies ---------------------------------------
+    // Before judging too, for the same reason: one read of the client's
+    // included companies, then in-memory matching (Utils/companyAllowlist.js).
+    let notOnList = 0;
+    let allowGate;
+    try {
+      allowGate = await companyAllowlistGate({ email: clientEmail });
+    } catch (e) {
+      return res.status(503).json({ success: false, outcome: "allowlist-check-failed",
+        error: "COMPANY_ALLOWLIST_CHECK_FAILED", message: e.message,
+        fetched: jobs.length, judged: 0, picked: 0, pushed: 0 });
+    }
+    if (allowGate) {
+      const kept = fresh.filter((j) => !allowGate.check(j.company));
+      notOnList = fresh.length - kept.length;
+      fresh = kept;
+    }
+    if (notOnList && !fresh.length) {
+      return res.status(200).json({ success: true, outcome: "no-allowed-companies",
+        message: `None of the ${notOnList} new jobs are from this client's company list.`,
+        fetched: jobs.length, alreadyHad, notOnList, notSponsor: 0,
+        judged: 0, picked: 0, pushed: 0 });
+    }
+
     // ---- UK visa sponsors only -------------------------------------
     // Filtered BEFORE judging, so the judge never spends tokens on a job the
     // push would refuse anyway. Same rule /addjob applies (Utils/ukVisaSponsor.js).
@@ -214,7 +239,7 @@ export const runJobApiScrape = async (req, res) => {
     if (notSponsor && !fresh.length) {
       return res.status(200).json({ success: true, outcome: "no-sponsors",
         message: `None of the ${notSponsor} new jobs are from UK visa sponsors.`,
-        fetched: jobs.length, alreadyHad, notSponsor,
+        fetched: jobs.length, alreadyHad, notOnList, notSponsor,
         judged: 0, picked: 0, pushed: 0 });
     }
 
@@ -277,6 +302,8 @@ export const runJobApiScrape = async (req, res) => {
       searchTerm: usedTerm,
       broadened: usedTerm !== (settings.what || ""),
       alreadyHad,
+      // Dropped by the client's company list before judging. 0 when there is none.
+      notOnList,
       // Dropped by "UK visa sponsors only" before judging. 0 when the switch is off.
       notSponsor,
       judged: fresh.length,

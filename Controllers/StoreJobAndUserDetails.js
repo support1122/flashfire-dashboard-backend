@@ -12,6 +12,7 @@ import { sanitizeJobTitle } from "../Utils/jobTitle.js";
 import { checkCap, detectOvershoot, checkPlanCap, enforcePlanCapPostInsert } from "../Utils/dailyCapGuard.js";
 import { jobLinkKey, inspectJobLink, SHARED_FORM_COMPANY_LIMIT } from "../Utils/jobLinkKey.js";
 import { ukSponsorPushBlock } from "../Utils/ukVisaSponsor.js";
+import { companyAllowlistBlock } from "../Utils/companyAllowlist.js";
 
 /**
  * Normalize job title/company for duplicate check: trim and collapse multiple spaces.
@@ -300,6 +301,33 @@ export async function saveToDashboard(req, res) {
                         status: "failed",
                         error: "BLOCKED_LOCATION",
                         reason: "Location is blocked for this client.",
+                    });
+                    continue;
+                }
+
+                // "Only these companies" - same rule /addjob applies
+                // (Utils/companyAllowlist.js). Fails closed per client.
+                let allowBlock;
+                try {
+                    allowBlock = await companyAllowlistBlock({ email: userEmail, companyName: company });
+                } catch (e) {
+                    console.error("companyAllowlistBlock failed (saveToDashboard):", e.message);
+                    summary.failedWithError++;
+                    summary.details.push({
+                        user: userEmail,
+                        status: "failed",
+                        error: "COMPANY_ALLOWLIST_CHECK_FAILED",
+                        reason: "Could not read this client's company list. Try again shortly.",
+                    });
+                    continue;
+                }
+                if (allowBlock) {
+                    summary.failedWithError++;
+                    summary.details.push({
+                        user: userEmail,
+                        status: "failed",
+                        error: allowBlock.error,
+                        reason: allowBlock.message,
                     });
                     continue;
                 }

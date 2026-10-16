@@ -20,6 +20,7 @@
 import axios from "axios";
 import { recordAiUsage, AI_USAGE_SOURCES } from "../Utils/aiUsage.js";
 import { ProfileModel } from "../Schema_Models/ProfileModel.js";
+import { loadIncludedCompanies, applyIncludedCompaniesToSummary } from "../Utils/companyAllowlist.js";
 import { getAppSettings } from "../Schema_Models/AppSettings.js";
 import { mergeOverlay, mergeWithLocks, countOverlayBullets, parseSections, extractProvenance, provenanceForText } from "../Utils/summaryOverlay.js";
 
@@ -2176,6 +2177,15 @@ async function runForProfileCore(profile, apiKey, reasonTag = "manual", deadline
   // enforced skip downstream, so it may only survive when R9 actually fired
   // and the operator did not say the candidate is open to all locations.
   summary = enforceGeographicNote(summary, (profile?.aiNotes?.text || "").trim(), profile, activeLocks).slice(0, MAX_SUMMARY_CHARS);
+  // Round 6 (deterministic): the client's "Included companies" list is the
+  // one source of truth for the R4b allowlist bullet. Exactly one copy, always
+  // the saved list, whatever the model or an old overlay wrote.
+  try {
+    const included = await loadIncludedCompanies(profile.email);
+    summary = applyIncludedCompaniesToSummary(summary, included).slice(0, MAX_SUMMARY_CHARS);
+  } catch (e) {
+    console.error(`[BuildAiSummary] included companies not applied email=${profile.email}:`, e.message);
+  }
   // Final structural check — the overlay merge can drop a section too (a saved
   // overlay from an older prompt version, a lock whose body was emptied).
   const missingFinal = missingSections(summary);

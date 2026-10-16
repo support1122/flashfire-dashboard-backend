@@ -2,6 +2,7 @@ import { ClientOperationsModel } from "../../Schema_Models/ClientOperationsModel
 import { ClientTodosModel } from "../../Schema_Models/ClientTodosModel.js";
 import { sanitizeExclusionList, partitionExclusionList } from "../../Utils/exclusionLists.js";
 import { reconcileExclusionJobsForClient } from "./reconcileExclusionJobs.js";
+import { normalizeAllowlist, syncIncludedCompaniesToSummary } from "../../Utils/companyAllowlist.js";
 import mongoose from "mongoose";
 
 const getCurrentISTTime = () => new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
@@ -178,6 +179,7 @@ export const getClientOperations = async (req, res) => {
         lockPeriods: [],
         excludedCompanies: [],
         excludedLocations: [],
+        includedCompanies: [],
         exclusionSanitizeAudit: [],
         extensionAutofillPreferences: mergeAutofillPreferences(null, null),
         extensionResumeRefs: mergeResumeRefs(null, null),
@@ -210,6 +212,10 @@ export const getClientOperations = async (req, res) => {
         clientOps?.excludedLocations,
         clientTodos?.excludedLocations
       );
+      const mergedIncludedCompanies = normalizeAllowlist([
+        ...(clientOps?.includedCompanies || []),
+        ...(clientTodos?.includedCompanies || []),
+      ]);
       const mergedExclusionAudit = mergeExclusionAudit(
         clientOps?.exclusionSanitizeAudit,
         clientTodos?.exclusionSanitizeAudit
@@ -244,6 +250,7 @@ export const getClientOperations = async (req, res) => {
         lockPeriods: mergedLockPeriods,
         excludedCompanies: mergedExcludedCompanies,
         excludedLocations: mergedExcludedLocations,
+        includedCompanies: mergedIncludedCompanies,
         exclusionSanitizeAudit: mergedExclusionAudit,
         extensionAutofillPreferences: mergedAutofillPreferences,
         extensionResumeRefs: mergedResumeRefs,
@@ -288,7 +295,7 @@ export const getClientOperations = async (req, res) => {
 // Update client operations (TODOs and lock periods) - SYNCED with ClientTodosModel
 export const updateClientOperations = async (req, res) => {
   try {
-    const { clientEmail, todos, lockPeriods, operatorName, excludedCompanies, excludedLocations } = req.body;
+    const { clientEmail, todos, lockPeriods, operatorName, excludedCompanies, excludedLocations, includedCompanies } = req.body;
 
     if (!clientEmail) {
       return res.status(400).json({
@@ -346,6 +353,16 @@ export const updateClientOperations = async (req, res) => {
       shouldReconcileExclusions = true;
     }
 
+    let includedChanged = false;
+    if (includedCompanies !== undefined) {
+      if (!Array.isArray(includedCompanies)) {
+        return res.status(400).json({ success: false, message: "includedCompanies must be an array of company names" });
+      }
+      updateData.includedCompanies = normalizeAllowlist(includedCompanies);
+      const prev = await ClientOperationsModel.findOne({ clientEmail: emailLower }).select("includedCompanies").lean();
+      includedChanged = JSON.stringify(normalizeAllowlist(prev?.includedCompanies)) !== JSON.stringify(updateData.includedCompanies);
+    }
+
     if (newAuditEntries.length > 0) {
       const [op, td] = await Promise.all([
         ClientOperationsModel.findOne({ clientEmail: emailLower })
@@ -387,6 +404,18 @@ export const updateClientOperations = async (req, res) => {
       await clientTodos.save();
     }
 
+    // The judge and the extension read the AI summary, so it carries the list
+    // as one "Only scrape jobs from these companies: ..." bullet. Only when the
+    // list changed: the dashboard auto-saves every edit of the page.
+    let summarySynced = false;
+    if (includedChanged) {
+      try {
+        summarySynced = await syncIncludedCompaniesToSummary(emailLower, updateData.includedCompanies);
+      } catch (syncErr) {
+        console.error("syncIncludedCompaniesToSummary:", syncErr);
+      }
+    }
+
     let reconciliation = null;
     if (shouldReconcileExclusions) {
       try {
@@ -400,6 +429,7 @@ export const updateClientOperations = async (req, res) => {
       success: true,
       message: "Client operations updated successfully",
       data: clientOps,
+      ...(includedChanged && { summarySynced }),
       ...(reconciliation && { reconciliation }),
     });
   } catch (error) {
