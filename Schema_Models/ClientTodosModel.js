@@ -48,6 +48,10 @@ const ClientTodosSchema = new mongoose.Schema({
     type: [String],
     default: []
   },
+  includedCompanies: {
+    type: [String],
+    default: []
+  },
   exclusionSanitizeAudit: [{
     text: { type: String, default: "" },
     kind: { type: String, enum: ["company", "location"], default: "company" },

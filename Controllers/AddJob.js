@@ -7,6 +7,7 @@ import { sanitizeJobTitle } from '../Utils/jobTitle.js';
 import { checkCap, detectOvershoot, checkPlanCap, enforcePlanCapPostInsert } from '../Utils/dailyCapGuard.js';
 import { jobLinkKey, inspectJobLink, SHARED_FORM_COMPANY_LIMIT } from '../Utils/jobLinkKey.js';
 import { ukSponsorPushBlock } from '../Utils/ukVisaSponsor.js';
+import { companyAllowlistBlock } from '../Utils/companyAllowlist.js';
 
 // Clamp the judge's verdict into the shape JobModel.aiDecision expects.
 // Returns null when there is nothing worth storing, so a push from an older
@@ -307,6 +308,39 @@ export default async function AddJob(req, res) {
                     success: false,
                     error: "BLOCKED_LOCATION",
                     message: "This location is blocked for this client.",
+                });
+            }
+        }
+
+        // "Only these companies" (Utils/companyAllowlist.js). Operator pushes
+        // only, same as the sponsor rule below. The extension files the 403
+        // under "blocked" and it never spends a slot of the daily cap.
+        if (isOpsRole && clientForExclusions) {
+            let allowBlock;
+            try {
+                allowBlock = await companyAllowlistBlock({
+                    email: clientForExclusions,
+                    companyName: jobDetails?.companyName,
+                });
+            } catch (e) {
+                console.error('companyAllowlistBlock failed:', e.message);
+                return res.status(503).json({
+                    success: false,
+                    error: 'COMPANY_ALLOWLIST_CHECK_FAILED',
+                    message: 'Could not read this client\'s company list (DB unavailable). Push refused, try again shortly.',
+                });
+            }
+            if (allowBlock) {
+                console.log(JSON.stringify({
+                    event: 'company.allowlist.block',
+                    client: clientForExclusions,
+                    company: jobDetails?.companyName || '',
+                    ts: new Date().toISOString(),
+                }));
+                return res.status(allowBlock.status).json({
+                    success: false,
+                    error: allowBlock.error,
+                    message: allowBlock.message,
                 });
             }
         }

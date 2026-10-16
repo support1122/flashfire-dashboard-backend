@@ -46,6 +46,7 @@ export async function getExtensionExclusionLists(req, res) {
       success: true,
       excludedCompanies: doc?.excludedCompanies || [],
       excludedLocations: doc?.excludedLocations || [],
+      includedCompanies: doc?.includedCompanies || [],
     });
   } catch (error) {
     console.error("getExtensionExclusionLists:", error);

@@ -62,6 +62,14 @@ mock.module("../../Schema_Models/ProfileModel.js", {
   },
 });
 
+// The client's "Included companies" (ClientOperations). [] = no rule.
+let includedCompanies = [];
+mock.module("../../Schema_Models/ClientOperationsModel.js", {
+  namedExports: {
+    ClientOperationsModel: { findOne: () => ({ select: () => ({ lean: async () => ({ includedCompanies }) }) }) },
+  },
+});
+
 mock.module("../../Schema_Models/UserModel.js", {
   namedExports: {
     UserModel: { findOne: () => ({ select: () => ({ lean: async () => ({ name: "Amelia" }) }) }) },
@@ -190,6 +198,7 @@ function reset() {
   existingLinks = []; created = []; createThrowsFor = new Set();
   pages = []; termPages = {}; fetchCalls = []; judgeResult = null; judgeCalls = [];
   sponsorSet = null; sponsorThrows = null;
+  includedCompanies = [];
 }
 
 async function run(body = {}) {
@@ -580,6 +589,35 @@ test("sponsor-only client with no sponsors in the batch: nothing judged, nothing
   const r = await run();
   assert.equal(r.code, 200);
   assert.equal(r.body.outcome, "no-sponsors");
+  assert.equal(judgeCalls.length, 0);
+  assert.equal(created.length, 0);
+});
+
+// ── only these companies ─────────────────────────────────────────────
+
+test("company list: off-list employers are dropped before the judge sees them", async () => {
+  reset();
+  includedCompanies = ["Google", "Meta"];
+  pages = [{ ok: true, results: [
+    adzJob(1, { company: "Google LLC" }),
+    adzJob(2, { company: "Infosys" }),
+    adzJob(3, { company: "Meta Platforms, Inc." }),
+  ] }];
+  judgeResult = judgeAll(["1", "3"]);
+  const r = await run();
+  assert.equal(r.code, 200);
+  assert.deepEqual(judgeCalls[0].jobs.map((j) => j.jobId), ["adz-1", "adz-3"]);
+  assert.equal(r.body.notOnList, 1);
+  assert.equal(r.body.pushed, 2);
+});
+
+test("company list with nothing on it in the batch: nothing judged, nothing pushed", async () => {
+  reset();
+  includedCompanies = ["Google"];
+  pages = [{ ok: true, results: [adzJob(1, { company: "Infosys" })] }];
+  const r = await run();
+  assert.equal(r.code, 200);
+  assert.equal(r.body.outcome, "no-allowed-companies");
   assert.equal(judgeCalls.length, 0);
   assert.equal(created.length, 0);
 });
