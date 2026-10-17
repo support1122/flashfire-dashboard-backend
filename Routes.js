@@ -7,7 +7,7 @@ import GoogleOAuth from "./Controllers/GoogleOAuth.js";
 import { getAllClients } from './Controllers/ClientController.js';
 import { getClientTrackingStatus } from './Controllers/ClientTrackingStatus.js';
 import { listAutopilotCreds, getAutopilotCreds, putAutopilotCreds, provisionAutopilotCreds } from './Controllers/AutopilotCreds.js';
-import { getJobApiSettings, putJobApiSettings, runJobApiScrape } from "./Controllers/JobApiScrape.js";
+import { getJobApiSettings, putJobApiSettings, runJobApiScrape, ingestJobApiJobs } from "./Controllers/JobApiScrape.js";
 import {
   recordAutopilotRun,
   startAutopilotRun,
@@ -183,6 +183,8 @@ app.post("/autopilot/creds/:email/provision", requireOpsKey, provisionAutopilotC
 app.get("/job-api/settings/:email", requireOpsKey, getJobApiSettings);
 app.put("/job-api/settings/:email", requireOpsKey, putJobApiSettings);
 app.post("/job-api/scrape/:email", requireOpsKey, runJobApiScrape);
+// Jobs fetched on the operator's machine (Indeed), judged and pushed here.
+app.post("/job-api/ingest/:email", requireOpsKey, ingestJobApiJobs);
 
 app.post("/autopilot/runs/start", requireOpsKey, startAutopilotRun);
 app.post("/autopilot/runs/:id/progress", requireOpsKey, progressAutopilotRun);

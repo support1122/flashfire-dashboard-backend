@@ -6,6 +6,7 @@ import { getExclusionBlockReason } from '../Utils/exclusionGuard.js';
 import { sanitizeJobTitle } from '../Utils/jobTitle.js';
 import { checkCap, detectOvershoot, checkPlanCap, enforcePlanCapPostInsert } from '../Utils/dailyCapGuard.js';
 import { jobLinkKey, inspectJobLink, SHARED_FORM_COMPANY_LIMIT } from '../Utils/jobLinkKey.js';
+import { classifyApplyUrl } from '../Utils/applyUrlPolicy.js';
 import { ukSponsorPushBlock } from '../Utils/ukVisaSponsor.js';
 import { companyAllowlistBlock } from '../Utils/companyAllowlist.js';
 
@@ -51,59 +52,20 @@ export default async function AddJob(req, res) {
             });
         }
 
-        // Two different reasons a link is refused, kept apart because they
-        // need different answers from the operator.
-        //
-        // 1. AGGREGATOR / UNRESOLVED — a job board, or a jobright.ai
-        //    /jobs/info/<id> link, which means the employer apply URL never
-        //    resolved. The operator CAN fix these by getting the real URL.
-        // 2. EXCLUDED EMPLOYER — the employer's own careers site, on the
-        //    do-not-apply list by operator policy. Nothing is wrong with the
-        //    link and there is no better one to fetch, so the refusal says so
-        //    instead of telling the operator to find a URL that does not
-        //    exist.
-        //
-        // Both lists come from the environment. Adding or removing a portal is
-        // a config change and a restart, never a code edit:
-        //
-        //   BLOCKED_APPLY_HOSTS=linkedin.com,dice.com,indeed.com,jobright.ai
-        //   EXCLUDED_EMPLOYER_HOSTS=jobs.apple.com,lifeattiktok.com
-        //
-        // A hostname matches itself and its subdomains, so "dice.com" covers
-        // "www.dice.com". Matching is exact on the label boundary, so
-        // "notdice.com" is not blocked.
-        const joblinkRaw = String(jobDetails?.joblink || '');
-        const hostList = (raw, fallback) =>
-            String(raw ?? fallback)
-                .split(',')
-                .map((h) => h.trim().toLowerCase())
-                .filter(Boolean);
-        const AGGREGATOR_HOSTS = hostList(
-            process.env.BLOCKED_APPLY_HOSTS,
-            'jobright.ai,linkedin.com,dice.com,indeed.com',
-        );
-        const EXCLUDED_EMPLOYER_HOSTS = hostList(
-            process.env.EXCLUDED_EMPLOYER_HOSTS,
-            'lifeattiktok.com,dataannotation.tech,jobs.apple.com,humana.wd5.myworkdayjobs.com,dickssportinggoods.com',
-        );
-        const matchesHost = (host, list) =>
-            !!host && list.some((h) => host === h || host.endsWith(`.${h}`));
+        // The apply-URL policy (aggregator links vs excluded employers) lives
+        // in Utils/applyUrlPolicy.js so the job-API imports answer to exactly
+        // the same rules as this route. See that file for why the two
+        // refusals are kept apart.
+        const { verdict: linkVerdict, host } = classifyApplyUrl(jobDetails?.joblink);
 
-        let host = '';
-        try { host = new URL(joblinkRaw).hostname.toLowerCase(); } catch { host = ''; }
-        // Unparseable URL: fall back to a substring check so a malformed link
-        // cannot smuggle a blocked host through.
-        const loose = (list) => list.some((h) => joblinkRaw.toLowerCase().includes(h));
-        const hit = (list) => (host ? matchesHost(host, list) : loose(list));
-
-        if (hit(AGGREGATOR_HOSTS)) {
+        if (linkVerdict === 'BLOCKED_SOURCE') {
             return res.status(403).json({
                 success: false,
                 error: 'BLOCKED_SOURCE',
                 message: `Job board/aggregator link (${host || 'unparseable URL'}) — provide the original employer apply URL.`,
             });
         }
-        if (hit(EXCLUDED_EMPLOYER_HOSTS)) {
+        if (linkVerdict === 'EXCLUDED_EMPLOYER') {
             return res.status(403).json({
                 success: false,
                 error: 'EXCLUDED_EMPLOYER',
