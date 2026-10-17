@@ -103,6 +103,16 @@ export const JobSchema = new mongoose.Schema({
     required: false,
     default: 'user@flashfirehq'
   },
+  // Which job API a card was imported from ("adzuna-api", "indeed-api").
+  // Unset for operator and extension pushes, which have their own markers.
+  // The API importer used to write a `source` field that is not in this
+  // schema, so strict mode dropped it on every insert and nothing recorded
+  // where those jobs came from.
+  importSource: {
+    type: String,
+    required: false,
+    default: undefined,
+  },
   extensionCode: {
     type: String,
     required: false,

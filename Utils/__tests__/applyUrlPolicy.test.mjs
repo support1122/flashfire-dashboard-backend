@@ -1,4 +1,5 @@
-// The apply-URL policy in AddJob.js.
+// The apply-URL policy (Utils/applyUrlPolicy.js), shared by AddJob and the
+// job-API imports.
 //
 // Two separate lists, both read from the environment so adding or removing a
 // portal is a config change, never a code edit:
@@ -13,26 +14,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-
-const src = readFileSync(new URL('../../Controllers/AddJob.js', import.meta.url), 'utf8');
-const start = src.indexOf('        const hostList = (raw, fallback) =>');
-const end = src.indexOf('        let host = ');
-assert.ok(start >= 0 && end > start, 'apply-URL policy block not found in AddJob.js');
+import { classifyApplyUrl } from '../applyUrlPolicy.js';
 
 function policy(env = {}) {
-    const body = `
-${src.slice(start, end)}
-return (url) => {
-    const joblinkRaw = String(url || '');
-    let host = '';
-    try { host = new URL(joblinkRaw).hostname.toLowerCase(); } catch { host = ''; }
-    const loose = (list) => list.some((h) => joblinkRaw.toLowerCase().includes(h));
-    const hit = (list) => (host ? matchesHost(host, list) : loose(list));
-    if (hit(AGGREGATOR_HOSTS)) return 'BLOCKED_SOURCE';
-    if (hit(EXCLUDED_EMPLOYER_HOSTS)) return 'EXCLUDED_EMPLOYER';
-    return 'allowed';
-};`;
-    return new Function('process', body)({ env });
+    return (url) => classifyApplyUrl(url, env).verdict;
 }
 
 test('defaults block aggregators and unresolved jobright links', () => {
@@ -86,4 +71,18 @@ test('an unparseable URL still cannot smuggle a blocked host through', () => {
     const p = policy();
     assert.equal(p('href=www.dice.com/job/1'), 'BLOCKED_SOURCE');
     assert.equal(p('not a url at all'), 'allowed');
+});
+
+test('AddJob routes every push through the shared policy', () => {
+    // The policy moved out of AddJob so the job-API imports could share it.
+    // A copy reappearing inline would let the two drift apart again.
+    const src = readFileSync(new URL('../../Controllers/AddJob.js', import.meta.url), 'utf8');
+    assert.match(src, /classifyApplyUrl\(jobDetails\?\.joblink\)/);
+    assert.doesNotMatch(src, /BLOCKED_APPLY_HOSTS[^\n]*\n[^\n]*'jobright\.ai/,
+        'the host list must not be redefined inline in AddJob');
+});
+
+test('the parsed host comes back so a refusal can name it', () => {
+    assert.equal(classifyApplyUrl('https://www.indeed.com/viewjob?jk=1', {}).host, 'www.indeed.com');
+    assert.equal(classifyApplyUrl('not a url', {}).host, '');
 });

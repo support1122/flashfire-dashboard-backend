@@ -32,6 +32,7 @@ let capThrows = null;
 
 let profileDoc = null;
 let existingLinks = [];
+let existingOwner = "amelia@example.com";
 let created = [];
 let createThrowsFor = new Set();
 
@@ -76,13 +77,28 @@ mock.module("../../Schema_Models/UserModel.js", {
   },
 });
 
+// The REAL schema, loaded under a different URL so the mock below does not
+// replace it. The importer once wrote a `source` field the schema does not
+// have: strict mode dropped it on every insert, and the old mock - which kept
+// whatever it was handed - let a test assert that field was "saved". Checking
+// every write against the real paths makes that class of bug fail here.
+const { JobModel: RealJobModel } = await import("../../Schema_Models/JobModel.js?real-schema");
+const SCHEMA_FIELDS = new Set(Object.keys(RealJobModel.schema.paths).map((p) => p.split(".")[0]));
+const { jobLinkKey } = await import("../jobLinkKey.js");
+
 mock.module("../../Schema_Models/JobModel.js", {
   namedExports: {
     JobModel: {
+      // Existing rows are matched on the canonical key, like the real query.
       find: () => ({
-        select: () => ({ lean: async () => existingLinks.map((l) => ({ joblink: l })) }),
+        select: () => ({ lean: async () => existingLinks.map((l) => ({
+          userID: existingOwner, joblinkKey: jobLinkKey(l), joblink: l })) }),
       }),
       create: async (doc) => {
+        const unknown = Object.keys(doc).filter((k) => !SCHEMA_FIELDS.has(k));
+        if (unknown.length) {
+          throw new Error(`JobModel has no field(s) ${unknown.join(", ")} - strict mode would silently drop them`);
+        }
         if (createThrowsFor.has(doc.joblink)) throw new Error("duplicate key");
         created.push(doc);
         return doc;
@@ -151,7 +167,8 @@ mock.module("../../Utils/ukVisaSponsor.js", {
   },
 });
 
-const { getJobApiSettings, putJobApiSettings, runJobApiScrape } =
+const { getJobApiSettings, putJobApiSettings, runJobApiScrape, ingestJobApiJobs,
+        sanitizeIngestJob, MAX_INGEST_JOBS } =
   await import("../../Controllers/JobApiScrape.js");
 
 // ── helpers ──────────────────────────────────────────────────────────
@@ -195,7 +212,7 @@ function reset() {
   settingsUpdate = null; savedSettings = null;
   capResult = { remaining: 30 }; capThrows = null;
   profileDoc = { email: CLIENT, aiThreshold: 50, aiSummary: "RN, 5 years" };
-  existingLinks = []; created = []; createThrowsFor = new Set();
+  existingLinks = []; existingOwner = CLIENT; created = []; createThrowsFor = new Set();
   pages = []; termPages = {}; fetchCalls = []; judgeResult = null; judgeCalls = [];
   sponsorSet = null; sponsorThrows = null;
   includedCompanies = [];
@@ -427,7 +444,7 @@ test("a pushed card carries the judge's reasoning and says where it came from", 
   await run({ operatorName: "Sarah", operatorEmail: "Sarah@Flashfire.com" });
   const doc = created[0];
   assert.equal(doc.userID, CLIENT);
-  assert.equal(doc.source, "adzuna-api");
+  assert.equal(doc.importSource, "adzuna-api");
   assert.equal(doc.currentStatus, "saved");
   assert.equal(doc.createdByRole, "operations");
   assert.equal(doc.operatorName, "Sarah");
@@ -631,4 +648,226 @@ test("sponsor check failing refuses the run rather than pushing unchecked jobs",
   assert.equal(r.body.error, "SPONSOR_REGISTER_EMPTY");
   assert.equal(judgeCalls.length, 0);
   assert.equal(created.length, 0);
+});
+
+
+// ── what importJobs does for every provider ──────────────────────────
+//
+// Adzuna runs and Indeed ingests share one import path. These cover the
+// three things it gained when it was pulled out of the Adzuna handler:
+// the /addjob link policy, canonical duplicate detection, and a card that
+// records which API it came from in a field the schema actually has.
+
+test("a job-board link is refused the same way /addjob refuses it", async () => {
+  reset();
+  pages = [{ ok: true, results: [
+    adzJob(1, { redirect_url: "https://www.indeed.com/viewjob?jk=abc" }),
+    adzJob(2, { redirect_url: "https://boards.greenhouse.io/acme/jobs/2" }),
+  ] }, { ok: true, results: [] }];
+  judgeResult = judgeAll([2]);
+  const r = await run();
+  assert.equal(r.body.blockedByPolicy, 1);
+  assert.deepEqual(created.map((d) => d.joblink), ["https://boards.greenhouse.io/acme/jobs/2"]);
+  assert.deepEqual(judgeCalls[0].jobs.map((j) => j.jobId), ["adz-2"],
+    "a link the push would refuse must not cost judge tokens");
+});
+
+test("when every link is refused the run says why instead of 'no results'", async () => {
+  reset();
+  pages = [{ ok: true, results: [adzJob(1, { redirect_url: "https://www.linkedin.com/jobs/view/1" })] },
+           { ok: true, results: [] }];
+  const r = await run();
+  assert.equal(r.body.outcome, "no-pushable-links");
+  assert.equal(judgeCalls.length, 0);
+});
+
+test("the same posting behind a tracking parameter is one job, not two", async () => {
+  reset();
+  pages = [{ ok: true, results: [
+    adzJob(1, { redirect_url: "https://acme.com/jobs/7" }),
+    adzJob(2, { redirect_url: "https://acme.com/jobs/7?utm_source=adzuna" }),
+  ] }, { ok: true, results: [] }];
+  judgeResult = judgeAll([1, 2]);
+  const r = await run();
+  assert.equal(r.body.alreadyHad, 1);
+  assert.equal(created.length, 1);
+});
+
+test("an existing row is matched on the canonical key, not the raw string", async () => {
+  reset();
+  existingLinks = ["https://acme.com/jobs/7"];
+  pages = [{ ok: true, results: [adzJob(1, { redirect_url: "https://www.acme.com/jobs/7/?utm_campaign=x" })] },
+           { ok: true, results: [] }];
+  judgeResult = judgeAll([1]);
+  const r = await run();
+  assert.equal(r.body.alreadyHad, 1, "a raw-string compare would have pushed this again");
+  assert.equal(created.length, 0);
+});
+
+test("another client's copy of the link does not block this client", async () => {
+  reset();
+  existingLinks = ["https://acme.com/jobs/7"];
+  existingOwner = "someone.else@example.com";
+  pages = [{ ok: true, results: [adzJob(1, { redirect_url: "https://acme.com/jobs/7" })] },
+           { ok: true, results: [] }];
+  judgeResult = judgeAll([1]);
+  const r = await run();
+  assert.equal(r.body.alreadyHad, 0);
+  assert.equal(created.length, 1);
+});
+
+test("a pushed job carries its canonical key so later pushes can see it", async () => {
+  reset();
+  pages = [{ ok: true, results: [adzJob(1, { redirect_url: "https://acme.com/jobs/7?utm_source=x" })] },
+           { ok: true, results: [] }];
+  judgeResult = judgeAll([1]);
+  await run();
+  assert.ok(created[0].joblinkKey, "without the key, AddJob's duplicate check cannot see this job");
+  assert.equal(created[0].joblinkKey, jobLinkKey("https://acme.com/jobs/7"));
+});
+
+// ── POST /job-api/ingest/:email ──────────────────────────────────────
+
+function indeedJob(n, over = {}) {
+  return {
+    jobId: `ind-${n}`,
+    title: `Software Engineer ${n}`,
+    company: "Acme",
+    location: "New York, NY",
+    description: "Build things.",
+    applyUrl: `https://boards.greenhouse.io/acme/jobs/${n}`,
+    publishedAt: "2026-10-16T08:00:00Z",
+    ...over,
+  };
+}
+
+function judgeIds(ids, picks = null) {
+  return { ok: true, decisions: ids.map((id) => ({
+    id, pick: picks ? picks.includes(id) : true, score: 77,
+    reason: "title matches", matchedRole: "Software Engineer" })) };
+}
+
+async function ingest(body) {
+  const r = res();
+  await ingestJobApiJobs({ params: { email: CLIENT }, body }, r);
+  return r;
+}
+
+test("ingest pushes judged picks and marks them as Indeed imports", async () => {
+  reset();
+  judgeResult = judgeIds(["ind-1", "ind-2"], ["ind-2"]);
+  const r = await ingest({ provider: "indeed", jobs: [indeedJob(1), indeedJob(2)], operatorName: "Sarah" });
+  assert.equal(r.code, 200);
+  assert.equal(r.body.pushed, 1);
+  assert.equal(created[0].importSource, "indeed-api");
+  assert.equal(created[0].joblink, "https://boards.greenhouse.io/acme/jobs/2");
+  assert.equal(created[0].operatorName, "Sarah");
+  assert.equal(r.body.provider, "indeed");
+  assert.equal(r.body.fetched, 2);
+});
+
+test("ingest refuses a provider it does not know", async () => {
+  reset();
+  const r = await ingest({ provider: "monster", jobs: [indeedJob(1)] });
+  assert.equal(r.code, 400);
+  assert.equal(r.body.error, "UNKNOWN_PROVIDER");
+  assert.equal(created.length, 0);
+});
+
+test("ingest refuses a body whose jobs are not a list", async () => {
+  reset();
+  const r = await ingest({ provider: "indeed", jobs: "lots" });
+  assert.equal(r.code, 400);
+});
+
+test("ingest refuses an oversized batch outright", async () => {
+  reset();
+  const jobs = Array.from({ length: MAX_INGEST_JOBS + 1 }, (_, i) => indeedJob(i));
+  const r = await ingest({ provider: "indeed", jobs });
+  assert.equal(r.code, 413);
+  assert.equal(judgeCalls.length, 0, "an oversized batch must not reach the judge");
+});
+
+test("ingest drops jobs with no title or no usable link, and counts them", async () => {
+  reset();
+  judgeResult = judgeIds(["ind-3"]);
+  const r = await ingest({ provider: "indeed", jobs: [
+    indeedJob(1, { title: "" }),
+    indeedJob(2, { applyUrl: "javascript:alert(1)" }),
+    indeedJob(3),
+  ] });
+  assert.equal(r.body.invalid, 2);
+  assert.equal(r.body.pushed, 1);
+});
+
+test("a javascript: or data: link can never reach a client's board", () => {
+  for (const bad of ["javascript:alert(1)", "data:text/html,hi", "ftp://x/y", "not a url", ""]) {
+    assert.equal(sanitizeIngestJob(indeedJob(1, { applyUrl: bad })), null, bad);
+  }
+});
+
+test("two jobs sending the same id still get separate verdicts", async () => {
+  reset();
+  judgeResult = { ok: true, decisions: [] };
+  await ingest({ provider: "indeed", jobs: [
+    indeedJob(1, { jobId: "dup", applyUrl: "https://acme.com/a" }),
+    indeedJob(2, { jobId: "dup", applyUrl: "https://acme.com/b" }),
+  ] });
+  const ids = judgeCalls[0].jobs.map((j) => j.jobId);
+  assert.equal(new Set(ids).size, 2, "the judge reports by id, so ids must be unique");
+});
+
+test("Indeed's own viewjob links are refused by the shared policy", async () => {
+  reset();
+  judgeResult = judgeIds(["ind-2"]);
+  const r = await ingest({ provider: "indeed", jobs: [
+    indeedJob(1, { applyUrl: "https://www.indeed.com/viewjob?jk=1" }),
+    indeedJob(2),
+  ] });
+  assert.equal(r.body.blockedByPolicy, 1);
+  assert.equal(created.length, 1);
+});
+
+test("ingest respects the same daily cap as everything else", async () => {
+  reset();
+  capResult = { remaining: 1 };
+  judgeResult = judgeIds(["ind-1", "ind-2", "ind-3"]);
+  const r = await ingest({ provider: "indeed", jobs: [indeedJob(1), indeedJob(2), indeedJob(3)] });
+  assert.equal(created.length, 1);
+  assert.equal(r.body.outcome, "cap-reached");
+});
+
+test("ingest at a full cap judges nothing", async () => {
+  reset();
+  capResult = { remaining: 0 };
+  const r = await ingest({ provider: "indeed", jobs: [indeedJob(1)] });
+  assert.equal(r.body.outcome, "cap-hit");
+  assert.equal(judgeCalls.length, 0);
+});
+
+test("a failing judge on an ingest pushes nothing", async () => {
+  reset();
+  judgeResult = { ok: false, error: "OPENAI_401", message: "bad key" };
+  const r = await ingest({ provider: "indeed", jobs: [indeedJob(1)] });
+  assert.equal(r.code, 502);
+  assert.equal(created.length, 0);
+});
+
+test("ingest keeps one response shape whether it pushes or not", async () => {
+  reset();
+  judgeResult = judgeIds(["ind-1"]);
+  const pushed = await ingest({ provider: "indeed", jobs: [indeedJob(1)] });
+  reset();
+  capResult = { remaining: 0 };
+  const capped = await ingest({ provider: "indeed", jobs: [indeedJob(1)] });
+  for (const k of ["outcome", "provider", "fetched", "invalid", "pushed", "judged", "picked",
+                   "alreadyHad", "blockedByPolicy", "remainingBefore", "minutes"]) {
+    assert.ok(k in pushed.body, `pushed response lacks ${k}`);
+    assert.ok(k in capped.body, `cap-hit response lacks ${k}`);
+  }
+});
+
+test("the ingest route needs the ops key", () => {
+  const routes = readFileSync(new URL("../../Routes.js", import.meta.url), "utf8");
+  assert.match(routes, /app\.post\("\/job-api\/ingest\/:email", requireOpsKey, ingestJobApiJobs\)/);
 });
