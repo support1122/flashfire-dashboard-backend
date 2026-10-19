@@ -29,6 +29,7 @@ export const AI_USAGE_SOURCES = {
     MAIL_SUMMARY: "mail-summary",     // mailAiSummarizer (disabled by default)
     MAIL_VERIFY: "mail-verify",       // mailMilestoneVerifier second-stage check
     MAIL_REGEX: "mail-regex",         // mailRegexLearner exclusion-pattern proposals
+    SPEEDYAPPLY_ASK: "speedyapply-ask", // SpeedyApply sidebar Ask AI / answer suggestions
 };
 
 const aiUsageDailySchema = new mongoose.Schema({

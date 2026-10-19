@@ -97,6 +97,7 @@ import ExtensionLogin from "./Controllers/Extensions/login.js";
 import { GeminiJudge } from "./Controllers/Extensions/geminiJudge.js";
 import { GeminiForScrapingTest } from "./Controllers/Extensions/geminiJudgeTest.js";
 import { OpenAiJudge } from "./Controllers/Extensions/openaiJudge.js";
+import { getSpeedyApplyAiConfig, askSpeedyApplyAi } from "./Controllers/Extensions/speedyApplyAsk.js";
 import { ReciveData } from "./Controllers/Extensions/reciveData.js";
 import { extractJobData } from "./Controllers/Extensions/extractJobData.js";
 import ClientLogin from "./Controllers/Extensions/clientLogin.js";
@@ -764,6 +765,10 @@ app.patch('/extension/profile', ExtensionAuth, extPatchProfile);
 // login from any machine. Auth is the clientLogin JWT (Bearer), verified inside.
 app.get('/extension/speedyapply/profile', getSpeedyApplyProfile);
 app.post('/extension/speedyapply/profile', saveSpeedyApplyProfile);
+// SpeedyApply Ask AI — gpt-4o-mini answers from the client's saved profile.
+// Key is the `auto_fill_chatgpt_API` env var; prompt lives in speedyapplyaiprompts.
+app.get('/extension/speedyapply/ai-config', ExtensionAuth, getSpeedyApplyAiConfig);
+app.post('/extension/speedyapply/ask', ExtensionAuth, askSpeedyApplyAi);
 // Onboarding email sequence — manual trigger (runs backfill → detect → send-due).
 // Safe to call: backfill guards against retro-emailing existing clients.
 app.post('/admin/onboarding-mail/run-now', async (_req, res) => {
