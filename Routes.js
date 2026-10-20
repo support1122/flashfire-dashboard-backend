@@ -98,6 +98,8 @@ import { GeminiJudge } from "./Controllers/Extensions/geminiJudge.js";
 import { GeminiForScrapingTest } from "./Controllers/Extensions/geminiJudgeTest.js";
 import { OpenAiJudge } from "./Controllers/Extensions/openaiJudge.js";
 import { getSpeedyApplyAiConfig, askSpeedyApplyAi } from "./Controllers/Extensions/speedyApplyAsk.js";
+// Shared learning is off for now; uncomment this import and the route below to enable it.
+// import { getSpeedyApplySharedLearning } from "./Controllers/Extensions/speedyApplySharedLearning.js";
 import { ReciveData } from "./Controllers/Extensions/reciveData.js";
 import { extractJobData } from "./Controllers/Extensions/extractJobData.js";
 import ClientLogin from "./Controllers/Extensions/clientLogin.js";
@@ -769,6 +771,8 @@ app.post('/extension/speedyapply/profile', saveSpeedyApplyProfile);
 // Key is the `auto_fill_chatgpt_API` env var; prompt lives in speedyapplyaiprompts.
 app.get('/extension/speedyapply/ai-config', ExtensionAuth, getSpeedyApplyAiConfig);
 app.post('/extension/speedyapply/ask', ExtensionAuth, askSpeedyApplyAi);
+// Shared learning: label aliases merged across all clients (daily, src/services/speedyApplyLearningWorker.js).
+// app.get('/extension/speedyapply/shared-learning', ExtensionAuth, getSpeedyApplySharedLearning);
 // Onboarding email sequence — manual trigger (runs backfill → detect → send-due).
 // Safe to call: backfill guards against retro-emailing existing clients.
 app.post('/admin/onboarding-mail/run-now', async (_req, res) => {

@@ -156,6 +156,8 @@ import connectDB from "./Utils/ConnectDB.js";
 import Routes from "./Routes.js";
 import { runRecruiterAutomationDailyJob } from "./Controllers/GmailRouter.js";
 import { startSummarySweepWorker } from "./src/services/summarySweepWorker.js";
+// Shared learning is off for now; uncomment this import and the start call below to enable it.
+// import { startSpeedyApplyLearningWorker } from "./src/services/speedyApplyLearningWorker.js";
 import { startSecondJudgeWorker } from "./src/services/secondJudgeWorker.js";
 import { startMailPollWorker, isMailPollEnabled } from "./src/services/mailPollWorker.js";
 import { sendDailySummary } from "./src/services/mailClientMonitor.js";
@@ -450,6 +452,9 @@ app.use((err, req, res, next) => {
       // grader is never working off an outdated brief. Tagged source field
       // [auto:cron-sweep] so AI Summaries UI shows the auto origin.
       startSummarySweepWorker();
+      // SpeedyApply shared learning: merge every client's learned label
+      // aliases once a day (03:30 IST) for all extensions to pull.
+      // startSpeedyApplyLearningWorker();
       // Second-stage screening: opens the real employer site for each
       // extension-pushed job, re-judges the full posting against the client
       // profile, and FLAGS mismatches for operator review (does not remove).
