@@ -12,6 +12,7 @@ import { sanitizeJobTitle } from "../Utils/jobTitle.js";
 import { checkCap, detectOvershoot, checkPlanCap, enforcePlanCapPostInsert } from "../Utils/dailyCapGuard.js";
 import { jobLinkKey, inspectJobLink, SHARED_FORM_COMPANY_LIMIT } from "../Utils/jobLinkKey.js";
 import { ukSponsorPushBlock } from "../Utils/ukVisaSponsor.js";
+import { usSponsorPushBlock } from "../Utils/usVisaSponsor.js";
 import { companyAllowlistBlock } from "../Utils/companyAllowlist.js";
 
 /**
@@ -355,6 +356,32 @@ export async function saveToDashboard(req, res) {
                         status: "failed",
                         error: sponsorBlock.error,
                         reason: sponsorBlock.message,
+                    });
+                    continue;
+                }
+
+                // "US H-1B sponsors only" (Utils/usVisaSponsor.js). Fails closed per client.
+                let usBlock;
+                try {
+                    usBlock = await usSponsorPushBlock({ email: userEmail, companyName: company });
+                } catch (e) {
+                    console.error("usSponsorPushBlock failed (saveToDashboard):", e.message);
+                    summary.failedWithError++;
+                    summary.details.push({
+                        user: userEmail,
+                        status: "failed",
+                        error: e.code === "US_SPONSOR_DATA_NOT_LOADED" ? "US_SPONSOR_DATA_NOT_LOADED" : "SPONSOR_CHECK_FAILED",
+                        reason: "Could not check US H-1B sponsors. Try again shortly.",
+                    });
+                    continue;
+                }
+                if (usBlock) {
+                    summary.failedWithError++;
+                    summary.details.push({
+                        user: userEmail,
+                        status: "failed",
+                        error: usBlock.error,
+                        reason: usBlock.message,
                     });
                     continue;
                 }

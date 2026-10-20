@@ -167,6 +167,7 @@ import { startScrapeCostSnapshotWorker } from "./Utils/scrapeCostNotifier.js";
 import { startAutoOptimizationWorker } from "./src/services/autoOptimizationWorker.js";
 import { geoStats } from "./Utils/ipGeo.js";
 import { refreshOverrides } from "./Utils/ipGeoOverrides.js";
+import { loadUsSponsors } from "./Utils/usVisaSponsor.js";
 
 dotenv.config();
 
@@ -545,6 +546,15 @@ app.use((err, req, res, next) => {
     // Load pinned IP overrides before serving so the first login is matched
     // against them. Failure only logs — the resolver refreshes on its own tick.
     await refreshOverrides();
+
+    // US H-1B sponsors into memory (Utils/usVisaSponsor.js), every instance.
+    // A failure only logs: clients with "US H-1B sponsors only" on get 503 on
+    // push until the file is fixed; everyone else is unaffected.
+    try {
+      loadUsSponsors();
+    } catch (err) {
+      console.error("❌ US H-1B sponsor data not loaded:", err.message);
+    }
 
     app.listen(PORT, () => {
       console.log(`🚀 Server is running on port ${PORT} in ${NODE_ENV} mode`);

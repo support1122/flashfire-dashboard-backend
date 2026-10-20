@@ -7,6 +7,7 @@ import { fetchPage, mapJob, adzunaCredentials, searchLadder } from "../Utils/adz
 import { judgeJobs } from "../Utils/apiJudge.js";
 import { checkCap } from "../Utils/dailyCapGuard.js";
 import { ukSponsorGate } from "../Utils/ukVisaSponsor.js";
+import { usSponsorGate } from "../Utils/usVisaSponsor.js";
 import { companyAllowlistGate } from "../Utils/companyAllowlist.js";
 import { jobLinkKey } from "../Utils/jobLinkKey.js";
 import { classifyApplyUrl } from "../Utils/applyUrlPolicy.js";
@@ -184,8 +185,18 @@ export async function importJobs({
   // ---- UK visa sponsors only -------------------------------------------
   // Filtered BEFORE judging, so the judge never spends tokens on a job the
   // push would refuse anyway. Same rule /addjob applies (Utils/ukVisaSponsor.js).
+  // A client is UK or US, never both, so at most one of these gates applies
+  // and both report into counts.notSponsor. The US one checks in memory.
+  let sponsorKind = "UK visa";
   try {
-    const gate = await ukSponsorGate({ email: clientEmail, profile });
+    let gate = await ukSponsorGate({ email: clientEmail, profile });
+    if (!gate) {
+      const us = await usSponsorGate({ email: clientEmail, profile });
+      if (us) {
+        sponsorKind = "US H-1B";
+        gate = { check: async (company) => us.check(company) };
+      }
+    }
     if (gate) {
       const kept = [];
       // Ten at a time: a page of results can name 250 employers and each
@@ -206,7 +217,7 @@ export async function importJobs({
   }
   if (counts.notSponsor && !fresh.length) {
     return { status: 200, body: { success: true, outcome: "no-sponsors", ...counts,
-      message: `None of the ${counts.notSponsor} new jobs are from UK visa sponsors.` } };
+      message: `None of the ${counts.notSponsor} new jobs are from ${sponsorKind} sponsors.` } };
   }
 
   // ---- judge ------------------------------------------------------------

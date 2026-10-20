@@ -215,21 +215,29 @@ async function assertRegisterLoaded(model = UkVisaSponsorModel) {
 const UK_COUNTRY = "UK";
 
 /** Pure rule, shared with clients-tracking's Client Job Analysis derivation. */
+// Mirrors clients-tracking's Client Job Analysis (applications_monitor_backend
+// index.js, clientCountry derivation) rule for rule, so both screens agree.
 export function deriveClientCountry(trackingDoc) {
   const set = trackingDoc?.clientCountry;
   if (["USA", "Canada", "UK", "Australia", "Europe"].includes(set)) return { country: set, source: "clientCountry" };
   const amt = String(trackingDoc?.amountPaid ?? "");
-  if (amt.startsWith("£")) return { country: UK_COUNTRY, source: "amountPaid" };
-  return { country: null, source: null };
+  const byPayment =
+    amt.startsWith("CAD") ? "Canada"
+    : amt.startsWith("AUD") ? "Australia"
+    : amt.startsWith("£") ? UK_COUNTRY
+    : amt.startsWith("€") ? "Europe"
+    : amt.startsWith("$") || amt.startsWith("₹") ? "USA"
+    : null;
+  return byPayment ? { country: byPayment, source: "amountPaid" } : { country: null, source: null };
 }
 
 export async function resolveClientCountry(email, { collection } = {}) {
   const e = String(email || "").trim().toLowerCase();
-  if (!e.includes("@")) return { email: e, isUk: false, country: null, source: null };
+  if (!e.includes("@")) return { email: e, isUk: false, isUs: false, country: null, source: null };
   const col = collection || mongoose.connection.collection(TRACKING_COLLECTION);
   const doc = await col.findOne({ email: e }, { projection: { clientCountry: 1, amountPaid: 1 } });
   const { country, source } = deriveClientCountry(doc);
-  return { email: e, isUk: country === UK_COUNTRY, country, source };
+  return { email: e, isUk: country === UK_COUNTRY, isUs: country === "USA", country, source };
 }
 
 // ---- the push gate ----------------------------------------------------------

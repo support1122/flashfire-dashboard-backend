@@ -157,6 +157,11 @@ mock.module("../../Utils/dailyCapGuard.js", {
 // otherwise the set of employers the register accepts.
 let sponsorSet = null;
 let sponsorThrows = null;
+// "US H-1B sponsors only": off by default in these tests (no US client).
+mock.module("../../Utils/usVisaSponsor.js", {
+  namedExports: { usSponsorGate: async () => null },
+});
+
 mock.module("../../Utils/ukVisaSponsor.js", {
   namedExports: {
     ukSponsorGate: async () => {

@@ -125,6 +125,7 @@ import { SaveAiNotes, GetAiNotes } from "./Controllers/SaveAiNotes.js";
 import UpdateTargetJobs from "./Controllers/UpdateTargetJobs.js";
 import UpdateScrapeSources from "./Controllers/UpdateScrapeSources.js";
 import { GetUkSponsorOnly, UpdateUkSponsorOnly, LookupUkSponsor } from "./Controllers/UkVisaSponsors.js";
+import { GetUsSponsorOnly, UpdateUsSponsorOnly, LookupUsSponsor } from "./Controllers/UsVisaSponsors.js";
 import UpdateOpenaiKey from "./Controllers/UpdateOpenaiKey.js";
 import { GetGlobalOpenaiKey, SetGlobalOpenaiKey } from "./Controllers/GlobalOpenaiKey.js";
 import PushHistory from "./Controllers/PushHistory.js";
@@ -529,6 +530,10 @@ app.post("/update-scrape-sources", UpdateScrapeSources);
 app.get("/uk-sponsor-only", GetUkSponsorOnly);
 app.post("/update-uk-sponsor-only", UpdateUkSponsorOnly);
 app.get("/uk-visa-sponsors/lookup", LookupUkSponsor);
+// "US H-1B sponsors only" (Controllers/UsVisaSponsors.js). Sponsor data is in memory.
+app.get("/us-sponsor-only", GetUsSponsorOnly);
+app.post("/update-us-sponsor-only", UpdateUsSponsorOnly);
+app.get("/us-visa-sponsors/lookup", LookupUsSponsor);
 app.post("/update-openai-key", UpdateOpenaiKey);
 app.get("/admin/global-openai-key", GetGlobalOpenaiKey);
 app.post("/admin/global-openai-key", SetGlobalOpenaiKey);

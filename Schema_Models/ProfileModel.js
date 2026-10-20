@@ -655,6 +655,18 @@ export const profileSchema = new mongoose.Schema({
     updatedAt: { type: Date, required: false, default: null },
     updatedBy: { type: String, required: false, default: "" },
   },
+  // "US H-1B sponsors only" (Utils/usVisaSponsor.js). Only offered to US
+  // clients; when on, operator pushes from employers without a recent H-1B
+  // filing are refused. The sponsor data itself is in memory, not in Mongo.
+  usSponsorOnly: {
+    type: Boolean,
+    required: false,
+    default: false,
+  },
+  usSponsorOnlyMeta: {
+    updatedAt: { type: Date, required: false, default: null },
+    updatedBy: { type: String, required: false, default: "" },
+  },
   // Operator's per-client OpenAI API key. Used by the JR-direct extension's
   // SW to call api.openai.com directly for the auto-judge step. Stored as
   // plain text per ops decision — extension fetches it on /extension/clientLogin
