@@ -8,6 +8,7 @@ import { checkCap, detectOvershoot, checkPlanCap, enforcePlanCapPostInsert } fro
 import { jobLinkKey, inspectJobLink, SHARED_FORM_COMPANY_LIMIT } from '../Utils/jobLinkKey.js';
 import { classifyApplyUrl } from '../Utils/applyUrlPolicy.js';
 import { ukSponsorPushBlock } from '../Utils/ukVisaSponsor.js';
+import { usSponsorPushBlock } from '../Utils/usVisaSponsor.js';
 import { companyAllowlistBlock } from '../Utils/companyAllowlist.js';
 
 // Clamp the judge's verdict into the shape JobModel.aiDecision expects.
@@ -340,6 +341,41 @@ export default async function AddJob(req, res) {
                     success: false,
                     error: sponsorBlock.error,
                     message: sponsorBlock.message,
+                });
+            }
+        }
+
+        // "US H-1B sponsors only" (Utils/usVisaSponsor.js). Same contract as the
+        // UK rule above; the lookup is in memory, so it costs no query.
+        if (isOpsRole && clientForExclusions) {
+            let usBlock;
+            try {
+                usBlock = await usSponsorPushBlock({
+                    email: clientForExclusions,
+                    companyName: jobDetails?.companyName,
+                });
+            } catch (e) {
+                console.error('usSponsorPushBlock failed:', e.message);
+                return res.status(503).json({
+                    success: false,
+                    error: e.code === 'US_SPONSOR_DATA_NOT_LOADED' ? 'US_SPONSOR_DATA_NOT_LOADED' : 'SPONSOR_CHECK_FAILED',
+                    message: e.code === 'US_SPONSOR_DATA_NOT_LOADED'
+                        ? e.message
+                        : 'Could not check US H-1B sponsors (DB unavailable). Push refused, try again shortly.',
+                });
+            }
+            if (usBlock) {
+                console.log(JSON.stringify({
+                    event: 'us.sponsor.block',
+                    client: clientForExclusions,
+                    company: jobDetails?.companyName || '',
+                    reason: usBlock.sponsor?.reason || null,
+                    ts: new Date().toISOString(),
+                }));
+                return res.status(usBlock.status).json({
+                    success: false,
+                    error: usBlock.error,
+                    message: usBlock.message,
                 });
             }
         }

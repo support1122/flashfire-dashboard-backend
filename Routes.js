@@ -98,6 +98,8 @@ import { GeminiJudge } from "./Controllers/Extensions/geminiJudge.js";
 import { GeminiForScrapingTest } from "./Controllers/Extensions/geminiJudgeTest.js";
 import { OpenAiJudge } from "./Controllers/Extensions/openaiJudge.js";
 import { getSpeedyApplyAiConfig, askSpeedyApplyAi } from "./Controllers/Extensions/speedyApplyAsk.js";
+// Shared learning is off for now; uncomment this import and the route below to enable it.
+// import { getSpeedyApplySharedLearning } from "./Controllers/Extensions/speedyApplySharedLearning.js";
 import { ReciveData } from "./Controllers/Extensions/reciveData.js";
 import { extractJobData } from "./Controllers/Extensions/extractJobData.js";
 import ClientLogin from "./Controllers/Extensions/clientLogin.js";
@@ -123,6 +125,7 @@ import { SaveAiNotes, GetAiNotes } from "./Controllers/SaveAiNotes.js";
 import UpdateTargetJobs from "./Controllers/UpdateTargetJobs.js";
 import UpdateScrapeSources from "./Controllers/UpdateScrapeSources.js";
 import { GetUkSponsorOnly, UpdateUkSponsorOnly, LookupUkSponsor } from "./Controllers/UkVisaSponsors.js";
+import { GetUsSponsorOnly, UpdateUsSponsorOnly, LookupUsSponsor } from "./Controllers/UsVisaSponsors.js";
 import UpdateOpenaiKey from "./Controllers/UpdateOpenaiKey.js";
 import { GetGlobalOpenaiKey, SetGlobalOpenaiKey } from "./Controllers/GlobalOpenaiKey.js";
 import PushHistory from "./Controllers/PushHistory.js";
@@ -527,6 +530,10 @@ app.post("/update-scrape-sources", UpdateScrapeSources);
 app.get("/uk-sponsor-only", GetUkSponsorOnly);
 app.post("/update-uk-sponsor-only", UpdateUkSponsorOnly);
 app.get("/uk-visa-sponsors/lookup", LookupUkSponsor);
+// "US H-1B sponsors only" (Controllers/UsVisaSponsors.js). Sponsor data is in memory.
+app.get("/us-sponsor-only", GetUsSponsorOnly);
+app.post("/update-us-sponsor-only", UpdateUsSponsorOnly);
+app.get("/us-visa-sponsors/lookup", LookupUsSponsor);
 app.post("/update-openai-key", UpdateOpenaiKey);
 app.get("/admin/global-openai-key", GetGlobalOpenaiKey);
 app.post("/admin/global-openai-key", SetGlobalOpenaiKey);
@@ -769,6 +776,8 @@ app.post('/extension/speedyapply/profile', saveSpeedyApplyProfile);
 // Key is the `auto_fill_chatgpt_API` env var; prompt lives in speedyapplyaiprompts.
 app.get('/extension/speedyapply/ai-config', ExtensionAuth, getSpeedyApplyAiConfig);
 app.post('/extension/speedyapply/ask', ExtensionAuth, askSpeedyApplyAi);
+// Shared learning: label aliases merged across all clients (daily, src/services/speedyApplyLearningWorker.js).
+// app.get('/extension/speedyapply/shared-learning', ExtensionAuth, getSpeedyApplySharedLearning);
 // Onboarding email sequence — manual trigger (runs backfill → detect → send-due).
 // Safe to call: backfill guards against retro-emailing existing clients.
 app.post('/admin/onboarding-mail/run-now', async (_req, res) => {

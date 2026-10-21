@@ -134,7 +134,10 @@ test("deriveClientCountry mirrors clients-tracking: field first, then £ amountP
   assert.deepEqual(deriveClientCountry({ amountPaid: "£419" }), { country: "UK", source: "amountPaid" });
   // An explicit country wins over the payment currency.
   assert.deepEqual(deriveClientCountry({ clientCountry: "USA", amountPaid: "£419" }), { country: "USA", source: "clientCountry" });
-  assert.deepEqual(deriveClientCountry({ amountPaid: "$299" }), { country: null, source: null });
+  // Same payment fallbacks as clients-tracking: $ / ₹ -> USA, CAD, AUD, €.
+  assert.deepEqual(deriveClientCountry({ amountPaid: "$299" }), { country: "USA", source: "amountPaid" });
+  assert.deepEqual(deriveClientCountry({ amountPaid: "CAD 399" }), { country: "Canada", source: "amountPaid" });
+  assert.deepEqual(deriveClientCountry({ amountPaid: "" }), { country: null, source: null });
   assert.deepEqual(deriveClientCountry(null), { country: null, source: null });
 });
 
