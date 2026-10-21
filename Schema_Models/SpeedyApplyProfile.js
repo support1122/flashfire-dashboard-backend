@@ -17,6 +17,9 @@ const SpeedyApplyProfileSchema = new mongoose.Schema(
     resume: { type: mongoose.Schema.Types.Mixed, default: null }, // { name, size, mimeType, r2Key }
     tracker: { type: [mongoose.Schema.Types.Mixed], default: undefined }, // logged applications, newest first
     learned: { type: mongoose.Schema.Types.Mixed, default: null }, // label → profile-field aliases
+    // Answers the client typed into questions autofill left empty, reused when the
+    // same question comes back. This client's only; never part of shared learning.
+    savedAnswers: { type: [mongoose.Schema.Types.Mixed], default: undefined },
 
     // The client's Gemini key. Stored AES-encrypted (see Utils/CryptoHelper.js)
     // in `apiKeyEnc`; `apiKey` is the legacy plaintext column, kept only so old

@@ -6,9 +6,9 @@
 // verify it and use that email as the owner — a client can only ever read/write
 // their own SpeedyApply data, regardless of any email in the body.
 //
-// Synced payloads: profile, settings, resume, tracker, learned, apiKey. Every
-// one of them is optional on write; only the keys actually present in the body
-// are touched, so a settings-only save never wipes the stored profile.
+// Synced payloads: profile, settings, resume, tracker, learned, savedAnswers,
+// apiKey. Every one of them is optional on write; only the keys actually present
+// in the body are touched, so a settings-only save never wipes the stored profile.
 
 import jwt from "jsonwebtoken";
 import dotenv from "dotenv";
@@ -29,6 +29,9 @@ const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key";
 const TRACKER_MAX = 2000;
 // Same idea for learned aliases — the extension caps at 250, this is the backstop.
 const LEARNED_MAX = 1000;
+// Saved answers: the extension caps at 300 (content/saved-answers.js).
+const SAVED_ANSWERS_MAX = 500;
+const SAVED_ANSWER_KINDS = new Set(["text", "select", "radio", "checkbox", "listbox"]);
 
 const sanitize = (s) => String(s || "").replace(/[^a-z0-9._-]/gi, "_");
 
@@ -138,6 +141,54 @@ function capLearned(learned) {
   return out;
 }
 
+// The answers a client typed into questions autofill left empty, so the next
+// form with the same question fills itself. Stored oldest first, like the
+// extension keeps them, so the cap drops the oldest. Malformed entries are
+// dropped rather than stored: the extension fills real applications from them.
+// `deleted: true` is a tombstone: the client removed that answer, and the
+// tombstone stops another device from bringing it back.
+function cleanSavedAnswers(list) {
+  if (!Array.isArray(list)) return [];
+  const str = (v, max) => String(v ?? "").slice(0, max);
+  const out = [];
+  for (const e of list) {
+    if (!e || typeof e !== "object") continue;
+    const questionNormalized = str(e.questionNormalized, 250).trim();
+    if (questionNormalized.length < 3 || !SAVED_ANSWER_KINDS.has(e.kind)) continue;
+    const savedAt = str(e.savedAt, 40);
+    if (!Date.parse(savedAt)) continue;
+    const base = { questionNormalized, questionText: str(e.questionText, 250), kind: e.kind, savedAt };
+    if (e.deleted === true) {
+      out.push({ ...base, answer: "", deleted: true });
+      continue;
+    }
+    let answer;
+    if (Array.isArray(e.answer)) {
+      answer = e.answer.slice(0, 20).map((a) => str(a, 300)).filter((a) => a.trim());
+      if (!answer.length) continue;
+    } else {
+      answer = str(e.answer, 300);
+      if (!answer.trim()) continue;
+    }
+    out.push({ ...base, answer, portal: str(e.portal, 40), host: str(e.host, 200) });
+  }
+  return out;
+}
+
+// Two devices signed in as the same client each push their whole list, so a
+// plain overwrite would drop whatever the other device learned. Merge per
+// question instead: the newer savedAt wins, and a tie goes to the incoming copy.
+// Same rule as mergeSavedAnswerLists in the extension's shared/storage.js.
+function mergeSavedAnswers(stored, incoming) {
+  const byQuestion = new Map();
+  for (const e of [...cleanSavedAnswers(stored), ...cleanSavedAnswers(incoming)]) {
+    const prev = byQuestion.get(e.questionNormalized);
+    if (!prev || Date.parse(e.savedAt) >= Date.parse(prev.savedAt)) byQuestion.set(e.questionNormalized, e);
+  }
+  const merged = [...byQuestion.values()].sort((a, b) => Date.parse(a.savedAt) - Date.parse(b.savedAt));
+  return merged.slice(-SAVED_ANSWERS_MAX);
+}
+
 // seedFromDashboard: fill the gaps in the client's stored extension profile
 // from their FlashFire dashboard profile.
 //
@@ -186,6 +237,7 @@ export async function getSpeedyApplyProfile(req, res) {
       resume: await withResumeUrl(doc?.resume || null),
       tracker: Array.isArray(doc?.tracker) ? doc.tracker : null,
       learned: doc?.learned || null,
+      savedAnswers: Array.isArray(doc?.savedAnswers) ? doc.savedAnswers : null,
       apiKey: decryptApiKey(doc),
       updatedAt: doc?.updatedAt || null
     });
@@ -196,15 +248,15 @@ export async function getSpeedyApplyProfile(req, res) {
 }
 
 // POST /extension/speedyapply/profile
-// Body: { profile?, settings?, resume?, tracker?, learned?, apiKey? } — any
+// Body: { profile?, settings?, resume?, tracker?, learned?, savedAnswers?, apiKey? } — any
 // subset. Only the provided keys are written, so a settings-only save never
 // wipes the stored profile/resume.
 export async function saveSpeedyApplyProfile(req, res) {
   const email = clientEmailFromReq(req);
   if (!email) return res.status(401).json({ error: "unauthorized" });
 
-  const { profile, settings, resume, tracker, learned, apiKey } = req.body || {};
-  const provided = [profile, settings, resume, tracker, learned, apiKey].some((v) => v !== undefined);
+  const { profile, settings, resume, tracker, learned, savedAnswers, apiKey } = req.body || {};
+  const provided = [profile, settings, resume, tracker, learned, savedAnswers, apiKey].some((v) => v !== undefined);
   if (!provided) return res.status(400).json({ error: "nothing_to_save" });
 
   const set = { clientEmail: email, updatedAt: new Date() };
@@ -216,6 +268,13 @@ export async function saveSpeedyApplyProfile(req, res) {
   if (apiKey !== undefined) Object.assign(set, encryptApiKey(apiKey));
 
   try {
+    if (savedAnswers !== undefined) {
+      // Read-merge-write. Two saves from the same client landing in the same
+      // instant can still race; the losing device sends its answers again the next
+      // time it syncs.
+      const stored = await SpeedyApplyProfile.findOne({ clientEmail: email }).select("savedAnswers").lean();
+      set.savedAnswers = mergeSavedAnswers(stored?.savedAnswers, savedAnswers);
+    }
     const doc = await SpeedyApplyProfile.findOneAndUpdate(
       { clientEmail: email },
       { $set: set },
