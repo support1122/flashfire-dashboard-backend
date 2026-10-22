@@ -1,16 +1,15 @@
 // SpeedyApply profile sync — save + load a client's autofill data, keyed by the
-// client identified in the JWT that /extension/clientLogin issued.
+// client identified in the JWT that /extension/speedyapply/login issued.
 //
-// Auth: the extension sends the login token as `Authorization: Bearer <jwt>`.
-// The JWT payload is { email }, signed with JWT_SECRET (see clientLogin.js). We
-// verify it and use that email as the owner — a client can only ever read/write
-// their own SpeedyApply data, regardless of any email in the body.
+// Auth: Middlewares/SpeedyApplyAuth.js runs first on both routes. It verifies the
+// Bearer token and the access code it was signed with, and sets
+// req.speedyApplyEmail. That email is the owner — a client can only ever
+// read/write their own SpeedyApply data, regardless of any email in the body.
 //
 // Synced payloads: profile, settings, resume, tracker, learned, savedAnswers,
 // apiKey. Every one of them is optional on write; only the keys actually present
 // in the body are touched, so a settings-only save never wipes the stored profile.
 
-import jwt from "jsonwebtoken";
 import dotenv from "dotenv";
 import { SpeedyApplyProfile } from "../../Schema_Models/SpeedyApplyProfile.js";
 import { ProfileModel } from "../../Schema_Models/ProfileModel.js";
@@ -21,8 +20,6 @@ import { encrypt, decrypt } from "../../Utils/CryptoHelper.js";
 import { buildSeedProfile, mergeSeed } from "../../Utils/speedyApplySeed.js";
 
 dotenv.config();
-
-const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key";
 
 // Hard cap on the stored tracker so one client can never grow the document
 // toward Mongo's 16 MB ceiling. Entries arrive newest-first from the extension.
@@ -108,19 +105,10 @@ async function withResumeUrl(resume) {
   }
 }
 
-// clientEmailFromReq: pull + verify the Bearer token, return the lowercased
-// email, or null when the token is missing/invalid/expired.
+// clientEmailFromReq: the lowercased email SpeedyApplyAuth verified, or null
+// when the route was mounted without it.
 function clientEmailFromReq(req) {
-  const header = req.headers?.authorization || req.headers?.Authorization || "";
-  const token = header.startsWith("Bearer ") ? header.slice(7).trim() : "";
-  if (!token) return null;
-  try {
-    const payload = jwt.verify(token, JWT_SECRET);
-    const email = String(payload?.email || "").toLowerCase().trim();
-    return email || null;
-  } catch {
-    return null;
-  }
+  return req.speedyApplyEmail || null;
 }
 
 // Trim the learned-alias map to the most recently seen LEARNED_MAX entries.

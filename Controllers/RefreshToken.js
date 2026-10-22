@@ -1,6 +1,6 @@
 import { UserModel } from "../Schema_Models/UserModel.js";
 import Operations from "../Schema_Models/Operations.js";
-import { signAuthToken, verifyAuthToken, extractToken, normalizeEmail, CLIENT_SESSION_EXPIRY } from "../Utils/AuthToken.js";
+import { signAuthToken, verifyAuthToken, extractToken, normalizeEmail, CLIENT_SESSION_EXPIRY, OPERATOR_VIEW, OPERATOR_VIEW_EXPIRY, isOperatorView } from "../Utils/AuthToken.js";
 import { hasOpsTools } from "../Utils/opsToolsAccess.js";
 import dotenv from 'dotenv';
 dotenv.config();
@@ -60,7 +60,11 @@ export default async function RefreshToken(req, res) {
 
         return res.status(200).json({
             message: 'Token refreshed successfully',
-            token: signAuthToken({ email: user.email, name: user.name }, { expiresIn: CLIENT_SESSION_EXPIRY }),
+            // An operator's view of a client stays an operator view, on the
+            // operator window, instead of turning into a 30-day client session.
+            token: isOperatorView(decoded)
+                ? signAuthToken({ email: user.email, name: user.name, role: 'User', via: OPERATOR_VIEW }, { expiresIn: OPERATOR_VIEW_EXPIRY })
+                : signAuthToken({ email: user.email, name: user.name }, { expiresIn: CLIENT_SESSION_EXPIRY }),
             userDetails: {
                 name: user.name,
                 email: user.email,
