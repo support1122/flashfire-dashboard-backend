@@ -32,6 +32,13 @@ export const CLIENT_SESSION_EXPIRY = '30d';
  * default. Operator-minted client tokens (Controllers/operations/GetUserDetails)
  * pass an even shorter explicit 24h and are unaffected by either.
  */
+export const OPERATOR_VIEW = 'operations';
+export const OPERATOR_VIEW_EXPIRY = '24h';
+
+/** True when the token is a client session an operator opened from Operations
+ *  (Controllers/operations/GetUserDetails), not the client's own login. */
+export const isOperatorView = (decoded) => decoded?.via === OPERATOR_VIEW;
+
 export function signAuthToken(payload, options = {}) {
      return jwt.sign(payload, PRIMARY_SECRET, { expiresIn: '7d', ...options });
 }

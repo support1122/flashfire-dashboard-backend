@@ -14,7 +14,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import jwt from 'jsonwebtoken';
 
-import { CLIENT_SESSION_EXPIRY, signAuthToken, verifyAuthToken } from '../AuthToken.js';
+import { CLIENT_SESSION_EXPIRY, OPERATOR_VIEW, OPERATOR_VIEW_EXPIRY, isOperatorView, signAuthToken, verifyAuthToken } from '../AuthToken.js';
 
 const SECONDS_PER_DAY = 24 * 60 * 60;
 
@@ -46,6 +46,18 @@ test('an operator-minted client token stays at 24 hours', () => {
      // client account must not leave a long-lived client session behind.
      const token = signAuthToken({ email: 'client@example.com', role: 'User' }, { expiresIn: '24h' });
      assert.equal(lifetimeDays(token), 1);
+});
+
+test('an operator view is marked, and a client login is not', () => {
+     // Operator-only features (the SpeedyApply access code) key off this mark,
+     // and RefreshToken re-signs it with OPERATOR_VIEW_EXPIRY, not 30 days.
+     assert.equal(OPERATOR_VIEW_EXPIRY, '24h');
+     const opView = signAuthToken({ email: 'client@example.com', role: 'User', via: OPERATOR_VIEW }, { expiresIn: OPERATOR_VIEW_EXPIRY });
+     const own = signAuthToken({ email: 'client@example.com' }, { expiresIn: CLIENT_SESSION_EXPIRY });
+     assert.equal(isOperatorView(verifyAuthToken(opView)), true);
+     assert.equal(isOperatorView(verifyAuthToken(own)), false);
+     assert.equal(isOperatorView(null), false);
+     assert.equal(lifetimeDays(opView), 1);
 });
 
 test('a 30-day client token verifies today', () => {

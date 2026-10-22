@@ -1,5 +1,5 @@
 // GET /extension/speedyapply/shared-learning?version=<what the extension has>
-// (ExtensionAuth)
+// (SpeedyApplyAuth)
 //
 // The merged label -> profile-field aliases (see Utils/speedyApplyLearning.js).
 // 200 { ok, version, builtAt, changed, mappings }

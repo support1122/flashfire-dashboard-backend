@@ -1,8 +1,8 @@
 // SpeedyApply "Ask AI" — answers application questions with gpt-4o-mini.
 //
-//   GET  /extension/speedyapply/ai-config   (ExtensionAuth)
+//   GET  /extension/speedyapply/ai-config   (SpeedyApplyAuth)
 //        200 { ok, ready, model, prompt: { key, version, text }, candidate: { name, hasSummary, hasProfile } }
-//   POST /extension/speedyapply/ask         (ExtensionAuth)
+//   POST /extension/speedyapply/ask         (SpeedyApplyAuth)
 //        body { question, notes?, job?: { title, company, description, url } }
 //        200 { ok, answer, model, durationMs }
 //        400 question_required · 429 rate_limited · 503 no_openai_key / ai_disabled

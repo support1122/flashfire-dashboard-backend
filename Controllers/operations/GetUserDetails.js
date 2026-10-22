@@ -1,7 +1,7 @@
 import { UserModel } from "../../Schema_Models/UserModel.js";
 import { ProfileModel } from "../../Schema_Models/ProfileModel.js";
 import Operations from "../../Schema_Models/Operations.js";
-import { signAuthToken } from "../../Utils/AuthToken.js";
+import { signAuthToken, OPERATOR_VIEW } from "../../Utils/AuthToken.js";
 import dotenv from 'dotenv';
 dotenv.config();
 
@@ -35,11 +35,14 @@ export default async function GetUserDetails(req, res) {
                {
                     email: email,
                     id: existanceOfUser._id,
-                    role: 'User' // Client users have 'User' role
+                    role: 'User', // Client users have 'User' role
+                    // Marks a client session an operator opened. Operator-only
+                    // features (the SpeedyApply access code) check for it, and
+                    // RefreshToken carries it forward.
+                    via: OPERATOR_VIEW
                },
                { expiresIn: '24h' }
           );
-          console.log("token: ", token);
 
           return res.status(200).json({
                message: 'User data loaded  Sucess..!',

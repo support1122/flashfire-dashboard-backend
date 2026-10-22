@@ -104,6 +104,8 @@ import { ReciveData } from "./Controllers/Extensions/reciveData.js";
 import { extractJobData } from "./Controllers/Extensions/extractJobData.js";
 import ClientLogin from "./Controllers/Extensions/clientLogin.js";
 import { getSpeedyApplyProfile, saveSpeedyApplyProfile } from "./Controllers/Extensions/speedyApplyProfile.js";
+import { speedyApplyLogin, getSpeedyApplyAccessCode, rotateSpeedyApplyAccessCode } from "./Controllers/Extensions/speedyApplyAccess.js";
+import SpeedyApplyAuth from "./Middlewares/SpeedyApplyAuth.js";
 import { onboardingTick } from "./src/services/onboardingMailWorker.js";
 import { OnboardingMailStatus, SendOnboardingMailStep } from "./Controllers/OnboardingMailStatus.js";
 import { getExtensionExclusionLists } from "./Controllers/Extensions/exclusionLists.js";
@@ -768,16 +770,22 @@ app.post('/extension/settings/update', updateExtensionSettings);
 app.post('/extension/clientLogin', ClientLogin);
 app.get('/extension/profile', ExtensionAuth, extGetProfile);
 app.patch('/extension/profile', ExtensionAuth, extPatchProfile);
+// SpeedyApply sign-in: dashboard email + password + the access code the client's
+// dashboard shows (30 days, then a new one). Every other SpeedyApply route takes
+// only that login's token, and only while its code is still current.
+app.get('/speedyapply/access-code', LocalTokenValidator, getSpeedyApplyAccessCode);
+app.post('/speedyapply/access-code/rotate', LocalTokenValidator, rotateSpeedyApplyAccessCode);
+app.post('/extension/speedyapply/login', speedyApplyLogin);
 // SpeedyApply autofill sync — save/load a client's profile so it restores on
-// login from any machine. Auth is the clientLogin JWT (Bearer), verified inside.
-app.get('/extension/speedyapply/profile', getSpeedyApplyProfile);
-app.post('/extension/speedyapply/profile', saveSpeedyApplyProfile);
+// login from any machine.
+app.get('/extension/speedyapply/profile', SpeedyApplyAuth, getSpeedyApplyProfile);
+app.post('/extension/speedyapply/profile', SpeedyApplyAuth, saveSpeedyApplyProfile);
 // SpeedyApply Ask AI — gpt-4o-mini answers from the client's saved profile.
 // Key is the `auto_fill_chatgpt_API` env var; prompt lives in speedyapplyaiprompts.
-app.get('/extension/speedyapply/ai-config', ExtensionAuth, getSpeedyApplyAiConfig);
-app.post('/extension/speedyapply/ask', ExtensionAuth, askSpeedyApplyAi);
+app.get('/extension/speedyapply/ai-config', SpeedyApplyAuth, getSpeedyApplyAiConfig);
+app.post('/extension/speedyapply/ask', SpeedyApplyAuth, askSpeedyApplyAi);
 // Shared learning: label aliases merged across all clients (daily, src/services/speedyApplyLearningWorker.js).
-// app.get('/extension/speedyapply/shared-learning', ExtensionAuth, getSpeedyApplySharedLearning);
+// app.get('/extension/speedyapply/shared-learning', SpeedyApplyAuth, getSpeedyApplySharedLearning);
 // Onboarding email sequence — manual trigger (runs backfill → detect → send-due).
 // Safe to call: backfill guards against retro-emailing existing clients.
 app.post('/admin/onboarding-mail/run-now', async (_req, res) => {
