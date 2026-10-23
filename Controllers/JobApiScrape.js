@@ -390,10 +390,25 @@ export const runJobApiScrape = async (req, res) => {
 // keeps a job board's rate limits on the operator's IP instead of on the
 // dashboard's. Judging stays here so no OpenAI key ever sits on a laptop.
 //
+// Glassdoor is scraped the same way, in the operator's own logged-in Chrome:
+// the app clicks "Apply on employer site" and sends the employer link it
+// landed on.
+//
 // Only providers named below are accepted. Each one gets its own
 // importSource, so a card always says which API it came from.
 
-export const INGEST_PROVIDERS = Object.freeze({ indeed: "indeed-api" });
+export const INGEST_PROVIDERS = Object.freeze({ indeed: "indeed-api", glassdoor: "glassdoor-scrape" });
+
+// A provider's own pages are never an apply link. indeed.com is already on
+// the blocked-host list; glassdoor is not, so a Glassdoor link that never
+// resolved to the employer is refused here rather than pushed.
+const PROVIDER_OWN_HOST = Object.freeze({ glassdoor: /(^|\.)glassdoor\.[a-z.]+$/i });
+
+function isProviderOwnLink(provider, applyUrl) {
+  const re = PROVIDER_OWN_HOST[provider];
+  if (!re) return false;
+  try { return re.test(new URL(applyUrl).hostname); } catch { return true; }
+}
 export const MAX_INGEST_JOBS = 500;
 
 const clip = (v, n) => String(v ?? "").replace(/\s+/g, " ").trim().slice(0, n);
@@ -450,7 +465,7 @@ export const ingestJobApiJobs = async (req, res) => {
     let invalid = 0;
     rawJobs.forEach((raw, i) => {
       const job = sanitizeIngestJob(raw);
-      if (!job) { invalid += 1; return; }
+      if (!job || isProviderOwnLink(provider, job.applyUrl)) { invalid += 1; return; }
       let id = job.jobId || `${provider}-${i}`;
       if (ids.has(id)) id = `${id}#${i}`;
       ids.add(id);

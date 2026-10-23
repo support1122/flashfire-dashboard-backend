@@ -771,6 +771,31 @@ test("ingest pushes judged picks and marks them as Indeed imports", async () => 
   assert.equal(r.body.fetched, 2);
 });
 
+test("ingest takes Glassdoor jobs and marks them as Glassdoor scrapes", async () => {
+  reset();
+  judgeResult = judgeIds(["gd-1"]);
+  const r = await ingest({ provider: "glassdoor", jobs: [indeedJob(1, { jobId: "gd-1" })] });
+  assert.equal(r.code, 200);
+  assert.equal(r.body.pushed, 1);
+  assert.equal(r.body.provider, "glassdoor");
+  assert.equal(created[0].importSource, "glassdoor-scrape");
+});
+
+test("ingest refuses a Glassdoor link that never reached the employer", async () => {
+  reset();
+  judgeResult = judgeIds(["gd-2"]);
+  const r = await ingest({ provider: "glassdoor", jobs: [
+    indeedJob(1, { jobId: "gd-1", applyUrl: "https://www.glassdoor.co.uk/partner/jobListing.htm?jl=1" }),
+    indeedJob(2, { jobId: "gd-2" }),
+  ] });
+  assert.equal(r.code, 200);
+  assert.equal(r.body.invalid, 1);
+  assert.equal(r.body.pushed, 1);
+  assert.deepEqual(created.map((j) => j.joblink), ["https://boards.greenhouse.io/acme/jobs/2"]);
+  assert.deepEqual(judgeCalls.flatMap((c) => c.jobs.map((j) => j.jobId)), ["gd-2"],
+    "a Glassdoor page must not even reach the judge");
+});
+
 test("ingest refuses a provider it does not know", async () => {
   reset();
   const r = await ingest({ provider: "monster", jobs: [indeedJob(1)] });
