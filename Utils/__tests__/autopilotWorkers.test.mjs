@@ -261,3 +261,60 @@ test("autopilotWorkerHeartbeat treats a racing upsert as success", async () => {
     () => autopilotWorkerHeartbeat({ params: { slug: "server-1" }, body: {} }, res));
   assert.equal(res.statusCode, 200, "the other beat won; nothing is wrong");
 });
+
+// ── Glassdoor login ───────────────────────────────────────────────────
+
+import { getWorkerGlassdoorLogin, putWorkerGlassdoorLogin } from "../../Controllers/AutopilotWorkers.js";
+
+test("the worker list never carries the Glassdoor password", async () => {
+  const res = fakeRes();
+  await withStubs([
+    [AutopilotWorker, "find", () => ({ sort: () => ({ lean: async () => [
+      { slug: "s", name: "S", glassdoorEmail: "ops@x.com", glassdoorPassword: "secret" }] }) })],
+    [AutopilotAssignment, "aggregate", async () => []]
+  ], () => listAutopilotWorkers({ query: {} }, res));
+  assert.ok(!JSON.stringify(res.body).includes("secret"));
+});
+
+test("the password is not selected unless asked for by name", () => {
+  assert.equal(AutopilotWorker.schema.path("glassdoorPassword").options.select, false);
+});
+
+test("getWorkerGlassdoorLogin returns the saved login, 404 for an unknown profile", async () => {
+  let selected = "";
+  const found = (doc) => ({ select: (f) => { selected = f; return { lean: async () => doc }; } });
+  let res = fakeRes();
+  await withStubs([[AutopilotWorker, "findOne", () => found({ glassdoorEmail: "ops@x.com", glassdoorPassword: "pw" })]],
+    () => getWorkerGlassdoorLogin({ params: { slug: "Sarah" } }, res));
+  assert.equal(res.statusCode, 200);
+  assert.deepEqual([res.body.email, res.body.password], ["ops@x.com", "pw"]);
+  assert.match(selected, /\+glassdoorPassword/);
+
+  res = fakeRes();
+  await withStubs([[AutopilotWorker, "findOne", () => found(null)]],
+    () => getWorkerGlassdoorLogin({ params: { slug: "nope" } }, res));
+  assert.equal(res.statusCode, 404);
+});
+
+test("putWorkerGlassdoorLogin keeps the password when it is left blank", async () => {
+  const sets = [];
+  const update = async (_q, u) => { sets.push(u.$set); return { matchedCount: 1 }; };
+  await withStubs([[AutopilotWorker, "updateOne", update]], async () => {
+    await putWorkerGlassdoorLogin({ params: { slug: "s" }, body: { email: "Ops@X.com", password: "pw" } }, fakeRes());
+    await putWorkerGlassdoorLogin({ params: { slug: "s" }, body: { email: "ops@x.com", password: "" } }, fakeRes());
+    await putWorkerGlassdoorLogin({ params: { slug: "s" }, body: { email: "" } }, fakeRes());
+  });
+  assert.deepEqual(sets[0], { glassdoorEmail: "ops@x.com", glassdoorPassword: "pw" });
+  assert.deepEqual(sets[1], { glassdoorEmail: "ops@x.com" }, "blank password keeps the saved one");
+  assert.deepEqual(sets[2], { glassdoorEmail: "", glassdoorPassword: "" }, "blank email removes the login");
+});
+
+test("putWorkerGlassdoorLogin refuses a bad email and an unknown profile", async () => {
+  let res = fakeRes();
+  await putWorkerGlassdoorLogin({ params: { slug: "s" }, body: { email: "not-an-email" } }, res);
+  assert.equal(res.statusCode, 400);
+  res = fakeRes();
+  await withStubs([[AutopilotWorker, "updateOne", async () => ({ matchedCount: 0 })]],
+    () => putWorkerGlassdoorLogin({ params: { slug: "gone" }, body: { email: "a@b.co", password: "x" } }, res));
+  assert.equal(res.statusCode, 404);
+});

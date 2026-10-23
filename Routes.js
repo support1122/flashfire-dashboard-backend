@@ -26,6 +26,8 @@ import {
   listAutopilotWorkers,
   createAutopilotWorker,
   deleteAutopilotWorker,
+  getWorkerGlassdoorLogin,
+  putWorkerGlassdoorLogin,
   listAutopilotAssignments,
   setAutopilotAssignments,
   autopilotWorkerHeartbeat
@@ -226,6 +228,8 @@ app.get("/autopilot/workers", requireOpsKey, listAutopilotWorkers);
 app.post("/autopilot/workers", requireOpsKey, createAutopilotWorker);
 app.post("/autopilot/workers/:slug/heartbeat", requireOpsKey, autopilotWorkerHeartbeat);
 app.delete("/autopilot/workers/:slug", requireOpsKey, deleteAutopilotWorker);
+app.get("/autopilot/workers/:slug/glassdoor-login", requireOpsKey, getWorkerGlassdoorLogin);
+app.put("/autopilot/workers/:slug/glassdoor-login", requireOpsKey, putWorkerGlassdoorLogin);
 app.get("/autopilot/assignments", requireOpsKey, listAutopilotAssignments);
 app.put("/autopilot/assignments", requireOpsKey, setAutopilotAssignments);
 app.get("/api/dashboard-managers", getDashboardManagers);

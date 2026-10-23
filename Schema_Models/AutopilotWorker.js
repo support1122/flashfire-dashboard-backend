@@ -35,7 +35,15 @@ const AutopilotWorkerSchema = new mongoose.Schema(
     running: { type: [String], default: [] },   // client emails scraping right now
     queued: { type: [String], default: [] },    // client emails waiting in its lanes
     lanes: { type: Number, default: 0 },        // parallel limit it is using
-    appVersion: { type: String, default: "" }
+    appVersion: { type: String, default: "" },
+
+    // The Glassdoor/Indeed account this profile's Glassdoor button signs in
+    // with, so any machine that picks the profile can reuse it. Plaintext,
+    // like AutopilotCreds and for the same reason (private cluster, ops-key
+    // routes). select:false keeps the password out of every query that does
+    // not ask for it by name; only GET /autopilot/workers/:slug/glassdoor-login does.
+    glassdoorEmail: { type: String, default: "", trim: true },
+    glassdoorPassword: { type: String, default: "", select: false }
   },
   { timestamps: true, collection: "autopilotworkers" }
 );
