@@ -148,6 +148,58 @@ export const deleteAutopilotWorker = async (req, res) => {
 };
 
 /**
+ * GET /autopilot/workers/:slug/glassdoor-login
+ *
+ * The saved Glassdoor/Indeed login for this profile, password included: the
+ * app types it into the sign-in page. 404 for an unknown profile; an empty
+ * email when none is saved.
+ */
+export const getWorkerGlassdoorLogin = async (req, res) => {
+  try {
+    const slug = String(req.params.slug || "").toLowerCase().trim();
+    const w = await AutopilotWorker.findOne({ slug }).select("+glassdoorPassword glassdoorEmail").lean();
+    if (!w) return res.status(404).json({ success: false, message: "no such profile" });
+    res.status(200).json({
+      success: true,
+      email: w.glassdoorEmail || "",
+      password: w.glassdoorEmail ? w.glassdoorPassword || "" : ""
+    });
+  } catch (error) {
+    console.error("getWorkerGlassdoorLogin failed:", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+/**
+ * PUT /autopilot/workers/:slug/glassdoor-login   { email, password? }
+ *
+ * Save it. A missing or blank password keeps the saved one, so the form never
+ * has to show it; a blank email removes the login altogether.
+ */
+export const putWorkerGlassdoorLogin = async (req, res) => {
+  try {
+    const slug = String(req.params.slug || "").toLowerCase().trim();
+    const email = cleanEmail(req.body?.email);
+    const password = typeof req.body?.password === "string" ? req.body.password : "";
+    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return res.status(400).json({ success: false, message: "email does not look right" });
+    }
+    if (password.length > 200) {
+      return res.status(400).json({ success: false, message: "password is too long" });
+    }
+    const set = email
+      ? { glassdoorEmail: email, ...(password ? { glassdoorPassword: password } : {}) }
+      : { glassdoorEmail: "", glassdoorPassword: "" };
+    const r = await AutopilotWorker.updateOne({ slug }, { $set: set });
+    if (!r.matchedCount) return res.status(404).json({ success: false, message: "no such profile" });
+    res.status(200).json({ success: true, email });
+  } catch (error) {
+    console.error("putWorkerGlassdoorLogin failed:", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+/**
  * GET /autopilot/assignments[?worker=slug]
  *
  * The whole map, or one worker's clients. The app calls this on every roster
