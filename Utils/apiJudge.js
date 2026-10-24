@@ -47,8 +47,16 @@ skipKind - required on every skip, empty string on every pick:
 
 THE DECISION
 
-Ask one question: would a recruiter send this candidate's CV for this title
-and not be embarrassed?
+First: is the title, translated to English if needed, one of the
+candidate's preferredRoles or plainly the same work? Then it is a PICK. The
+candidate asked for that role by name. Score it by fit (sector, seniority,
+how close the past jobs are), but do not skip it for experience, sector,
+"focus", or because it differs from their past jobs. Only an exclusion list,
+an internship they do not want, or a title that demands an authorisation
+they lack can skip a preferredRole.
+
+Otherwise ask one question: would a recruiter send this candidate's CV for
+this title and not be embarrassed?
 
   Yes, even at a stretch  -> pick it, with a score that reflects how good it is.
   No                      -> skip it.
@@ -66,6 +74,13 @@ Supporting software is not writing it. Analysing data is not engineering the
 pipeline. Managing a project is not doing the discipline being managed.
 
 It is NOT a role mismatch when:
+  - The title is in another language. Judge the "titleEnglish" given with
+    it when there is one, otherwise translate it yourself: "Acheteur" is Buyer, "Analyste" is Analyst, "Ingenieur" is
+    Engineer, "Einkaeufer" is Buyer, "Inkoper" is Buyer, "Comprador" is Buyer.
+    Ignore gender tags such as "(H/F)", "F/H" or "(m/w/d)".
+  - The title is one of the candidate's preferredRoles, in any language or
+    wording. Every preferredRole is work they asked for, even when it differs
+    from their past jobs or from the main thread of the brief.
   - The title is worded differently for the same work - synonyms,
     abbreviations, re-orderings, or a qualifier bolted on the front.
   - It is a neighbouring speciality within the same line of work.
@@ -90,6 +105,12 @@ NEVER A REASON TO SKIP
   - SKILLS. You are not shown what the employer asks for. Do not guess it, do
     not assume a tool or a certification is required, and never skip on one. A
     skill you suspect is missing LOWERS THE SCORE at most. It never skips.
+  - INDUSTRY OR SECTOR. "Prioritise aerospace", "focus on fintech", "prefers
+    healthcare" in the brief RAISE the score of jobs in that sector. They do
+    not narrow the search: a preferredRole at an employer outside that sector
+    is still a PICK, with a lower score. Never write "focuses on <sector>" as
+    the reason for a skip. Only an explicit "only <sector>" or "skip
+    non-<sector>" in the brief makes the sector a requirement.
 
 EXCLUSIONS ARE DATA - NEVER INFERRED
 
@@ -146,8 +167,17 @@ const TIMEOUT_MS = Number(process.env.OPENAI_JUDGE_TIMEOUT_MS) || 25000;
 // API call, and a batch big enough to blow the context window judges nothing.
 const BATCH = 20;
 
+// Inside one list entry, several roles are often typed together:
+// ["CAMO Engineer/ Technical Services Engineer/ Buyer"]. Sent as one string,
+// the model read it as a single CAMO-led role and skipped every Buyer job.
+// Only a slash with a space beside it separates roles, so "AI/ML Engineer"
+// and "Acheteur/Acheteuse" stay whole; "|" and ";" always separate.
+const ENTRY_SPLIT = /\s*[|;]\s*|\s+\/\s*|\s*\/\s+/;
+
 const asList = (v) => {
-  if (Array.isArray(v)) return v.filter(Boolean).map((s) => String(s).trim()).filter(Boolean);
+  if (Array.isArray(v)) {
+    return v.filter(Boolean).flatMap((s) => String(s).split(ENTRY_SPLIT)).map((s) => s.trim()).filter(Boolean);
+  }
   if (typeof v === "string") return v.split(/\s*[/|,]\s*/).map((s) => s.trim()).filter(Boolean);
   return [];
 };
@@ -172,6 +202,44 @@ export function splitRoles(raw) {
   return { preferred, excluded };
 }
 
+// European job titles, word for word in English. gpt-4o-mini picked "Buyer" at
+// 80 and skipped "Acheteur projets (H/F)" while writing "is a Buyer role" in
+// its own reason (2026-10-23), so the translation is handed over rather than
+// left to the model. Only the common job words: anything not listed stays as
+// typed, and a title with nothing to translate gets no gloss.
+// Word boundaries are Unicode-aware: JavaScript's \b treats "é" as a
+// non-letter, so "Confirmé" never matched with it.
+const word = (src) => new RegExp(`(?<!\\p{L})(?:${src})(?!\\p{L})`, "giu");
+const TITLE_GLOSSARY = [
+  [word("acheteur|acheteuse|eink[aä]ufer(?:in)?|inkoper|comprador(?:a)?"), "Buyer"],
+  [word("responsable (?:des )?achats?"), "Purchasing Manager"],
+  [word("achats?|einkauf|inkoop|compras|acquisti"), "Purchasing"],
+  [word("approvisionneur|approvisionneuse"), "Procurement Planner"],
+  [word("analyste|analytiker(?:in)?|analista"), "Analyst"],
+  [word("ing[ée]nieur(?:e)?|ingenieur(?:in)?|ingeniero|ingegnere"), "Engineer"],
+  [word("chef de projets?"), "Project Manager"],
+  [word("responsable|leiter(?:in)?|jefe|responsabile"), "Manager"],
+  [word("technicien(?:ne)?|techniker(?:in)?|t[ée]cnico"), "Technician"],
+  [word("stagiaire|stage|praktikum|tirocinio|pr[aá]cticas"), "Internship"],
+  [word("apprenti(?:e)?|alternance|alternant(?:e)?|ausbildung"), "Apprenticeship"],
+  [word("navigabilit[ée]"), "Airworthiness"],
+  [word("a[ée]ronautique"), "Aerospace"],
+  [word("confirm[ée]e?"), "Experienced"],
+  [word("strat[ée]gique"), "Strategic"],
+  [word("industriel(?:le)?"), "Industrial"],
+  [word("projets?"), "Projects"],
+  // Gender tags: (H/F), F/H, (m/w/d), F/H/D.
+  [/\s*[(\[]?(?<!\p{L})(?:h\s*\/\s*f|f\s*\/\s*h(?:\s*\/\s*d)?|m\s*\/\s*[wf]\s*\/\s*d)(?!\p{L})[)\]]?/giu, ""],
+];
+
+export function englishGloss(title) {
+  const original = String(title || "");
+  let out = original;
+  for (const [re, en] of TITLE_GLOSSARY) out = out.replace(re, en);
+  out = out.replace(/\s{2,}/g, " ").replace(/\s+([,)])/g, "$1").trim();
+  return out && out.toLowerCase() !== original.trim().toLowerCase() ? out : "";
+}
+
 /**
  * The user half of the prompt: who the candidate is, then the batch.
  *
@@ -194,6 +262,7 @@ export function buildUserPrompt({ profile = {}, aiSummary = "", jobs = [], thres
   const slim = jobs.map((j) => ({
     id: j.jobId,
     title: j.title,
+    ...(englishGloss(j.title) ? { titleEnglish: englishGloss(j.title) } : {}),
     company: j.company,
     location: j.location,
     category: j.category || "",

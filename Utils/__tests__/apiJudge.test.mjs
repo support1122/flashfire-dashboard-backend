@@ -7,7 +7,7 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
-import { API_JUDGE_PROMPT, buildUserPrompt, judgeJobs, splitRoles, JUDGE_BATCH_SIZE } from "../apiJudge.js";
+import { API_JUDGE_PROMPT, buildUserPrompt, judgeJobs, splitRoles, JUDGE_BATCH_SIZE, englishGloss } from "../apiJudge.js";
 
 const JOBS = [
   { jobId: "adz-1", title: "Registered Nurse", company: "HCA", location: "Sydney", category: "Healthcare & Nursing Jobs" },
@@ -204,4 +204,47 @@ test("a settings lookup that throws does not take the run down with it", () => {
 
 test("no key anywhere is still reported as NO_OPENAI_KEY, not as a crash", () => {
   assert.match(APIJUDGE_SRC, /NO_OPENAI_KEY/);
+});
+
+
+test("roles typed together in one list entry reach the judge as separate roles", () => {
+  const { preferred } = splitRoles(["CAMO Engineer/ Technical Services Engineer/ Supply Chain Analyst/ Analyst/ Buyer"]);
+  assert.deepEqual(preferred, ["CAMO Engineer", "Technical Services Engineer", "Supply Chain Analyst", "Analyst", "Buyer"]);
+});
+
+test("a slash inside a title is not a role separator", () => {
+  assert.deepEqual(splitRoles(["AI/ML Engineer", "Acheteur/Acheteuse"]).preferred, ["AI/ML Engineer", "Acheteur/Acheteuse"]);
+  assert.deepEqual(splitRoles(["Nurse | Midwife; Doula"]).preferred, ["Nurse", "Midwife", "Doula"]);
+});
+
+test("the judge prompt says titles in another language are judged by meaning", () => {
+  assert.match(API_JUDGE_PROMPT, /another language/);
+  assert.match(API_JUDGE_PROMPT, /"Acheteur" is Buyer/);
+  assert.match(API_JUDGE_PROMPT, /preferredRoles, in any language/);
+});
+
+test("a sector the brief prioritises raises the score but never skips other employers", () => {
+  assert.match(API_JUDGE_PROMPT, /INDUSTRY OR SECTOR/);
+  assert.match(API_JUDGE_PROMPT, /still a PICK, with a lower score/);
+});
+
+test("a title that is one of the preferredRoles is a pick by rule", () => {
+  assert.match(API_JUDGE_PROMPT, /one of the\s+candidate's preferredRoles or plainly the same work\? Then it is a PICK/);
+});
+
+test("European titles get an English gloss for the judge", () => {
+  assert.equal(englishGloss("Acheteur projets (H/F)"), "Buyer Projects");
+  assert.equal(englishGloss("Acheteur Confirmé H/F"), "Buyer Experienced");
+  assert.equal(englishGloss("Analyste Supply Chain - H/F"), "Analyst Supply Chain -");
+  assert.equal(englishGloss("Einkäufer (m/w/d)"), "Buyer");
+  assert.equal(englishGloss("Stage BAC+4/5 - Supply Chain Analyst"), "Internship BAC+4/5 - Supply Chain Analyst");
+  assert.equal(englishGloss("Senior Software Engineer"), "", "an English title gets no gloss");
+});
+
+test("the gloss reaches the prompt next to the original title", () => {
+  const prompt = buildUserPrompt({ profile: { preferredRoles: ["Buyer"] }, jobs: [
+    { jobId: "a", title: "Acheteur projets (H/F)", company: "LGM" },
+    { jobId: "b", title: "Buyer", company: "Renault" }] });
+  assert.match(prompt, /"titleEnglish": "Buyer Projects"/);
+  assert.equal((prompt.match(/titleEnglish/g) || []).length, 1, "only titles that changed get one");
 });
