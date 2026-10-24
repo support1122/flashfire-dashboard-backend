@@ -389,6 +389,7 @@ test("a job already on the board is neither judged nor pushed again", async () =
   assert.equal(r.body.judged, 1);
   assert.deepEqual(judgeCalls[0].jobs.map((j) => j.jobId), ["adz-2"]);
   assert.deepEqual(created.map((d) => d.joblink), ["https://adzuna.test/job/2"]);
+  assert.equal(r.body.pushedJobs.length, 1);
 });
 
 test("only what the judge picked is written", async () => {
@@ -399,6 +400,28 @@ test("only what the judge picked is written", async () => {
   assert.equal(r.body.picked, 1);
   assert.equal(r.body.pushed, 1);
   assert.deepEqual(created.map((d) => d.joblink), ["https://adzuna.test/job/2"]);
+  assert.equal(r.body.pushedJobs.length, 1);
+});
+
+test("when nothing is good enough the closest job is reported, not pushed", async () => {
+  reset();
+  pages = [{ ok: true, results: [adzJob(1), adzJob(2)] }, { ok: true, results: [] }];
+  judgeResult = judgeAll([1, 2], []);
+  judgeResult.decisions[1].score = 45;
+  judgeResult.decisions[0].score = 20;
+  const r = await run();
+  assert.equal(r.body.pushed, 0);
+  assert.equal(created.length, 0);
+  assert.equal(r.body.best.score, 45);
+  assert.equal(r.body.best.applyUrl, "https://adzuna.test/job/2");
+});
+
+test("a run that picked something reports no closest-miss", async () => {
+  reset();
+  pages = [{ ok: true, results: [adzJob(1)] }, { ok: true, results: [] }];
+  judgeResult = judgeAll([1], [1]);
+  const r = await run();
+  assert.equal(r.body.best, null);
 });
 
 test("a failing judge pushes nothing at all", async () => {

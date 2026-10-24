@@ -233,12 +233,26 @@ export async function importJobs({
   const picks = fresh.filter(({ job }) => byId.get(job.jobId)?.pick === true).slice(0, remaining);
   counts.picked = picks.length;
 
+  // Nothing good enough: say which job came closest and why, so the operator
+  // sees the judge worked and what it thought, instead of a bare zero.
+  let best = null;
+  if (!picks.length) {
+    for (const { job } of fresh) {
+      const d = byId.get(job.jobId);
+      if (d && Number.isFinite(d.score) && (!best || d.score > best.score)) {
+        best = { title: job.title, company: job.company, score: d.score,
+                 reason: String(d.reason || "").slice(0, 300), applyUrl: job.applyUrl };
+      }
+    }
+  }
+
   // ---- push -------------------------------------------------------------
   // Straight onto JobModel, in the same shape AddJob writes, rather than
   // calling our own HTTP endpoint from inside ourselves.
   const opName = String(operatorName || "Job API").slice(0, 80);
   const opEmail = String(operatorEmail || "").toLowerCase().trim();
   const failures = [];
+  const pushedJobs = [];
   for (const { job, key } of picks) {
     const d = byId.get(job.jobId) || {};
     try {
@@ -265,6 +279,7 @@ export async function importJobs({
         },
       });
       counts.pushed += 1;
+      pushedJobs.push({ title: job.title, company: job.company, score: Number.isInteger(d.score) ? d.score : null });
     } catch (e) {
       failures.push(`${job.jobId}: ${e.message}`.slice(0, 160));
     }
@@ -275,6 +290,8 @@ export async function importJobs({
     outcome: counts.pushed >= remaining ? "cap-reached" : "done",
     ...counts,
     errors: failures.slice(0, 5),
+    best,
+    pushedJobs,
   } };
 }
 

@@ -115,26 +115,37 @@ export function normalizeTerm(what) {
  * already works is used verbatim and the rest is never reached.
  */
 export function searchLadder(what) {
-  const saved = String(what || "").trim();
+  // The operator can list several roles, comma separated
+  // ("Supply Chain Analyst, Buyer"). Every role as typed comes first, in
+  // order, so the second is only searched when the first finds nothing;
+  // the broadened forms of each come after all of them.
+  const terms = splitTerms(what);
   const ladder = [];
   const push = (v) => {
     const t = String(v || "").trim();
     if (t && !ladder.some((x) => x.toLowerCase() === t.toLowerCase())) ladder.push(t);
   };
-  push(saved);
+  terms.forEach(push);
 
-  const words = normalizeTerm(saved);
-  if (!words.length) return ladder;
+  for (const saved of terms) {
+    const words = normalizeTerm(saved);
+    if (!words.length) continue;
 
-  // Without the seniority words, which `what` matches literally.
-  const core = words.filter((w) => !SENIORITY_WORDS.has(w));
-  const base = core.length ? core : words;
-  push(base.join(" "));
+    // Without the seniority words, which `what` matches literally.
+    const core = words.filter((w) => !SENIORITY_WORDS.has(w));
+    const base = core.length ? core : words;
+    push(base.join(" "));
 
-  // Then the tail of the phrase: the head noun keeps the most meaning, and
-  // the words nearest it qualify it ("...planning analyst", "...analyst").
-  for (let n = Math.min(3, base.length - 1); n >= 1; n -= 1) push(base.slice(-n).join(" "));
+    // Then the tail of the phrase: the head noun keeps the most meaning, and
+    // the words nearest it qualify it ("...planning analyst", "...analyst").
+    for (let n = Math.min(3, base.length - 1); n >= 1; n -= 1) push(base.slice(-n).join(" "));
+  }
   return ladder;
+}
+
+/** "A, B,, C" -> ["A", "B", "C"]: the roles a saved search lists. */
+export function splitTerms(what) {
+  return String(what || "").split(/[,;\n]/).map((t) => t.trim()).filter(Boolean);
 }
 
 export function buildQuery(settings = {}, { appId, appKey } = {}) {
