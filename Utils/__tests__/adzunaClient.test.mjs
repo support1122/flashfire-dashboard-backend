@@ -158,7 +158,7 @@ test("missing optional fields never throw", () => {
 // "supply chain planning analyst" returned 0, and 11 of 50 clients got
 // nothing for that reason alone.
 
-import { searchLadder, normalizeTerm } from "../adzunaClient.js";
+import { searchLadder, normalizeTerm, splitTerms } from "../adzunaClient.js";
 
 test("the term the operator saved is always tried first, unchanged", () => {
   assert.equal(searchLadder("Software Engineer")[0], "Software Engineer");
@@ -206,4 +206,12 @@ test("an empty or punctuation-only term yields nothing to try", () => {
   assert.deepEqual(searchLadder(""), []);
   assert.deepEqual(searchLadder("   "), []);
   assert.deepEqual(searchLadder("---"), ["---"]);   // saved verbatim, nothing broader
+});
+
+test("comma-separated roles are each tried as typed before any is broadened", () => {
+  const l = searchLadder("Senior Supply Chain Analyst, Buyer ,, Acheteur");
+  assert.deepEqual(l.slice(0, 3), ["Senior Supply Chain Analyst", "Buyer", "Acheteur"]);
+  assert.ok(l.includes("supply chain analyst"));
+  assert.ok(l.indexOf("supply chain analyst") > 2);
+  assert.deepEqual(splitTerms(" a, b;c\n d ,"), ["a", "b", "c", "d"]);
 });
