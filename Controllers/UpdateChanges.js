@@ -4,6 +4,7 @@ import { UserModel } from "../Schema_Models/UserModel.js";
 import { ProfileModel } from "../Schema_Models/ProfileModel.js";
 import { DiscordConnect } from "../Utils/DiscordConnect.js";
 import { validateOperatorRemovalReason } from "../Utils/operatorRemovalReason.js";
+import { shouldSetAppliedDate, isBlankAppliedDate } from "../Utils/appliedDate.js";
 // isPureLogisticalReason: duplicate/already-applied/posting-closed reasons
 // carry zero preference signal — they still land on the job + Discord, but
 // never enter removalFeedback or trigger a rebuild. Duplicates are already
@@ -100,26 +101,6 @@ const buildOperatorFields = (role, body, userDetails) => {
   }
 
   return fields;
-};
-
-// Stamp appliedDate on the first move into an applied column.
-//
-// This used to compare `currentStatus === "saved"` against the RAW stored value,
-// which is wrong for every job an operator has ever touched. Every status write
-// goes through formatStatusWithAttribution(), and shouldAttributeStatus()
-// appends " by <name>" to anything not already containing " by ". So the moment
-// an operator moves a card to Saved, currentStatus becomes "saved by Sathya" and
-// the exact-equality test can never match again. appliedDate then stayed null
-// forever, which silently broke everything keyed on it: the "Last applied by"
-// column, "Since 1st Apply", the operator performance report, and the
-// applied-on-date counts.
-//
-// Compare on the leading word instead, lower-cased, so both the attribution
-// suffix and whatever casing the client sent are tolerated.
-const shouldSetAppliedDate = (currentStatus, newStatus) => {
-  const from = String(currentStatus || "").trim().toLowerCase();
-  const to = String(newStatus || "").trim().toLowerCase();
-  return from.startsWith("saved") && to.startsWith("applied");
 };
 
 const incrementRemovalCount = async (userEmail, status, role) => {
@@ -297,7 +278,7 @@ const handleUpdateStatus = async (req, res, jobID, userEmail, userDetails) => {
   };
 
   // Set appliedDate only on the first transition to applied (never overwrite once set)
-  if (shouldSetAppliedDate(currentJob.currentStatus, statusToSet) && !currentJob.appliedDate) {
+  if (shouldSetAppliedDate(currentJob.currentStatus, statusToSet) && isBlankAppliedDate(currentJob.appliedDate)) {
     updateFields.appliedDate = getCurrentISTTime();
   }
 
@@ -415,7 +396,7 @@ const handleEdit = async (req, res, jobID, userEmail, userDetails) => {
   }
 
   // Set appliedDate only on the first transition to applied (never overwrite once set)
-  if (shouldSetAppliedDate(existingJob.currentStatus, nextStatus) && !existingJob.appliedDate) {
+  if (shouldSetAppliedDate(existingJob.currentStatus, nextStatus) && isBlankAppliedDate(existingJob.appliedDate)) {
     updateFields.appliedDate = getCurrentISTTime();
   }
 
