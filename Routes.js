@@ -107,6 +107,7 @@ import { extractJobData } from "./Controllers/Extensions/extractJobData.js";
 import ClientLogin from "./Controllers/Extensions/clientLogin.js";
 import { getSpeedyApplyProfile, saveSpeedyApplyProfile } from "./Controllers/Extensions/speedyApplyProfile.js";
 import { speedyApplyLogin, getSpeedyApplyAccessCode, rotateSpeedyApplyAccessCode } from "./Controllers/Extensions/speedyApplyAccess.js";
+import { listSpeedyApplyOptimizedResumes, getSpeedyApplyOptimizedResumePdf } from "./Controllers/Extensions/speedyApplyResumes.js";
 import SpeedyApplyAuth from "./Middlewares/SpeedyApplyAuth.js";
 import { onboardingTick } from "./src/services/onboardingMailWorker.js";
 import { OnboardingMailStatus, SendOnboardingMailStep } from "./Controllers/OnboardingMailStatus.js";
@@ -788,6 +789,10 @@ app.post('/extension/speedyapply/profile', SpeedyApplyAuth, saveSpeedyApplyProfi
 // Key is the `auto_fill_chatgpt_API` env var; prompt lives in speedyapplyaiprompts.
 app.get('/extension/speedyapply/ai-config', SpeedyApplyAuth, getSpeedyApplyAiConfig);
 app.post('/extension/speedyapply/ask', SpeedyApplyAuth, askSpeedyApplyAi);
+// SpeedyApply resume picker: the client's job cards with an optimized resume,
+// and one of them as the PDF the job card downloads (built by the PDF server).
+app.get('/extension/speedyapply/optimized-resumes', SpeedyApplyAuth, listSpeedyApplyOptimizedResumes);
+app.get('/extension/speedyapply/optimized-resumes/:jobId/pdf', SpeedyApplyAuth, getSpeedyApplyOptimizedResumePdf);
 // Shared learning: label aliases merged across all clients (daily, src/services/speedyApplyLearningWorker.js).
 // app.get('/extension/speedyapply/shared-learning', SpeedyApplyAuth, getSpeedyApplySharedLearning);
 // Onboarding email sequence — manual trigger (runs backfill → detect → send-due).

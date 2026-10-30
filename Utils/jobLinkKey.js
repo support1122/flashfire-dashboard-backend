@@ -135,6 +135,40 @@ export function jobLinkKey(raw) {
  */
 export const SHARED_FORM_COMPANY_LIMIT = 6;
 
+// Path segments where an ATS hangs the application form off the posting:
+// Lever .../uuid/apply, Ashby .../uuid/application, Workday
+// .../job/Loc/Title_R123/apply/applyManually, SmartRecruiters .../123/form.
+const APPLY_SEGMENT_RX = /^(?:apply|application|applications|applymanually|autofillwithresume|usemylastapplication|form)$/i;
+
+/**
+ * Keys an application page could have been saved under on a job card. The
+ * card usually holds the posting link, and the form lives at the same link or
+ * one with /apply (or similar) on the end, so both are tried.
+ *
+ * @param {unknown} raw  the URL of the page the client is applying on
+ * @returns {string[]}   canonical keys, most specific first, never ''
+ */
+export function applicationPageLinkKeys(raw) {
+  const keys = [];
+  const add = (u) => {
+    const k = jobLinkKey(u);
+    if (k && !keys.includes(k)) keys.push(k);
+  };
+  add(raw);
+  try {
+    const url = new URL(String(raw ?? '').trim());
+    const segments = url.pathname.split('/');
+    const cut = segments.findIndex((s, i) => i > 0 && APPLY_SEGMENT_RX.test(s));
+    if (cut > 0) {
+      url.pathname = segments.slice(0, cut).join('/') || '/';
+      add(url.toString());
+    }
+  } catch {
+    // Not an absolute URL: the plain key above is all there is.
+  }
+  return keys;
+}
+
 /**
  * Everything the add paths need to know about a link, in one round trip.
  *
